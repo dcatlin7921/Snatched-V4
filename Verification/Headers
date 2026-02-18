@@ -3,14 +3,14 @@ PTBID
 First	
 Last	
 Email	
-Active	
-Leave	
-Status	
-Explanation	
-Mandate Reason	
-Employment Explanation	
-OtherLE	
-Explanation	
-Misconduct	
-Misconduct Explanation	
-Date
+Active	- yes/no
+Leave	- yes/no
+Status	(user selects from a predifined list)
+Explanation	(user adhoc entry, most blank)
+Mandate Reason	(user adhoc entry, most blank)
+Employment Explanation	(user adhoc entry, most blank)
+OtherLE	- yes/no
+Explanation	(user adhoc entry, most blank)
+Misconduct	- yes/no
+Misconduct Explanation	(user adhoc entry, most blank)
+Date - gets a date
