@@ -6,6 +6,10 @@ Email
 Active	- yes/no
 Leave	- yes/no
 Status	(user selects from a predifined list)
+    No – I do not plan to complete all outstanding mandated trainings, even during the grace period, and I understand the Board may inactivate me after April 1st after providing me notice.
+    No – I have been granted an extension waiver to compete the verification process. I acknowledge that I must resubmit this verification form before {WaiverExtensionDeadline}.
+    No – I require the grace period extension to complete my required trainings. I acknowledge that I have until {GracePeriodExtension}, to complete all outstanding mandated trainings and resubmit my verification.
+    Yes – I have completed all trainings required to be finished during this period.
 Explanation	(user adhoc entry, most blank)
 Mandate Reason	(user adhoc entry, most blank)
 Employment Explanation	(user adhoc entry, most blank)
