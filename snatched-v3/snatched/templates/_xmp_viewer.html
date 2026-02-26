@@ -1,0 +1,472 @@
+{# ============================================================
+   _xmp_viewer.html — XMP Sidecar Viewer & Editor (Feature #10)
+
+   INCLUDE THIS IN: asset_detail.html
+   Usage: {% include "_xmp_viewer.html" %}
+
+   Required template context:
+     - asset_id   (int)
+     - job_id     (int)
+     - xmp_content (str | None) — raw XML from read_xmp_sidecar(), or None
+   ============================================================ #}
+
+<section class="xmp-section mt-3">
+    <h2>XMP Sidecar</h2>
+
+    {% if not xmp_content %}
+    <!-- No XMP sidecar -->
+    <div class="info-card" style="border-left: 4px solid var(--text-dim);">
+        <p class="mono text-muted mb-2">
+            No XMP sidecar generated for this file.
+        </p>
+        <p class="text-dim mb-0" style="font-size: 0.85rem;">
+            Enable <strong>XMP sidecar files</strong> in
+            <a href="/settings">Settings</a>
+            (or at upload time) to generate companion <code>.xmp</code> files.
+            XMP sidecars carry rich metadata in a format compatible with Lightroom, Darktable,
+            and most photo library tools.
+        </p>
+    </div>
+    {% else %}
+    <!-- XMP viewer controls -->
+    <div class="gap-row mb-2" style="align-items: center;">
+        <button type="button" class="btn-outline xmp-tab-btn active" id="xmp-tab-parsed"
+                onclick="xmpSwitchTab('parsed')">
+            Parsed Fields
+        </button>
+        <button type="button" class="btn-outline xmp-tab-btn" id="xmp-tab-raw"
+                onclick="xmpSwitchTab('raw')">
+            Raw XML
+        </button>
+        <span class="mono text-muted" id="xmp-save-status" style="font-size: 0.8rem; margin-left: auto;"></span>
+    </div>
+
+    <!-- Parsed Fields Panel -->
+    <div id="xmp-panel-parsed" class="xmp-panel">
+        <div id="xmp-parsed-fields">
+            <!-- Populated by JS on load -->
+            <p class="text-muted mono" style="font-size: 0.85rem;">Parsing XMP fields...</p>
+        </div>
+        <div class="gap-row mt-2" style="align-items: center;">
+            <button type="button" class="btn-primary" onclick="saveXmpParsed({{ asset_id }}, {{ job_id }})">
+                SAVE XMP
+            </button>
+            <button type="button" class="btn-outline" onclick="reloadXmp({{ asset_id }}, {{ job_id }})">
+                RELOAD
+            </button>
+        </div>
+    </div>
+
+    <!-- Raw XML Panel -->
+    <div id="xmp-panel-raw" class="xmp-panel hidden">
+        <textarea id="xmp-raw-textarea" class="mono xmp-raw-textarea"
+                  spellcheck="false"
+                  placeholder="Loading XMP content..."></textarea>
+
+        <!-- Syntax-highlighted read-only preview below the textarea -->
+        <details class="mt-2">
+            <summary class="mono text-muted" style="font-size:0.75rem; cursor:pointer;">
+                Syntax Preview (read-only)
+            </summary>
+            <div id="xmp-syntax-preview" class="mono xmp-syntax-preview"></div>
+        </details>
+
+        <div class="gap-row mt-2" style="align-items: center;">
+            <button type="button" class="btn-primary" onclick="saveXmpRaw({{ asset_id }}, {{ job_id }})">
+                SAVE RAW XML
+            </button>
+            <button type="button" class="btn-outline" onclick="reloadXmp({{ asset_id }}, {{ job_id }})">
+                RELOAD
+            </button>
+        </div>
+    </div>
+
+    {% endif %}
+</section>
+
+{% if xmp_content %}
+<script>
+// ============================================================
+// XMP Viewer state
+// ============================================================
+const _XMP_INITIAL = {{ xmp_content | tojson }};
+let _xmpDom = null;           // parsed DOMParser document
+let _xmpNsMap = {};           // prefix -> uri collected while parsing
+let _xmpCurrentXml = _XMP_INITIAL;
+
+// ============================================================
+// Tab switching
+// ============================================================
+function xmpSwitchTab(tab) {
+    document.querySelectorAll('.xmp-tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.xmp-panel').forEach(function(p) { p.style.display = 'none'; });
+    document.getElementById('xmp-tab-' + tab).classList.add('active');
+    document.getElementById('xmp-panel-' + tab).style.display = '';
+}
+
+// ============================================================
+// Field definitions we care about (namespace, local name, label)
+// ============================================================
+const XMP_FIELD_DEFS = [
+    // Dublin Core
+    { ns: 'http://purl.org/dc/elements/1.1/', local: 'creator',     label: 'dc:creator',     group: 'Dublin Core' },
+    { ns: 'http://purl.org/dc/elements/1.1/', local: 'description', label: 'dc:description',  group: 'Dublin Core' },
+    { ns: 'http://purl.org/dc/elements/1.1/', local: 'subject',     label: 'dc:subject',      group: 'Dublin Core' },
+    // XMP Basic
+    { ns: 'http://ns.adobe.com/xap/1.0/',     local: 'CreateDate',  label: 'xmp:CreateDate',  group: 'XMP Basic' },
+    { ns: 'http://ns.adobe.com/xap/1.0/',     local: 'ModifyDate',  label: 'xmp:ModifyDate',  group: 'XMP Basic' },
+    // EXIF
+    { ns: 'http://ns.adobe.com/exif/1.0/',    local: 'DateTimeOriginal', label: 'exif:DateTimeOriginal', group: 'EXIF' },
+    { ns: 'http://ns.adobe.com/exif/1.0/',    local: 'GPSLatitude',  label: 'exif:GPSLatitude',  group: 'EXIF' },
+    { ns: 'http://ns.adobe.com/exif/1.0/',    local: 'GPSLongitude', label: 'exif:GPSLongitude', group: 'EXIF' },
+    // Snatched custom namespace
+    { ns: 'http://snatched.app/ns/1.0/',      local: '*',           label: 'snatched:*',      group: 'Snatched' },
+];
+
+// ============================================================
+// Parse XMP XML and extract known fields
+// ============================================================
+function xmpGetText(el) {
+    // Handle rdf:Alt / rdf:Seq / rdf:Bag: collect li text
+    const seq = el.querySelector('Seq, Bag, Alt');
+    if (seq) {
+        return Array.from(seq.querySelectorAll('li'))
+            .map(function(li) { return li.textContent.trim(); })
+            .join('; ');
+    }
+    return el.textContent.trim();
+}
+
+function xmpParseFields(xmlStr) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xmlStr, 'application/xml');
+    const parseErr = doc.querySelector('parsererror');
+    if (parseErr) {
+        return { error: parseErr.textContent };
+    }
+    _xmpDom = doc;
+
+    const groups = {};
+    const seenKeys = new Set();
+
+    // Find rdf:Description elements (may be nested)
+    const descs = doc.querySelectorAll('Description');
+
+    // For standard known fields
+    for (const def of XMP_FIELD_DEFS) {
+        if (def.local === '*') {
+            // Wildcard: find all children with this namespace
+            for (const desc of descs) {
+                for (const child of desc.children) {
+                    if (child.namespaceURI === def.ns) {
+                        const label = xmpNsPrefix(def.ns) + ':' + child.localName;
+                        const key = def.ns + '|' + child.localName;
+                        if (!seenKeys.has(key)) {
+                            seenKeys.add(key);
+                            if (!groups[def.group]) groups[def.group] = [];
+                            groups[def.group].push({
+                                ns: def.ns,
+                                local: child.localName,
+                                label: label,
+                                value: xmpGetText(child),
+                            });
+                        }
+                    }
+                }
+            }
+        } else {
+            const key = def.ns + '|' + def.local;
+            if (seenKeys.has(key)) continue;
+            // Search across all rdf:Description elements
+            let found = null;
+            for (const desc of descs) {
+                for (const child of desc.children) {
+                    if (child.namespaceURI === def.ns && child.localName === def.local) {
+                        found = child;
+                        break;
+                    }
+                }
+                if (found) break;
+            }
+            const value = found ? xmpGetText(found) : '';
+            seenKeys.add(key);
+            if (!groups[def.group]) groups[def.group] = [];
+            groups[def.group].push({
+                ns: def.ns,
+                local: def.local,
+                label: def.label,
+                value: value,
+            });
+        }
+    }
+    return groups;
+}
+
+function xmpNsPrefix(nsUri) {
+    // Known namespace -> prefix mapping
+    const known = {
+        'http://purl.org/dc/elements/1.1/':  'dc',
+        'http://ns.adobe.com/xap/1.0/':      'xmp',
+        'http://ns.adobe.com/exif/1.0/':     'exif',
+        'http://snatched.app/ns/1.0/':       'snatched',
+        'http://www.w3.org/1999/02/22-rdf-syntax-ns#': 'rdf',
+    };
+    return known[nsUri] || nsUri.split('/').filter(Boolean).pop() || 'ns';
+}
+
+// ============================================================
+// Render parsed fields into the DOM
+// ============================================================
+function xmpRenderParsed(groups) {
+    const container = document.getElementById('xmp-parsed-fields');
+    if (groups.error) {
+        container.innerHTML = '<p class="mono" style="color:var(--danger);">Parse error: ' +
+            escapeHtml(groups.error) + '</p>';
+        return;
+    }
+
+    const groupKeys = Object.keys(groups);
+    if (groupKeys.length === 0) {
+        container.innerHTML = '<p class="mono text-muted" style="font-size:0.85rem;">No known fields found in this XMP file.</p>';
+        return;
+    }
+
+    let html = '';
+    for (const groupName of groupKeys) {
+        const fields = groups[groupName];
+        if (!fields || fields.length === 0) continue;
+        html += '<div class="xmp-field-group">';
+        html += '<h4>' + escapeHtml(groupName) + '</h4>';
+        for (const field of fields) {
+            const inputId = 'xmpf_' + field.ns.replace(/[^a-z0-9]/gi, '_') + field.local;
+            html += '<div class="xmp-field-row">';
+            html += '<label class="xmp-field-label" for="' + inputId + '">' + escapeHtml(field.label) + '</label>';
+            html += '<input type="text" class="xmp-field-input" id="' + inputId + '"'
+                + ' data-ns="' + escapeAttr(field.ns) + '"'
+                + ' data-local="' + escapeAttr(field.local) + '"'
+                + ' value="' + escapeAttr(field.value) + '">';
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+    container.innerHTML = html;
+}
+
+// ============================================================
+// Load XMP from server
+// ============================================================
+async function loadXmp(assetId, jobId) {
+    try {
+        const resp = await fetch('/api/assets/' + assetId + '/xmp?job_id=' + jobId);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.exists || !data.content) {
+            document.getElementById('xmp-parsed-fields').innerHTML =
+                '<p class="mono text-muted">No XMP sidecar on server.</p>';
+            return;
+        }
+        _xmpCurrentXml = data.content;
+        xmpPopulateViewer(data.content);
+    } catch (err) {
+        xmpStatus('Load error: ' + err.message, 'var(--danger)');
+    }
+}
+
+function xmpPopulateViewer(xmlStr) {
+    // Raw textarea
+    const ta = document.getElementById('xmp-raw-textarea');
+    if (ta) ta.value = xmlStr;
+
+    // Syntax preview
+    const preview = document.getElementById('xmp-syntax-preview');
+    if (preview) preview.innerHTML = xmpSyntaxHighlight(xmlStr);
+
+    // Parsed fields
+    const groups = xmpParseFields(xmlStr);
+    xmpRenderParsed(groups);
+}
+
+function reloadXmp(assetId, jobId) {
+    xmpStatus('Reloading...', 'var(--snap-yellow)');
+    loadXmp(assetId, jobId).then(function() {
+        xmpStatus('Reloaded.', 'var(--success)');
+        setTimeout(function() { xmpStatus('', ''); }, 2000);
+    });
+}
+
+// ============================================================
+// Save: rebuild XML from parsed fields and PUT to server
+// (Only modifies values in existing elements; does not add new ones)
+// ============================================================
+async function saveXmpParsed(assetId, jobId) {
+    if (!_xmpDom) {
+        xmpStatus('No XMP loaded.', 'var(--danger)');
+        return;
+    }
+
+    // Collect current field values from form
+    const inputs = document.querySelectorAll('#xmp-parsed-fields .xmp-field-input');
+    const updates = [];
+    inputs.forEach(function(inp) {
+        updates.push({ ns: inp.dataset.ns, local: inp.dataset.local, value: inp.value });
+    });
+
+    // Clone the DOM and update text nodes
+    const clonedDoc = _xmpDom.cloneNode(true);
+    const descs = clonedDoc.querySelectorAll('Description');
+
+    for (const upd of updates) {
+        let found = false;
+        for (const desc of descs) {
+            for (const child of desc.children) {
+                if (child.namespaceURI === upd.ns && child.localName === upd.local) {
+                    // If has Seq/Bag/Alt, update the first li; else set textContent directly
+                    const seq = child.querySelector('Seq, Bag, Alt');
+                    if (seq) {
+                        const lis = seq.querySelectorAll('li');
+                        if (lis.length > 0) {
+                            lis[0].textContent = upd.value;
+                            // Remove extra lis if user cleared the field
+                        }
+                    } else {
+                        child.textContent = upd.value;
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+        }
+    }
+
+    // Serialize back to XML string
+    const serializer = new XMLSerializer();
+    const xmlOut = serializer.serializeToString(clonedDoc);
+    await xmpSendToServer(assetId, jobId, xmlOut);
+}
+
+// ============================================================
+// Save: send textarea content directly
+// ============================================================
+async function saveXmpRaw(assetId, jobId) {
+    const ta = document.getElementById('xmp-raw-textarea');
+    if (!ta) return;
+    await xmpSendToServer(assetId, jobId, ta.value);
+}
+
+// ============================================================
+// PUT to /api/assets/{id}/xmp
+// ============================================================
+async function xmpSendToServer(assetId, jobId, xmlContent) {
+    xmpStatus('Saving...', 'var(--snap-yellow)');
+    try {
+        const resp = await fetch('/api/assets/' + assetId + '/xmp?job_id=' + jobId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: xmlContent }),
+        });
+        const data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+            throw new Error(data.detail || 'HTTP ' + resp.status);
+        }
+        if (data.saved) {
+            xmpStatus('Saved successfully.', 'var(--success)');
+            _xmpCurrentXml = xmlContent;
+            // Update syntax preview
+            const preview = document.getElementById('xmp-syntax-preview');
+            if (preview) preview.innerHTML = xmpSyntaxHighlight(xmlContent);
+        } else {
+            throw new Error('Server returned saved=false');
+        }
+    } catch (err) {
+        xmpStatus('Error: ' + err.message, 'var(--danger)');
+    } finally {
+        setTimeout(function() { xmpStatus('', ''); }, 5000);
+    }
+}
+
+// ============================================================
+// Status feedback
+// ============================================================
+function xmpStatus(msg, color) {
+    const el = document.getElementById('xmp-save-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = color || '';
+}
+
+// ============================================================
+// Basic XML syntax highlighter — wraps tags/attrs/values in spans
+// ============================================================
+function xmpSyntaxHighlight(xml) {
+    // Escape HTML first so we don't double-escape later
+    let s = xml
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '\x00LT\x00')
+        .replace(/>/g, '\x00GT\x00');
+
+    // Restore the angle brackets as part of tags
+    s = s.replace(/\x00LT\x00/g, '<').replace(/\x00GT\x00/g, '>');
+
+    // Re-escape to HTML entities
+    s = s
+        .replace(/&(?!amp;|lt;|gt;|quot;|#)/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // Now colour: XML tag names (including namespace prefix)
+    // Tag name after &lt; or &lt;/  — highlight including possible ns:
+    s = s.replace(/(&lt;\/?)([\w:]+)/g, function(m, lt, name) {
+        const parts = name.split(':');
+        if (parts.length === 2) {
+            return lt + '<span class="xh-ns">' + escapeHtml(parts[0]) + '</span>'
+                + ':<span class="xh-tag">' + escapeHtml(parts[1]) + '</span>';
+        }
+        return lt + '<span class="xh-tag">' + escapeHtml(name) + '</span>';
+    });
+
+    // Attribute names (word:word= or word=)
+    s = s.replace(/\s([\w:]+)=/g, function(m, attr) {
+        return ' <span class="xh-attr">' + escapeHtml(attr) + '</span>=';
+    });
+
+    // Attribute values ("...")
+    s = s.replace(/="([^"]*)"/g, function(m, val) {
+        return '=&quot;<span class="xh-val">' + val + '</span>&quot;';
+    });
+
+    return s;
+}
+
+// ============================================================
+// HTML escape helpers
+// ============================================================
+function escapeHtml(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+function escapeAttr(s) {
+    return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ============================================================
+// Auto-init on page load
+// ============================================================
+document.addEventListener('DOMContentLoaded', function() {
+    xmpPopulateViewer(_XMP_INITIAL);
+
+    // Update syntax preview when user edits raw textarea
+    const ta = document.getElementById('xmp-raw-textarea');
+    if (ta) {
+        ta.addEventListener('input', function() {
+            const preview = document.getElementById('xmp-syntax-preview');
+            if (preview) preview.innerHTML = xmpSyntaxHighlight(ta.value);
+        });
+    }
+});
+</script>
+{% endif %}
+{# themed: 2026-02-25 #}

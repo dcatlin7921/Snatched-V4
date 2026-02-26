@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title or "Register — SNATCHED" }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,1,0" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=4">
+</head>
+<body class="auth-page-body">
+    <div class="auth-container">
+        <a href="/" class="auth-brand">
+            <span class="material-symbols-outlined">heart_broken</span>
+            <span class="auth-brand-text">SNATCHED</span>
+        </a>
+
+        <div class="auth-card">
+            <h2>Create Account</h2>
+
+            {% if error %}
+            <div class="auth-error">{{ error }}</div>
+            {% endif %}
+
+            <form method="POST" action="/register">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autocomplete="username" autofocus>
+                <p class="auth-hint">3-30 characters, letters, numbers, underscores</p>
+
+                <label for="email">Email <span class="auth-hint-inline">(optional)</span></label>
+                <input type="email" id="email" name="email" autocomplete="email">
+
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required autocomplete="new-password">
+                <p class="auth-hint">Minimum 8 characters</p>
+
+                <label for="confirm_password">Confirm Password</label>
+                <input type="password" id="confirm_password" name="confirm_password" required autocomplete="new-password">
+
+                <button type="submit" class="auth-submit">CREATE ACCOUNT</button>
+            </form>
+        </div>
+
+        <div class="auth-footer">
+            Already have an account? <a href="/login">Sign in</a>
+        </div>
+
+        <p class="auth-tagline">They took your memories. We take them back.</p>
+    </div>
+</body>
+</html>
+{# themed: 2026-02-25 #}

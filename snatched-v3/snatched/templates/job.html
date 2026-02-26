@@ -1,0 +1,470 @@
+{% extends "base.html" %}
+{% block title %}Job #{{ job.id }} — Snatched{% endblock %}
+{% block content %}
+
+<!-- DATA VIZ BAND — pinned to top -->
+<div id="viz-band" class="viz-band">
+    <div class="viz-band__phases">
+        <span class="viz-phase {% if phase_idx >= 1 %}viz-phase--done{% elif phase_idx == 0 %}viz-phase--active{% endif %}" data-phase="ingest">INGEST</span>
+        <span class="viz-phase-arrow">▸</span>
+        <span class="viz-phase {% if phase_idx >= 2 %}viz-phase--done{% elif phase_idx == 1 %}viz-phase--active{% endif %}" data-phase="match">MATCH</span>
+        <span class="viz-phase-arrow">▸</span>
+        <span class="viz-phase {% if phase_idx >= 3 %}viz-phase--done{% elif phase_idx == 2 %}viz-phase--active{% endif %}" data-phase="enrich">ENRICH</span>
+        <span class="viz-phase-arrow">▸</span>
+        <span class="viz-phase {% if phase_idx >= 4 %}viz-phase--done{% elif phase_idx == 3 %}viz-phase--active{% endif %}" data-phase="export">EXPORT</span>
+    </div>
+    <div class="viz-band__stats" id="viz-stats">
+        <span id="stat-files">{{ stats.total_files or '—' }} files</span>
+        <span id="stat-daterange">{{ stats.date_range or '' }}</span>
+        <span id="stat-matchrate" class="{% if stats.match_rate is not none %}{% if stats.match_rate >= 85 %}text-green{% elif stats.match_rate >= 60 %}text-warning{% else %}text-danger{% endif %}{% endif %}">
+            {% if stats.match_rate is not none %}{{ stats.match_rate }}% matched{% endif %}
+        </span>
+        <span id="stat-gps">{% if stats.gps_count %}{{ stats.gps_count }} GPS{% endif %}</span>
+    </div>
+    <div class="viz-band__progress">
+        <div class="progress-bar">
+            <div class="progress-fill" id="phase-progress" style="width: {{ job.progress_pct or 0 }}%"></div>
+        </div>
+        <span class="mono" id="progress-eta"></span>
+    </div>
+</div>
+
+<!-- COUNTDOWN INTERSTITIAL MODAL -->
+<div id="countdown-modal" class="countdown-modal hidden">
+    <div class="countdown-modal__content">
+        <div class="countdown-modal__timer" id="countdown-number">10</div>
+        <div class="countdown-modal__phase" id="countdown-phase-label">Continuing to Match...</div>
+        <div class="countdown-modal__stats" id="countdown-stats"></div>
+
+        <!-- Export config panel (shown only at export gate) -->
+        <div id="export-config-panel" class="hidden" style="margin: 1rem 0; padding: 1rem; border: 1px solid var(--border-dark); background: var(--charcoal);">
+            <div class="mono uppercase text-muted" style="font-size: 0.7rem; font-weight: 800; letter-spacing: 0.1em; margin-bottom: 0.75rem;">Export Options</div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1.5rem;">
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="exp-memories" checked> Memories
+                </label>
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="exp-chats" checked> Chat media
+                </label>
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="exp-stories" checked> Stories
+                </label>
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="exp-exif" checked> Embed EXIF data
+                </label>
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="exp-overlays" checked> Date overlays
+                </label>
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="exp-xmp"> XMP sidecars
+                </label>
+            </div>
+        </div>
+
+        <button class="btn-yellow btn-large" id="countdown-continue" onclick="continueToNextPhase()">
+            Continue →
+        </button>
+        <button class="btn-secondary" id="countdown-pause" onclick="pauseAndReview()">
+            Pause &amp; Review
+        </button>
+    </div>
+</div>
+
+<!-- VIEW MODE TABS -->
+<div class="view-tabs" id="view-tabs">
+    <button class="view-tab view-tab--active" data-view="gallery" onclick="switchView('gallery')">Gallery</button>
+    <button class="view-tab" data-view="timeline" id="tab-timeline" onclick="switchView('timeline')" {% if phase_idx < 2 %}disabled title="Available after Match"{% endif %}>Timeline</button>
+    <button class="view-tab" data-view="map" id="tab-map" onclick="switchView('map')" {% if phase_idx < 3 %}disabled title="Available after Enrich"{% endif %}>Map</button>
+    <button class="view-tab" data-view="conversations" id="tab-conversations" onclick="switchView('conversations')" {% if phase_idx < 3 %}disabled title="Available after Enrich"{% endif %}>Conversations</button>
+</div>
+
+<!-- MAIN CONTENT AREA -->
+<div id="view-gallery" class="view-panel">
+    <div id="gallery-grid" class="gallery-grid"
+         hx-get="/api/jobs/{{ job.id }}/gallery/html"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        {% if phase_idx < 2 %}
+        <div class="empty-state">
+            <p>Gallery will populate during matching...</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div id="view-timeline" class="view-panel hidden">
+    <!-- Timeline loaded via htmx when tab activated -->
+</div>
+
+<div id="view-map" class="view-panel hidden">
+    <!-- Map loaded when tab activated -->
+</div>
+
+<div id="view-conversations" class="view-panel hidden">
+    <!-- Conversations loaded when tab activated -->
+</div>
+
+<!-- REVIEW STATE: Download + Tools (shown when status=completed) -->
+{% if job.status == 'completed' %}
+<div class="review-bar">
+    <div class="review-bar__rescued">
+        <span class="rescued-count">{{ stats.total_exported or stats.total_files or 0 }}</span>
+        <span class="rescued-label">files rescued</span>
+    </div>
+    <a href="/api/download/all?job_id={{ job.id }}" class="btn-yellow btn-large">Download All</a>
+</div>
+{% endif %}
+
+<!-- TOOLS SIDEBAR (collapsed by default, accessible from review or pause) -->
+<div id="tools-sidebar" class="tools-sidebar {% if job.status not in ('matched', 'enriched', 'completed') %}hidden{% endif %}">
+    <h3>Tools</h3>
+    <a href="/friends" class="tool-link">Friends &amp; Aliases</a>
+    <a href="/gps/{{ job.id }}" class="tool-link {% if phase_idx < 3 %}disabled{% endif %}">GPS Correction</a>
+    <a href="/timestamps/{{ job.id }}" class="tool-link">Timestamp Fixes</a>
+    <a href="/duplicates/{{ job.id }}" class="tool-link">Duplicates</a>
+    <a href="/albums/{{ job.id }}" class="tool-link {% if phase_idx < 3 %}disabled{% endif %}">Albums</a>
+    <a href="/export-config" class="tool-link">Export Config</a>
+    <a href="/presets" class="tool-link">Tag Presets</a>
+</div>
+
+<!-- SSE + STATE MANAGEMENT SCRIPT -->
+<script>
+const JOB_ID = {{ job.id }};
+const PROCESSING_MODE = '{{ job.processing_mode or "speed_run" }}';
+let currentPhase = '{{ job.current_phase or "" }}';
+let jobStatus = '{{ job.status }}';
+let countdownTimer = null;
+let countdownValue = 10;
+let configureCalledOnce = false;  // Guard: only call configure once per page load
+
+// Phase index mapping
+const PHASE_ORDER = ['ingest', 'match', 'enrich', 'export'];
+function phaseIndex(phase) { return PHASE_ORDER.indexOf(phase); }
+
+// SSE connection for live updates
+function connectSSE() {
+    if (['completed', 'failed', 'cancelled'].includes(jobStatus)) return;
+    // Mark configure as called if job is past scanned (prevents replayed scanned events)
+    if (['matched', 'enriched', 'running'].includes(jobStatus)) configureCalledOnce = true;
+
+    const evtSource = new EventSource(`/api/jobs/${JOB_ID}/stream`);
+
+    evtSource.addEventListener('progress', (e) => {
+        const data = JSON.parse(e.data);
+        updateProgress(data);
+    });
+
+    evtSource.addEventListener('phase_start', (e) => {
+        const data = JSON.parse(e.data);
+        const PHASE_MAP = {ingest: 0, match: 1, enrich: 2, export: 3};
+        const idx = PHASE_MAP[data.phase];
+        if (idx !== undefined) updatePhaseViz(idx);
+    });
+
+    evtSource.addEventListener('scanned', (e) => {
+        if (configureCalledOnce) return;  // Already handled — ignore replayed event
+        configureCalledOnce = true;
+        const data = JSON.parse(e.data);
+        jobStatus = 'scanned';
+        updatePhaseViz(1);  // ingest done
+        evtSource.close();
+        // Auto-start match (configure_and_start handles mode; empty body preserves saved prefs)
+        fetch(`/api/jobs/${JOB_ID}/configure`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        }).then(r => {
+            if (r.ok) {
+                connectSSE();
+            } else {
+                // Configure may have already been called (race) — try reconnecting SSE anyway
+                // The job is likely already running from a prior call
+                connectSSE();
+            }
+        }).catch(() => {
+            const eta = document.getElementById('progress-eta');
+            if (eta) eta.textContent = 'Network error. Please refresh the page.';
+        });
+    });
+
+    evtSource.addEventListener('matched', (e) => {
+        const data = JSON.parse(e.data);
+        jobStatus = 'matched';
+        updatePhaseViz(2);  // match done
+        enableTab('timeline');
+        refreshGallery();
+        if (PROCESSING_MODE === 'speed_run') {
+            // Auto-continue to enrich
+            fetch(`/api/jobs/${JOB_ID}/start-enrich`, {method: 'POST'})
+                .then(() => connectSSE());
+        } else {
+            // Power User: show countdown or pause
+            showCountdown('Enrich', data);
+        }
+        evtSource.close();
+    });
+
+    evtSource.addEventListener('enriched', (e) => {
+        const data = JSON.parse(e.data);
+        jobStatus = 'enriched';
+        updatePhaseViz(3);  // enrich done
+        enableTab('map');
+        enableTab('conversations');
+        refreshGallery();
+        if (PROCESSING_MODE === 'speed_run') {
+            // Speed run: empty body = all lanes + existing prefs preserved
+            fetch(`/api/jobs/${JOB_ID}/start-export`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({})
+            }).then(() => connectSSE());
+        } else {
+            showCountdown('Export', data);
+        }
+        evtSource.close();
+    });
+
+    evtSource.addEventListener('complete', (e) => {
+        jobStatus = 'completed';
+        updatePhaseViz(4);
+        refreshGallery();
+        showReviewState();
+        evtSource.close();
+    });
+
+    evtSource.addEventListener('error', (e) => {
+        // SSE error or job error
+        if (evtSource.readyState === EventSource.CLOSED) return;
+        evtSource.close();
+        // Reconnect after 3s for network issues
+        setTimeout(connectSSE, 3000);
+    });
+
+    evtSource.addEventListener('cancelled', (e) => {
+        jobStatus = 'cancelled';
+        evtSource.close();
+        window.location.href = '/dashboard';
+    });
+}
+
+function updateProgress(data) {
+    const fill = document.getElementById('phase-progress');
+    if (fill && data.progress_pct !== undefined) {
+        fill.style.width = data.progress_pct + '%';
+    }
+    const eta = document.getElementById('progress-eta');
+    if (eta && data.message) {
+        eta.textContent = data.message;
+    }
+    // Update stats if included
+    if (data.total_files) document.getElementById('stat-files').textContent = data.total_files + ' files';
+}
+
+function updatePhaseViz(idx) {
+    document.querySelectorAll('.viz-phase').forEach((el, i) => {
+        el.classList.remove('viz-phase--active', 'viz-phase--done');
+        if (i < idx) el.classList.add('viz-phase--done');
+        else if (i === idx) el.classList.add('viz-phase--active');
+    });
+}
+
+function enableTab(viewName) {
+    const tab = document.getElementById('tab-' + viewName);
+    if (tab) {
+        tab.disabled = false;
+        tab.removeAttribute('title');
+        tab.classList.add('view-tab--pulse');
+        setTimeout(() => tab.classList.remove('view-tab--pulse'), 3000);
+    }
+}
+
+function switchView(viewName) {
+    document.querySelectorAll('.view-panel').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('view-tab--active'));
+
+    const panel = document.getElementById('view-' + viewName);
+    const tab = document.querySelector(`[data-view="${viewName}"]`);
+    if (panel) panel.classList.remove('hidden');
+    if (tab) tab.classList.add('view-tab--active');
+
+    // Lazy-load view content
+    if (viewName === 'timeline' && !panel.dataset.loaded) {
+        panel.innerHTML = '<div hx-get="/api/jobs/' + JOB_ID + '/timeline-data" hx-trigger="load" hx-swap="innerHTML">Loading timeline...</div>';
+        htmx.process(panel);
+        panel.dataset.loaded = '1';
+    }
+    if (viewName === 'map' && !panel.dataset.loaded) {
+        panel.innerHTML = '<div id="map-container" style="height: 500px;">Loading map...</div>';
+        loadMap();
+        panel.dataset.loaded = '1';
+    }
+    if (viewName === 'conversations' && !panel.dataset.loaded) {
+        panel.innerHTML = '<div hx-get="/api/jobs/' + JOB_ID + '/conversations/html" hx-trigger="load" hx-swap="innerHTML">Loading conversations...</div>';
+        htmx.process(panel);
+        panel.dataset.loaded = '1';
+    }
+}
+
+function refreshGallery() {
+    const grid = document.getElementById('gallery-grid');
+    if (grid) htmx.trigger(grid, 'load');
+}
+
+// Countdown interstitial — only for power_user mode. Speed run never pauses.
+function showCountdown(nextPhase, stats) {
+    if (PROCESSING_MODE === 'speed_run') return;  // Safety guard: should never be called for speed_run
+
+    const modal = document.getElementById('countdown-modal');
+    const label = document.getElementById('countdown-phase-label');
+    const statsEl = document.getElementById('countdown-stats');
+
+    label.textContent = `Continuing to ${nextPhase}...`;
+    if (stats) {
+        let html = '';
+        if (stats.match_rate) html += `<span>Match rate: ${stats.match_rate}%</span>`;
+        if (stats.gps_count) html += `<span>GPS tagged: ${stats.gps_count}</span>`;
+        statsEl.innerHTML = html;
+    }
+
+    modal.classList.remove('hidden');
+
+    // Show export config panel only at the Export gate
+    const exportPanel = document.getElementById('export-config-panel');
+    if (exportPanel) {
+        if (nextPhase === 'Export') {
+            exportPanel.classList.remove('hidden');
+        } else {
+            exportPanel.classList.add('hidden');
+        }
+    }
+
+    countdownValue = 10;
+    document.getElementById('countdown-number').textContent = countdownValue;
+
+    countdownTimer = setInterval(() => {
+        countdownValue--;
+        document.getElementById('countdown-number').textContent = countdownValue;
+        if (countdownValue <= 0) {
+            clearInterval(countdownTimer);
+            continueToNextPhase();
+        }
+    }, 1000);
+}
+
+function continueToNextPhase() {
+    clearInterval(countdownTimer);
+    document.getElementById('countdown-modal').classList.add('hidden');
+
+    if (jobStatus === 'matched') {
+        fetch(`/api/jobs/${JOB_ID}/start-enrich`, {method: 'POST'})
+            .then(() => connectSSE());
+    } else if (jobStatus === 'enriched') {
+        fetch(`/api/jobs/${JOB_ID}/start-export`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                lanes: [
+                    ...(document.getElementById('exp-memories')?.checked ? ['memories'] : []),
+                    ...(document.getElementById('exp-chats')?.checked ? ['chats'] : []),
+                    ...(document.getElementById('exp-stories')?.checked ? ['stories'] : []),
+                ],
+                options: {
+                    exif_enabled: document.getElementById('exp-exif')?.checked ?? true,
+                    burn_overlays: document.getElementById('exp-overlays')?.checked ?? true,
+                    xmp_enabled: document.getElementById('exp-xmp')?.checked ?? false,
+                }
+            })
+        }).then(() => connectSSE());
+    }
+}
+
+function pauseAndReview() {
+    clearInterval(countdownTimer);
+    document.getElementById('countdown-modal').classList.add('hidden');
+    // Show tools sidebar for corrections
+    document.getElementById('tools-sidebar').classList.remove('hidden');
+}
+
+function showReviewState() {
+    // Reload the page to get server-rendered review bar
+    window.location.reload();
+}
+
+// Map loader (Leaflet)
+function loadMap() {
+    // Load Leaflet CSS + JS if not loaded
+    if (!window.L) {
+        const css = document.createElement('link');
+        css.rel = 'stylesheet';
+        css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(css);
+
+        const js = document.createElement('script');
+        js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+        js.onload = initMap;
+        document.body.appendChild(js);
+    } else {
+        initMap();
+    }
+}
+
+function initMap() {
+    fetch(`/api/jobs/${JOB_ID}/map-data`)
+        .then(r => r.json())
+        .then(data => {
+            const map = L.map('map-container').setView([39.8, -98.5], 4);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(map);
+
+            if (data.assets) {
+                data.assets.forEach(a => {
+                    if (a.lat && a.lon) {
+                        L.circleMarker([a.lat, a.lon], {
+                            radius: 5, color: '#FFFC00', fillOpacity: 0.8
+                        }).addTo(map).bindPopup(a.filename || 'Asset');
+                    }
+                });
+            }
+        });
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    // For power_user paused at matched/enriched: show tools, don't reconnect SSE
+    // (reconnecting would re-trigger the countdown modal on page refresh)
+    if (['matched', 'enriched'].includes(jobStatus) && PROCESSING_MODE === 'power_user') {
+        document.getElementById('tools-sidebar').classList.remove('hidden');
+        return;
+    }
+
+    // Speed run: if the page loads with the job already in 'scanned' state (ingest
+    // finished before the page rendered, or SSE was broken and never delivered the
+    // scanned event), immediately POST configure and then connect SSE for the
+    // remaining phases. Never show a countdown for speed_run.
+    if (jobStatus === 'scanned' && PROCESSING_MODE === 'speed_run') {
+        configureCalledOnce = true;  // Prevent SSE scanned handler from double-firing
+        fetch(`/api/jobs/${JOB_ID}/configure`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        }).then(r => {
+            // Whether configure succeeded (200) or was already called (400),
+            // connect SSE to watch the remaining phases
+            connectSSE();
+        }).catch(() => {
+            const eta = document.getElementById('progress-eta');
+            if (eta) eta.textContent = 'Network error. Please refresh the page.';
+        });
+        return;
+    }
+
+    if (['pending', 'running', 'scanned', 'matched', 'enriched'].includes(jobStatus)) {
+        connectSSE();
+    }
+});
+</script>
+
+{% endblock %}
+{# themed: 2026-02-25 #}

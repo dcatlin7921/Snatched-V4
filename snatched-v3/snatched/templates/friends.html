@@ -1,0 +1,603 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page header -->
+<div class="section-header">
+    <h1 class="mb-0 page-title-accent">Friend Name Mapping</h1>
+</div>
+
+<!-- ============================================================
+     STATS CARDS
+     ============================================================ -->
+<div class="stats-grid mb-3">
+    <div class="stat-card">
+        <p class="stat-label">Total Friends</p>
+        <p class="stat-value" id="stat-total">{{ total_friends }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">With Aliases</p>
+        <p class="stat-value text-yellow" id="stat-aliases">{{ with_aliases }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Unknown Names</p>
+        <p class="stat-value text-danger" id="stat-unknown">{{ unknown_names + unknown_senders|length }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Merged Contacts</p>
+        <p class="stat-value text-blue" id="stat-merged">{{ merged_contacts }}</p>
+    </div>
+</div>
+
+<!-- ============================================================
+     SEARCH + SORT CONTROLS
+     ============================================================ -->
+<div class="gap-row mb-2" style="flex-wrap: wrap; align-items: center;">
+    <input
+        type="text"
+        id="friend-search"
+        placeholder="Search by username or name..."
+        oninput="filterFriends()"
+        style="flex: 1; min-width: 200px; max-width: 400px;"
+        autocomplete="off"
+    >
+    <select id="sort-select" onchange="sortFriends(this.value)">
+        <option value="username">Sort: Username</option>
+        <option value="name">Sort: Original Name</option>
+        <option value="messages">Sort: Message Count</option>
+    </select>
+    <span class="mono text-muted" id="visible-count">{{ friend_list|length }} contacts</span>
+</div>
+
+<!-- ============================================================
+     MAIN FRIEND TABLE
+     ============================================================ -->
+<section>
+    <h2>Contacts from Export</h2>
+
+    {% if friend_list %}
+    <div style="overflow-x: auto;">
+        <table id="friend-table">
+            <thead>
+                <tr>
+                    <th>Snap Username</th>
+                    <th>Original Name</th>
+                    <th class="text-yellow">Your Alias</th>
+                    <th>Merged With</th>
+                    <th style="text-align: right;">Msgs</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="friend-tbody">
+                {% for f in friend_list %}
+                <tr class="friend-row"
+                    data-username="{{ f.snap_username | lower }}"
+                    data-name="{{ (f.original_name or '') | lower }}"
+                    data-alias="{{ (f.alias or '') | lower }}"
+                    data-messages="{{ f.message_count }}">
+
+                    <!-- Snap Username -->
+                    <td>
+                        <span class="mono
+                            {% if f.merged_with %}text-blue
+                            {% elif not f.original_name and not f.alias %}text-danger
+                            {% elif f.alias %}text-yellow
+                            {% endif %}
+                        ">{{ f.snap_username }}</span>
+                    </td>
+
+                    <!-- Original Name -->
+                    <td class="text-muted">
+                        {% if f.original_name %}
+                            {{ f.original_name }}
+                        {% else %}
+                            <span class="text-danger italic">no name</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Alias input -->
+                    <td>
+                        <input type="text"
+                            class="alias-input"
+                            data-snap-username="{{ f.snap_username }}"
+                            data-alias-id="{{ f.alias_id or '' }}"
+                            value="{{ f.alias or '' }}"
+                            placeholder="Enter alias..."
+                            style="width: 100%; min-width: 140px;"
+                            onblur="saveAlias(this)"
+                            onkeydown="if(event.key==='Enter'){this.blur();}"
+                        >
+                    </td>
+
+                    <!-- Merged With -->
+                    <td>
+                        {% if f.merged_with %}
+                            <span class="mono text-blue">{{ f.merged_with }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Message count -->
+                    <td style="text-align: right;">
+                        <span class="mono text-muted">{{ f.message_count }}</span>
+                    </td>
+
+                    <!-- Actions -->
+                    <td>
+                        <div class="gap-row" style="flex-wrap: nowrap;">
+                            <button type="button"
+                                class="btn-outline btn-xs"
+                                onclick="openMergeModal('{{ f.snap_username }}')">
+                                Merge
+                            </button>
+                            {% if f.alias_id %}
+                            <button type="button"
+                                class="btn-secondary btn-xs"
+                                onclick="revertAlias({{ f.alias_id }}, this)">
+                                Revert
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="info-card text-center" style="padding: 3rem;">
+        <p class="text-muted">No friends data found.</p>
+        <p class="text-muted">Upload and process a Snapchat export to see your contacts.</p>
+    </div>
+    {% endif %}
+</section>
+
+<!-- ============================================================
+     UNKNOWN CONTACTS SECTION
+     ============================================================ -->
+{% if unknown_senders %}
+<section class="mt-3">
+    <h2 class="text-danger">Unknown Message Senders</h2>
+    <p class="text-muted mb-2">
+        These usernames appear in your chat messages but are not in your friends list.
+        Add a display name to identify them.
+    </p>
+
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr style="border-bottom: 2px solid var(--danger);">
+                    <th>Snap Username</th>
+                    <th class="text-yellow">Add Name</th>
+                    <th style="text-align: right;">Msgs</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for f in unknown_senders %}
+                <tr>
+                    <td>
+                        <span class="mono text-danger">{{ f.snap_username }}</span>
+                    </td>
+                    <td>
+                        <input type="text"
+                            class="alias-input"
+                            data-snap-username="{{ f.snap_username }}"
+                            data-alias-id="{{ f.alias_id or '' }}"
+                            value="{{ f.alias or '' }}"
+                            placeholder="Enter name..."
+                            style="width: 100%; min-width: 140px;"
+                            onblur="saveAlias(this)"
+                            onkeydown="if(event.key==='Enter'){this.blur();}"
+                        >
+                    </td>
+                    <td style="text-align: right;">
+                        <span class="mono text-muted">{{ f.message_count }}</span>
+                    </td>
+                    <td>
+                        <div class="gap-row">
+                            <button type="button"
+                                class="btn-outline btn-xs"
+                                onclick="openMergeModal('{{ f.snap_username }}')">
+                                Merge
+                            </button>
+                            {% if f.alias_id %}
+                            <button type="button"
+                                class="btn-secondary btn-xs"
+                                onclick="revertAlias({{ f.alias_id }}, this)">
+                                Revert
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
+<!-- ============================================================
+     APPLY NAME CORRECTIONS SECTION
+     ============================================================ -->
+<section class="mt-3">
+    <h2>Apply Name Corrections to Files</h2>
+    <p class="text-muted mb-2">
+        Writes your saved aliases as the <span class="mono">XMP:Creator</span> tag on matched
+        output files. This updates the actual file metadata using exiftool.
+        All changes are logged to the tag edit audit trail.
+    </p>
+
+    <div class="info-card">
+        <div class="gap-row mb-2" style="flex-wrap: wrap; align-items: flex-end;">
+            <div style="flex: 1; min-width: 200px;">
+                <label class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.4rem;">TARGET JOB</label>
+                <select id="apply-job-select" style="width: 100%;">
+                    {% if jobs %}
+                        {% for j in jobs %}
+                        <option value="{{ j.id }}" {{ 'selected' if j.id == latest_job_id else '' }}>
+                            Job #{{ j.id }} — {{ j.upload_filename or 'unnamed' }}
+                        </option>
+                        {% endfor %}
+                    {% else %}
+                        <option value="">No completed jobs yet</option>
+                    {% endif %}
+                </select>
+            </div>
+            <button type="button" id="btn-apply-names" class="btn-primary"
+                    onclick="applyNameCorrections()"
+                    {% if not jobs %}disabled{% endif %}
+                    style="white-space: nowrap;">
+                APPLY NAME CORRECTIONS
+            </button>
+        </div>
+
+        <div id="apply-feedback" class="mono hidden"></div>
+    </div>
+</section>
+
+<!-- ============================================================
+     MERGE MODAL
+     ============================================================ -->
+<div id="merge-modal" class="modal-overlay hidden">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>Merge Contact</h3>
+            <button type="button" class="modal-close" onclick="closeMergeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="text-muted mb-2">
+                Merging <strong id="modal-merge-username" class="mono text-yellow"></strong>
+                will mark it as the same person as the primary username.
+                Files will be attributed to the primary.
+            </p>
+
+            <label class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.4rem;">PRIMARY USERNAME (keep this one)</label>
+            <input type="text"
+                id="modal-primary-input"
+                list="friend-datalist"
+                placeholder="Type or select primary username..."
+                style="width: 100%; margin-bottom: 1rem;"
+            >
+
+            <!-- Datalist of all known usernames for quick selection -->
+            <datalist id="friend-datalist">
+                {% for f in friend_list %}
+                <option value="{{ f.snap_username }}">{{ f.original_name or f.alias or '' }}</option>
+                {% endfor %}
+                {% for f in unknown_senders %}
+                <option value="{{ f.snap_username }}">{{ f.alias or '' }}</option>
+                {% endfor %}
+            </datalist>
+
+            <div id="merge-preview" class="mono text-muted" style="min-height: 1.4rem; margin-bottom: 1.5rem;"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-outline" onclick="closeMergeModal()">Cancel</button>
+            <button type="button" id="btn-confirm-merge" class="btn-primary" onclick="confirmMerge()">
+                MERGE CONTACTS
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------
+// State
+// ---------------------------------------------------------------
+let _mergeTargetUsername = null;  // the username being merged
+
+// ---------------------------------------------------------------
+// Inline alias save (on blur / Enter)
+// ---------------------------------------------------------------
+async function saveAlias(input) {
+    const snapUsername = input.dataset.snapUsername;
+    const displayName = input.value.trim();
+
+    if (!displayName) {
+        // Empty — nothing to save (use Revert button to delete)
+        input.style.borderColor = '';
+        return;
+    }
+
+    input.style.borderColor = 'var(--snap-yellow)';
+
+    try {
+        const resp = await fetch('/api/friends/alias', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ snap_username: snapUsername, display_name: displayName }),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        // Update alias_id in dataset so Revert button works immediately
+        input.dataset.aliasId = data.id;
+
+        // Flash success
+        input.style.borderColor = 'var(--success)';
+        setTimeout(() => { input.style.borderColor = ''; }, 1500);
+
+        // Show Revert button if not already present
+        const td = input.closest('td');
+        const actionTd = td ? td.nextElementSibling?.nextElementSibling : null;
+        if (actionTd) {
+            let revertBtn = actionTd.querySelector('.revert-btn');
+            if (!revertBtn) {
+                revertBtn = document.createElement('button');
+                revertBtn.type = 'button';
+                revertBtn.className = 'btn-secondary btn-xs revert-btn';
+                revertBtn.textContent = 'Revert';
+                revertBtn.onclick = () => revertAlias(data.id, revertBtn);
+                const container = actionTd.querySelector('div');
+                if (container) container.appendChild(revertBtn);
+            }
+        }
+
+        updateStats();
+    } catch (err) {
+        input.style.borderColor = 'var(--danger)';
+        console.error('saveAlias error:', err);
+        setTimeout(() => { input.style.borderColor = ''; }, 2000);
+    }
+}
+
+// ---------------------------------------------------------------
+// Revert alias (delete)
+// ---------------------------------------------------------------
+async function revertAlias(aliasId, btn) {
+    if (!aliasId) return;
+
+    try {
+        const resp = await fetch(`/api/friends/alias/${aliasId}`, { method: 'DELETE' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        // Clear the alias input in the same row
+        const row = btn.closest('tr');
+        if (row) {
+            const aliasInput = row.querySelector('.alias-input');
+            if (aliasInput) {
+                aliasInput.value = '';
+                aliasInput.dataset.aliasId = '';
+                aliasInput.style.borderColor = '';
+            }
+        }
+
+        // Remove the Revert button
+        btn.remove();
+        updateStats();
+    } catch (err) {
+        console.error('revertAlias error:', err);
+        btn.style.color = 'var(--danger)';
+        setTimeout(() => { btn.style.color = ''; }, 2000);
+    }
+}
+
+// ---------------------------------------------------------------
+// Filter + sort
+// ---------------------------------------------------------------
+function filterFriends() {
+    const query = document.getElementById('friend-search').value.toLowerCase();
+    const rows = document.querySelectorAll('#friend-tbody .friend-row');
+    let visible = 0;
+
+    rows.forEach(row => {
+        const username = row.dataset.username || '';
+        const name = row.dataset.name || '';
+        const alias = row.dataset.alias || '';
+        const matches = !query || username.includes(query) || name.includes(query) || alias.includes(query);
+        row.style.display = matches ? '' : 'none';
+        if (matches) visible++;
+    });
+
+    const countEl = document.getElementById('visible-count');
+    if (countEl) countEl.textContent = `${visible} contacts`;
+}
+
+function sortFriends(key) {
+    const tbody = document.getElementById('friend-tbody');
+    if (!tbody) return;
+
+    const rows = Array.from(tbody.querySelectorAll('.friend-row'));
+    rows.sort((a, b) => {
+        let va, vb;
+        if (key === 'messages') {
+            va = parseInt(a.dataset.messages || '0', 10);
+            vb = parseInt(b.dataset.messages || '0', 10);
+            return vb - va;  // descending
+        } else if (key === 'name') {
+            va = a.dataset.name || a.dataset.username;
+            vb = b.dataset.name || b.dataset.username;
+        } else {
+            va = a.dataset.username;
+            vb = b.dataset.username;
+        }
+        return va.localeCompare(vb);
+    });
+
+    rows.forEach(r => tbody.appendChild(r));
+}
+
+// ---------------------------------------------------------------
+// Apply name corrections
+// ---------------------------------------------------------------
+async function applyNameCorrections() {
+    const jobSelect = document.getElementById('apply-job-select');
+    const jobId = parseInt(jobSelect?.value || '0', 10);
+    if (!jobId) {
+        showApplyFeedback('No job selected.', 'var(--danger)');
+        return;
+    }
+
+    const btn = document.getElementById('btn-apply-names');
+    btn.disabled = true;
+    btn.textContent = 'APPLYING...';
+    showApplyFeedback('Scanning files and writing tags...', 'var(--text-muted)');
+
+    try {
+        const resp = await fetch('/api/friends/apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_id: jobId, aliases: [] }),  // empty = apply all saved
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        showApplyFeedback(
+            `Done: ${data.aliases_applied} aliases applied, ${data.total_assets_updated} files updated.`,
+            'var(--success)'
+        );
+    } catch (err) {
+        showApplyFeedback('Error: ' + err.message, 'var(--danger)');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'APPLY NAME CORRECTIONS';
+    }
+}
+
+function showApplyFeedback(msg, color) {
+    const el = document.getElementById('apply-feedback');
+    el.textContent = msg;
+    el.style.color = color;
+    el.classList.remove('hidden');
+}
+
+// ---------------------------------------------------------------
+// Merge modal
+// ---------------------------------------------------------------
+function openMergeModal(mergeUsername) {
+    _mergeTargetUsername = mergeUsername;
+    document.getElementById('modal-merge-username').textContent = mergeUsername;
+    document.getElementById('modal-primary-input').value = '';
+    document.getElementById('merge-preview').textContent = '';
+    document.getElementById('merge-modal').classList.remove('hidden');
+    document.getElementById('modal-primary-input').focus();
+}
+
+function closeMergeModal() {
+    document.getElementById('merge-modal').classList.add('hidden');
+    _mergeTargetUsername = null;
+}
+
+// Update preview text as user types
+document.getElementById('modal-primary-input')?.addEventListener('input', function() {
+    const primary = this.value.trim();
+    const preview = document.getElementById('merge-preview');
+    if (primary && _mergeTargetUsername) {
+        preview.textContent = `"${_mergeTargetUsername}" will be attributed to "${primary}"`;
+        preview.style.color = '#5b8dee';
+    } else {
+        preview.textContent = '';
+    }
+});
+
+// Close modal on backdrop click
+document.getElementById('merge-modal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeMergeModal();
+});
+
+async function confirmMerge() {
+    const primary = document.getElementById('modal-primary-input').value.trim();
+    if (!primary) {
+        document.getElementById('modal-primary-input').focus();
+        return;
+    }
+    if (!_mergeTargetUsername) return;
+
+    const btn = document.getElementById('btn-confirm-merge');
+    btn.disabled = true;
+    btn.textContent = 'MERGING...';
+
+    try {
+        const resp = await fetch('/api/friends/merge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                primary_username: primary,
+                merge_username: _mergeTargetUsername,
+            }),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        // Update the row's "Merged With" cell in the DOM
+        const rows = document.querySelectorAll('.friend-row');
+        rows.forEach(row => {
+            const usernameEl = row.querySelector('.mono');
+            if (usernameEl && usernameEl.textContent.trim() === _mergeTargetUsername) {
+                // Find merged-with cell (4th td)
+                const tds = row.querySelectorAll('td');
+                if (tds[3]) {
+                    tds[3].innerHTML = `<span class="mono text-blue">${primary}</span>`;
+                }
+                // Color the username blue
+                usernameEl.classList.remove('text-yellow', 'text-danger');
+                usernameEl.classList.add('text-blue');
+            }
+        });
+
+        closeMergeModal();
+        updateStats();
+    } catch (err) {
+        document.getElementById('merge-preview').textContent = 'Error: ' + err.message;
+        document.getElementById('merge-preview').style.color = 'var(--danger)';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'MERGE CONTACTS';
+    }
+}
+
+// ---------------------------------------------------------------
+// Recalculate stats from DOM (client-side approximation after edits)
+// ---------------------------------------------------------------
+function updateStats() {
+    // Recalculate from DOM inputs
+    const inputs = document.querySelectorAll('.alias-input');
+    let withAliases = 0;
+    inputs.forEach(inp => {
+        if (inp.value.trim()) withAliases++;
+    });
+    const el = document.getElementById('stat-aliases');
+    if (el) el.textContent = withAliases;
+}
+
+// Initialize visible count
+filterFriends();
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

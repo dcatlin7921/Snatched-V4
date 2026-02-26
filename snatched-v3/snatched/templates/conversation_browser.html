@@ -1,0 +1,498 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav class="breadcrumb mb-3">
+    <a href="/results/{{ job_id }}" class="text-muted">Results</a>
+    <span class="text-muted separator">/</span>
+    <span class="text-yellow">Conversations</span>
+</nav>
+
+<!-- Sticky header -->
+<div class="sticky-header">
+    <div>
+        <h1 class="mb-0">Conversations</h1>
+        <p class="mono text-muted mb-0" style="font-size: 0.75rem; margin: 0.25rem 0 0 0;">
+            {{ conversations | length }} conversation{% if conversations | length != 1 %}s{% endif %} &mdash; Job #{{ job_id }}
+        </p>
+    </div>
+    <div class="gap-row">
+        <a href="/results/{{ job_id }}" class="btn-outline" style="font-size: 0.8rem;">BACK TO RESULTS</a>
+    </div>
+</div>
+
+<!-- Filter Controls -->
+<div class="gap-row mb-2" style="flex-wrap: wrap; align-items: center; padding: 1rem; background: var(--charcoal); border-left: 4px solid var(--snap-yellow);">
+    <div style="flex: 1; min-width: 160px;">
+        <label class="mono text-muted uppercase" style="font-size: 0.65rem; display: block; margin-bottom: 0.3rem; letter-spacing: 0.05em;">Keyword Search</label>
+        <input
+            type="text"
+            id="keyword-filter"
+            placeholder="Search messages..."
+            oninput="applyFilters()"
+            style="width: 100%;"
+            autocomplete="off"
+        >
+    </div>
+    <div style="min-width: 140px;">
+        <label class="mono text-muted uppercase" style="font-size: 0.65rem; display: block; margin-bottom: 0.3rem; letter-spacing: 0.05em;">Start Date</label>
+        <input
+            type="date"
+            id="date-start"
+            oninput="applyFilters()"
+        >
+    </div>
+    <div style="min-width: 140px;">
+        <label class="mono text-muted uppercase" style="font-size: 0.65rem; display: block; margin-bottom: 0.3rem; letter-spacing: 0.05em;">End Date</label>
+        <input
+            type="date"
+            id="date-end"
+            oninput="applyFilters()"
+        >
+    </div>
+    <div style="align-self: flex-end;">
+        <button type="button" class="btn-outline btn-sm" onclick="clearFilters()">CLEAR</button>
+    </div>
+</div>
+
+{% if conversations %}
+<!-- Two-panel layout -->
+<div id="chat-browser" style="border: 1px solid var(--border-dark); min-height: 600px;">
+
+    <!-- LEFT SIDEBAR: conversation list -->
+    <div id="convo-sidebar" style="background: var(--charcoal);">
+
+        <!-- Sidebar search -->
+        <div style="padding: 0.75rem; border-bottom: 1px solid var(--border-dark);">
+            <input
+                type="text"
+                id="sidebar-search"
+                placeholder="Filter friends..."
+                oninput="filterSidebar()"
+                style="width: 100%; box-sizing: border-box;"
+                autocomplete="off"
+            >
+        </div>
+
+        <!-- Conversation entries -->
+        <div id="convo-list" class="convo-scroll">
+            {% for c in conversations %}
+            <div
+                class="convo-entry"
+                data-convo-id="{{ c.conversation_id }}"
+                data-display-name="{{ (c.display_name or c.friend_username or 'Unknown') | lower }}"
+                data-first-date="{{ c.first_date or '' }}"
+                data-last-date="{{ c.last_date or '' }}"
+                onclick="loadConversation('{{ c.conversation_id }}', {{ job_id }}, this)"
+            >
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;">
+                    <div style="flex: 1; min-width: 0;">
+                        <div class="convo-name">
+                            {{ c.display_name or c.friend_username or c.conversation_id }}
+                        </div>
+                        {% if c.friend_username and c.display_name and c.friend_username != c.display_name %}
+                        <div class="mono text-muted convo-username">
+                            {{ c.friend_username }}
+                        </div>
+                        {% endif %}
+                        <div class="text-muted convo-dates">
+                            {% if c.first_date and c.last_date %}
+                                {{ c.first_date[:10] }}
+                                {% if c.first_date[:10] != c.last_date[:10] %}
+                                    &rarr; {{ c.last_date[:10] }}
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div style="flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 0.2rem;">
+                        <span class="convo-count-badge">{{ c.message_count }}</span>
+                        {% if c.has_media %}
+                        <span class="material-symbols-outlined convo-media-icon" title="Has media">photo_camera</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- MAIN PANEL: selected conversation -->
+    <div id="convo-main" style="background: var(--deep-black);">
+
+        <!-- Empty state (default) -->
+        <div id="convo-empty" class="convo-empty-state">
+            <span class="material-symbols-outlined convo-empty-icon">chat</span>
+            <p class="text-muted" style="font-size: 0.9rem; margin: 0;">Select a conversation from the sidebar</p>
+            <p class="mono text-muted" style="font-size: 0.75rem; margin-top: 0.5rem;">{{ conversations | length }} conversation{% if conversations | length != 1 %}s{% endif %} available</p>
+        </div>
+
+        <!-- Conversation header (hidden until a convo is selected) -->
+        <div id="convo-header" class="convo-header hidden">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                <div>
+                    <h2 id="convo-header-name" class="mb-0" style="font-size: 1.1rem; margin: 0;"></h2>
+                    <p id="convo-header-meta" class="mono text-muted mb-0" style="font-size: 0.72rem; margin: 0.2rem 0 0 0;"></p>
+                </div>
+                <div class="gap-row" style="flex-wrap: wrap;">
+                    <input
+                        type="text"
+                        id="msg-search"
+                        placeholder="Search messages..."
+                        oninput="searchMessages()"
+                        style="width: 180px;"
+                        autocomplete="off"
+                    >
+                </div>
+            </div>
+        </div>
+
+        <!-- Message list (htmx target) -->
+        <div id="msg-list-container" class="msg-scroll hidden">
+            <div id="msg-list"></div>
+            <div id="msg-load-more" class="hidden" style="text-align: center; padding: 1rem;">
+                <button type="button" class="btn-outline" style="font-size: 0.8rem;" onclick="loadMoreMessages()">LOAD MORE</button>
+                <p id="msg-page-info" class="mono text-muted" style="font-size: 0.72rem; margin-top: 0.5rem;"></p>
+            </div>
+        </div>
+
+        <!-- Loading state -->
+        <div id="convo-loading" class="convo-loading hidden">
+            <p class="mono text-muted" style="font-size: 0.875rem;">Loading messages...</p>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<!-- Empty state: no conversations at all -->
+<div class="empty-state mt-3">
+    <span class="material-symbols-outlined" style="font-size: 3rem; color: var(--border-dark); display: block; margin-bottom: 1rem;">chat_bubble_outline</span>
+    <p>No conversations found for this job.</p>
+    <p class="text-muted" style="font-size: 0.85rem;">
+        Chat messages are ingested during the processing pipeline.
+        Make sure your Snapchat export included chat history.
+    </p>
+    <a href="/results/{{ job_id }}" class="btn-primary" style="margin-top: 1rem; display: inline-block;">BACK TO RESULTS</a>
+</div>
+{% endif %}
+
+<script>
+// ---------------------------------------------------------------
+// State
+// ---------------------------------------------------------------
+var _activeConvoId = null;
+var _activeJobId = {{ job_id }};
+var _currentPage = 1;
+var _totalPages = 1;
+var _msgSearchQuery = '';
+var _msgSearchTimer = null;
+
+// ---------------------------------------------------------------
+// Load conversation into main panel
+// ---------------------------------------------------------------
+async function loadConversation(convoId, jobId, el) {
+    // Deselect previous
+    document.querySelectorAll('.convo-entry').forEach(function(e) {
+        e.style.background = '';
+        e.style.borderLeft = '';
+    });
+
+    // Highlight selected
+    el.style.background = 'rgba(255,252,0,0.07)';
+    el.style.borderLeft = '3px solid var(--snap-yellow)';
+
+    _activeConvoId = convoId;
+    _activeJobId = jobId;
+    _currentPage = 1;
+    _totalPages = 1;
+    _msgSearchQuery = '';
+
+    // Clear search box
+    var searchBox = document.getElementById('msg-search');
+    if (searchBox) searchBox.value = '';
+
+    // Show loading
+    document.getElementById('convo-empty').style.display = 'none';
+    document.getElementById('convo-loading').style.display = 'flex';
+    document.getElementById('convo-header').classList.add('hidden');
+    document.getElementById('msg-list-container').classList.add('hidden');
+
+    // Update header from sidebar data
+    var displayName = el.querySelector('.convo-name')?.textContent?.trim() || convoId;
+    var metaEl = el.querySelectorAll('.text-muted');
+    var dateRange = '';
+    metaEl.forEach(function(m) {
+        var txt = m.textContent.trim();
+        if (txt && txt.match(/\d{4}-\d{2}-\d{2}/)) dateRange = txt;
+    });
+
+    document.getElementById('convo-header-name').textContent = displayName;
+
+    try {
+        var url = '/api/jobs/' + jobId + '/conversations/' + encodeURIComponent(convoId) + '/messages?page=1&per_page=50';
+        if (_msgSearchQuery) url += '&search=' + encodeURIComponent(_msgSearchQuery);
+        var resp = await fetch(url);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var data = await resp.json();
+
+        _currentPage = data.page || 1;
+        _totalPages = data.pages || 1;
+
+        // Update header meta
+        document.getElementById('convo-header-meta').textContent =
+            data.total + ' message' + (data.total !== 1 ? 's' : '') +
+            (dateRange ? ' · ' + dateRange : '');
+
+        // Render messages
+        var msgList = document.getElementById('msg-list');
+        msgList.innerHTML = '';
+        renderMessages(data.messages, msgList, false);
+
+        // Load more button
+        updateLoadMore(data.total, data.page, data.pages);
+
+        // Show panels
+        document.getElementById('convo-loading').style.display = 'none';
+        document.getElementById('convo-header').classList.remove('hidden');
+        document.getElementById('msg-list-container').classList.remove('hidden');
+
+        // Scroll to bottom
+        var container = document.getElementById('msg-list-container');
+        container.scrollTop = container.scrollHeight;
+
+    } catch (err) {
+        document.getElementById('convo-loading').style.display = 'none';
+        document.getElementById('convo-empty').style.display = 'flex';
+        document.getElementById('convo-empty').innerHTML =
+            '<p class="text-muted" style="font-size:0.9rem;">Error loading messages: ' + err.message + '</p>';
+    }
+}
+
+// ---------------------------------------------------------------
+// Render message bubbles
+// ---------------------------------------------------------------
+function renderMessages(messages, container, prepend) {
+    if (!messages || messages.length === 0) return;
+
+    var frag = document.createDocumentFragment();
+
+    messages.forEach(function(m) {
+        var isSender = m.is_sender == 1 || m.is_sender === true;
+        var bubble = document.createElement('div');
+        bubble.style.cssText = 'display: flex; justify-content: ' + (isSender ? 'flex-end' : 'flex-start') + '; margin-bottom: 0.6rem;';
+
+        var inner = document.createElement('div');
+        inner.style.cssText = [
+            'max-width: 72%;',
+            'padding: 0.5rem 0.75rem;',
+            'border: 1px solid ' + (isSender ? 'rgba(255,252,0,0.4)' : 'var(--border-dark)') + ';',
+            'background: ' + (isSender ? 'rgba(255,252,0,0.08)' : 'var(--charcoal)') + ';',
+            'position: relative;',
+        ].join('');
+
+        // Content
+        var contentText = m.content || '';
+        var contentDiv = document.createElement('div');
+        contentDiv.style.cssText = 'font-size: 0.875rem; color: ' + (isSender ? 'var(--snap-yellow)' : 'var(--text-primary)') + '; word-break: break-word; white-space: pre-wrap;';
+        if (contentText) {
+            contentDiv.textContent = contentText;
+        } else if (m.media_type) {
+            contentDiv.innerHTML = '<span class="material-symbols-outlined" style="font-size:1rem; vertical-align:middle; margin-right:0.3rem;">' +
+                getMediaIcon(m.media_type) + '</span><span style="color:var(--text-muted);font-style:italic;font-size:0.8rem;">[' + m.media_type + ']</span>';
+        } else {
+            contentDiv.innerHTML = '<span style="color:var(--text-muted);font-style:italic;font-size:0.8rem;">[no content]</span>';
+        }
+        inner.appendChild(contentDiv);
+
+        // Media indicator
+        if (m.has_matched_media) {
+            var mediaDiv = document.createElement('div');
+            mediaDiv.style.cssText = 'margin-top: 0.35rem; font-size: 0.72rem; color: var(--success);';
+            mediaDiv.innerHTML = '<span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;">check_circle</span> media matched';
+            inner.appendChild(mediaDiv);
+        } else if (m.media_ids && m.media_ids.length > 0) {
+            var mediaDiv = document.createElement('div');
+            mediaDiv.style.cssText = 'margin-top: 0.35rem; font-size: 0.72rem; color: var(--text-muted);';
+            mediaDiv.innerHTML = '<span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;">attach_file</span> ' +
+                m.media_ids.length + ' media file' + (m.media_ids.length !== 1 ? 's' : '');
+            inner.appendChild(mediaDiv);
+        }
+
+        // Timestamp + sender
+        var metaDiv = document.createElement('div');
+        metaDiv.style.cssText = 'margin-top: 0.3rem; font-family: "JetBrains Mono", monospace; font-size: 0.65rem; color: var(--text-dim); display: flex; gap: 0.5rem; justify-content: ' + (isSender ? 'flex-end' : 'flex-start') + ';';
+        var ts = m.created_dt ? m.created_dt.replace('T', ' ').slice(0, 16) : '';
+        var senderLabel = isSender ? 'you' : (m.from_user || '');
+        metaDiv.textContent = (senderLabel ? senderLabel + ' · ' : '') + ts;
+        inner.appendChild(metaDiv);
+
+        bubble.appendChild(inner);
+        frag.appendChild(bubble);
+    });
+
+    if (prepend) {
+        container.insertBefore(frag, container.firstChild);
+    } else {
+        container.appendChild(frag);
+    }
+}
+
+function getMediaIcon(mediaType) {
+    if (!mediaType) return 'attachment';
+    var t = mediaType.toLowerCase();
+    if (t.includes('video')) return 'videocam';
+    if (t.includes('image') || t.includes('photo')) return 'photo';
+    if (t.includes('audio')) return 'audiotrack';
+    return 'attachment';
+}
+
+// ---------------------------------------------------------------
+// Load more messages (older messages, prepended)
+// ---------------------------------------------------------------
+async function loadMoreMessages() {
+    if (!_activeConvoId || _currentPage >= _totalPages) return;
+
+    var btn = document.querySelector('#msg-load-more button');
+    if (btn) { btn.disabled = true; btn.textContent = 'LOADING...'; }
+
+    try {
+        var nextPage = _currentPage - 1;  // we load backwards (older)
+        // Actually load next page forward
+        nextPage = _currentPage + 1;
+        var url = '/api/jobs/' + _activeJobId + '/conversations/' + encodeURIComponent(_activeConvoId) +
+            '/messages?page=' + nextPage + '&per_page=50';
+        if (_msgSearchQuery) url += '&search=' + encodeURIComponent(_msgSearchQuery);
+
+        var resp = await fetch(url);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var data = await resp.json();
+
+        _currentPage = data.page;
+        _totalPages = data.pages;
+
+        var msgList = document.getElementById('msg-list');
+        renderMessages(data.messages, msgList, false);
+        updateLoadMore(data.total, data.page, data.pages);
+
+        // Scroll newly loaded content into view
+        var container = document.getElementById('msg-list-container');
+        container.scrollTop = container.scrollHeight;
+
+    } catch (err) {
+        console.error('loadMoreMessages error:', err);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'LOAD MORE'; }
+    }
+}
+
+function updateLoadMore(total, page, pages) {
+    var el = document.getElementById('msg-load-more');
+    var info = document.getElementById('msg-page-info');
+    if (page < pages) {
+        el.classList.remove('hidden');
+        if (info) info.textContent = 'Showing ' + (page * 50) + ' of ' + total + ' messages';
+    } else {
+        el.classList.add('hidden');
+    }
+}
+
+// ---------------------------------------------------------------
+// Message search (debounced)
+// ---------------------------------------------------------------
+function searchMessages() {
+    clearTimeout(_msgSearchTimer);
+    _msgSearchTimer = setTimeout(async function() {
+        _msgSearchQuery = (document.getElementById('msg-search')?.value || '').trim();
+        if (!_activeConvoId) return;
+        _currentPage = 1;
+
+        var url = '/api/jobs/' + _activeJobId + '/conversations/' + encodeURIComponent(_activeConvoId) +
+            '/messages?page=1&per_page=50';
+        if (_msgSearchQuery) url += '&search=' + encodeURIComponent(_msgSearchQuery);
+
+        try {
+            var resp = await fetch(url);
+            if (!resp.ok) return;
+            var data = await resp.json();
+
+            _currentPage = data.page;
+            _totalPages = data.pages;
+
+            var msgList = document.getElementById('msg-list');
+            msgList.innerHTML = '';
+            renderMessages(data.messages, msgList, false);
+            updateLoadMore(data.total, data.page, data.pages);
+
+            document.getElementById('convo-header-meta').textContent =
+                data.total + ' message' + (data.total !== 1 ? 's' : '') +
+                (_msgSearchQuery ? ' matching "' + _msgSearchQuery + '"' : '');
+
+            var container = document.getElementById('msg-list-container');
+            container.scrollTop = 0;
+        } catch (err) {
+            console.error('searchMessages error:', err);
+        }
+    }, 350);
+}
+
+// ---------------------------------------------------------------
+// Sidebar filter
+// ---------------------------------------------------------------
+function filterSidebar() {
+    var q = (document.getElementById('sidebar-search')?.value || '').toLowerCase();
+    document.querySelectorAll('.convo-entry').forEach(function(el) {
+        var name = el.dataset.displayName || '';
+        el.style.display = (!q || name.includes(q)) ? '' : 'none';
+    });
+}
+
+// ---------------------------------------------------------------
+// Top-level filter controls (date range + keyword — reloads sidebar via API)
+// ---------------------------------------------------------------
+var _filterTimer = null;
+function applyFilters() {
+    clearTimeout(_filterTimer);
+    _filterTimer = setTimeout(async function() {
+        var keyword = (document.getElementById('keyword-filter')?.value || '').trim();
+        var dateStart = document.getElementById('date-start')?.value || '';
+        var dateEnd = document.getElementById('date-end')?.value || '';
+
+        var url = '/api/jobs/' + _activeJobId + '/conversations/html?';
+        var params = [];
+        if (keyword) params.push('search=' + encodeURIComponent(keyword));
+        if (dateStart) params.push('date_start=' + encodeURIComponent(dateStart));
+        if (dateEnd) params.push('date_end=' + encodeURIComponent(dateEnd));
+        url += params.join('&');
+
+        try {
+            var resp = await fetch(url);
+            if (!resp.ok) return;
+            var html = await resp.text();
+            var listEl = document.getElementById('convo-list');
+            if (listEl) listEl.innerHTML = html;
+            // Reset main panel
+            _activeConvoId = null;
+            document.getElementById('convo-empty').style.display = 'flex';
+            document.getElementById('convo-header').classList.add('hidden');
+            document.getElementById('msg-list-container').classList.add('hidden');
+            document.getElementById('convo-empty').innerHTML =
+                '<span class="material-symbols-outlined convo-empty-icon">chat</span>' +
+                '<p class="text-muted" style="font-size:0.9rem;margin:0;">Select a conversation from the sidebar</p>';
+        } catch (err) {
+            console.error('applyFilters error:', err);
+        }
+    }, 400);
+}
+
+function clearFilters() {
+    var kw = document.getElementById('keyword-filter');
+    var ds = document.getElementById('date-start');
+    var de = document.getElementById('date-end');
+    if (kw) kw.value = '';
+    if (ds) ds.value = '';
+    if (de) de.value = '';
+    applyFilters();
+}
+</script>
+
+{% endblock %}
+{# themed: 2026-02-25 #}

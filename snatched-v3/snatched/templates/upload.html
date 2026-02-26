@@ -1,0 +1,1181 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Inject tier info as a JS constant for client-side enforcement -->
+<script>
+const TIER_INFO = {{ tier_info | tojson }};
+</script>
+
+<style>
+/* Upload-page-specific styles (base styles in style.css) */
+.phase-container { transition: opacity 0.3s; }
+.phase-container.hidden { display: none; }
+
+.warning-banner {
+    background: var(--snap-yellow);
+    color: #000;
+    padding: 1rem 1.5rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 0.9rem;
+}
+.warning-banner .material-symbols-outlined { color: #000; }
+
+.file-table { width: 100%; margin: 1rem 0; }
+.file-table thead th {
+    color: var(--snap-yellow); text-align: left; padding: 0.75rem;
+    font-size: 0.75rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.1em; border-bottom: 2px solid var(--border-dark);
+}
+.file-table tbody td {
+    padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--border-dark); font-size: 0.85rem;
+}
+
+.btn-remove {
+    background: transparent; color: var(--danger); border: 1px solid var(--danger);
+    padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.7rem;
+    font-weight: 700; text-transform: uppercase;
+}
+.btn-remove:hover { background: var(--danger); color: #fff; }
+
+.file-summary { margin-top: 0.75rem; font-size: 0.85rem; }
+
+.hash-progress-row {
+    margin-bottom: 1rem; padding: 0.75rem; background: var(--charcoal);
+    border-left: 3px solid var(--snap-yellow);
+}
+.hash-row-content { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.hash-filename { font-size: 0.9rem; color: var(--text-primary); }
+.hash-status { font-size: 0.75rem; }
+
+.stat-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+
+.upload-stats { margin-bottom: 1.5rem; }
+
+.file-progress-container { margin: 1.5rem 0; }
+.file-progress-row { margin-bottom: 1.5rem; padding: 1rem; background: var(--charcoal); border-left: 3px solid var(--border-dark); }
+.file-progress-row.complete { border-left-color: var(--success); }
+.file-progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+.file-progress-name { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); }
+.file-progress-status { font-size: 0.75rem; }
+.file-progress-details { display: flex; justify-content: space-between; margin-top: 0.5rem; }
+.file-progress-bytes { font-size: 0.75rem; }
+
+.upload-footer {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-dark);
+}
+.speed-eta { display: flex; gap: 0.5rem; align-items: center; font-size: 0.85rem; }
+.speed-eta .separator { color: var(--text-dim); }
+
+.paused-banner {
+    background: var(--charcoal);
+    color: var(--snap-yellow);
+    border-left: 4px solid var(--snap-yellow);
+}
+.paused-banner .material-symbols-outlined { color: var(--snap-yellow); }
+
+.resume-picker {
+    display: flex; align-items: center; gap: 1rem;
+    padding: 1.25rem; margin: 1rem 0;
+    background: var(--charcoal); border: 2px dashed var(--snap-yellow);
+}
+.resume-picker input[type="file"] { display: none; }
+
+</style>
+
+<section>
+    <!-- PHASE 1: FILE SELECTION -->
+    <div id="phase-select" class="phase-container">
+        <h1 class="mb-2">Upload Your Snapchat Export</h1>
+
+        <!-- Tier badge + upload limit info -->
+        <div class="gap-row mb-2" style="flex-wrap: wrap; align-items: center;">
+            <span style="
+                display: inline-block;
+                padding: 0.2rem 0.65rem;
+                font-size: 0.72rem;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                font-family: 'JetBrains Mono', monospace;
+                color: var(--void);
+                background: {{ tier_info.color }};
+                line-height: 1.6;
+            ">{{ tier_info.label }}</span>
+            <span class="text-muted" style="font-size: 0.85rem;">
+                Your plan allows up to <strong>{{ tier_info.max_upload_label }}</strong> per upload
+            </span>
+            {% if not tier_info.bulk_upload %}
+            <span class="text-muted" style="font-size: 0.8rem;">
+                <a href="/settings">Upgrade to Pro</a> for bulk uploads (multiple ZIPs)
+            </span>
+            {% endif %}
+        </div>
+
+        {% if tier_info.bulk_upload %}
+        <!-- Bulk upload info card -->
+        <div class="info-card mb-2" style="border-left: 3px solid #c084fc;">
+            <div class="gap-row" style="align-items: center;">
+                <span class="material-symbols-outlined" style="color: #c084fc; font-size: 1.2rem;">layers</span>
+                <strong class="mono uppercase" style="color: #c084fc; font-size: 0.85rem; letter-spacing: 0.08em;">Bulk Upload Enabled</strong>
+            </div>
+            <p class="text-muted mb-0" style="margin-top: 0.4rem; font-size: 0.82rem;">
+                Upload multiple ZIPs to process as a linked group — perfect for monthly exports spanning a year.
+            </p>
+        </div>
+        {% endif %}
+
+        <p class="text-muted">Drop your ZIP files or select them below. Multiple files supported (2GB parts).</p>
+
+        <!-- Drag-drop zone -->
+        <div class="upload-zone" id="dropzone">
+            <div class="upload-icon">
+                <span class="material-symbols-outlined" style="font-size: 3rem; color: var(--snap-yellow);">cloud_upload</span>
+            </div>
+            <p>Drop your Snapchat export files here</p>
+            <input type="file" name="files" accept=".zip" id="fileInput" multiple>
+            <label for="fileInput" class="btn-outline" style="cursor: pointer;">Select Files</label>
+            <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.75rem;">Multiple .zip files supported (Snapchat 2GB parts)</p>
+        </div>
+
+        <!-- File list (appears after selection) -->
+        <div id="file-list-container" class="hidden">
+            <div class="info-card">
+                <h3>Files Selected</h3>
+                <table id="file-list" class="file-table">
+                    <thead>
+                        <tr>
+                            <th>Filename</th>
+                            <th>Size</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="file-list-body">
+                    </tbody>
+                </table>
+                <div id="file-list-summary" class="file-summary mono text-muted"></div>
+
+                <!-- Size limit progress bar -->
+                <div id="size-limit-bar-container" class="mt-2">
+                    <div class="gap-row mb-1" style="justify-content: space-between; font-size: 0.75rem;">
+                        <span class="mono text-muted">Upload Size vs. Limit</span>
+                        <span class="mono text-muted" id="size-limit-label"></span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="size-limit-fill" class="progress-fill" style="width: 0%; background: var(--snap-yellow); transition: width 0.2s, background 0.2s;"></div>
+                    </div>
+                </div>
+
+                <!-- Oversized warning / upgrade prompt -->
+                <div id="size-over-warning" class="hidden alert alert-error mt-2" style="align-items: center; gap: 0.6rem;">
+                    <span class="material-symbols-outlined icon-sm">error</span>
+                    <span id="size-over-text">Total size exceeds your plan limit.</span>
+                    <a href="/settings" class="text-yellow" style="margin-left: auto; white-space: nowrap; font-weight: 700;">Upgrade Plan &rarr;</a>
+                </div>
+
+                <!-- Bulk job group badge (shown when bulk enabled + multiple files) -->
+                <div id="job-group-badge" class="hidden mt-2" style="
+                    padding: 0.5rem 0.75rem;
+                    background: rgba(192, 132, 252, 0.08);
+                    border: 1px solid rgba(192, 132, 252, 0.35);
+                    display: flex;
+                    align-items: center;
+                    gap: 0.6rem;
+                    font-size: 0.8rem;
+                ">
+                    <span class="material-symbols-outlined" style="color: #c084fc; font-size: 1rem;">link</span>
+                    <span class="mono uppercase" style="color: #c084fc; font-weight: 700; font-size: 0.72rem; letter-spacing: 0.08em;">Job Group</span>
+                    <span class="text-muted" id="job-group-summary"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Processing Mode -->
+        <div class="mode-select" style="margin: 1.5rem 0;">
+            <label class="mono uppercase text-muted" style="font-size: 0.72rem; font-weight: 800; letter-spacing: 0.1em; display: block; margin-bottom: 0.75rem;">Processing Mode</label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <label id="mode-speed" class="mode-card mode-card--active" style="
+                    display: block; padding: 1.25rem; cursor: pointer;
+                    border: 2px solid var(--snap-yellow); background: rgba(255,252,0,0.06);
+                ">
+                    <input type="radio" name="processing_mode" value="speed_run" checked style="display: none;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                        <span class="material-symbols-outlined" style="color: var(--snap-yellow); font-size: 1.3rem;">bolt</span>
+                        <strong style="font-size: 1rem; color: var(--snap-yellow); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em;">Speed Run</strong>
+                    </div>
+                    <p class="text-muted mb-0" style="font-size: 0.8rem; line-height: 1.5;">
+                        One click, walk away. All phases run automatically.
+                        Come back to find your rescued files ready to download.
+                    </p>
+                </label>
+                <label id="mode-power" class="mode-card" style="
+                    display: block; padding: 1.25rem; cursor: pointer;
+                    border: 2px solid var(--border-dark); background: transparent;
+                ">
+                    <input type="radio" name="processing_mode" value="power_user" style="display: none;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                        <span class="material-symbols-outlined" style="color: var(--text-muted); font-size: 1.3rem;">tune</span>
+                        <strong style="font-size: 1rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em;">Power User</strong>
+                    </div>
+                    <p class="text-muted mb-0" style="font-size: 0.8rem; line-height: 1.5;">
+                        Pause at each phase. Review matches, fix names,
+                        correct GPS, choose what to export.
+                    </p>
+                </label>
+            </div>
+        </div>
+
+        <!-- Upload button -->
+        <button type="button" id="btn-upload" class="btn-primary btn-full" disabled>
+            UPLOAD &amp; GO
+        </button>
+
+        <!-- Info card -->
+        <div class="info-card">
+            <h3>Before you upload:</h3>
+            <ul>
+                <li>Max total upload: {{ (max_upload_bytes / 1024 / 1024 / 1024) | round(1) }} GB</li>
+                <li>Individual file: 5 GB max (Snapchat export splits automatically)</li>
+                <li>Processing time: 10–30 minutes depending on file size</li>
+                <li>ZIP files only — export from Snapchat Settings → Download My Data</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- PHASE 2: HASHING -->
+    <div id="phase-hashing" class="phase-container hidden">
+        <h2 class="text-yellow">Computing Checksums</h2>
+        <p class="text-muted">Computing SHA-256 hashes for integrity verification...</p>
+
+        <div id="hash-progress-container">
+            <div id="hash-progress-list"></div>
+        </div>
+    </div>
+
+    <!-- PHASE 3: UPLOADING (also used for resume view) -->
+    <div id="phase-upload" class="phase-container hidden">
+        <div id="banner-active" class="warning-banner">
+            <span class="material-symbols-outlined">warning</span>
+            <strong>UPLOADING — DO NOT CLOSE THIS TAB</strong>
+        </div>
+        <div id="banner-paused" class="warning-banner paused-banner hidden">
+            <span class="material-symbols-outlined">sync</span>
+            <strong>UPLOAD PAUSED — Re-select your files to continue</strong>
+        </div>
+
+        <!-- Overall progress -->
+        <div class="upload-stats">
+            <div class="stat-row">
+                <span class="stat-label mono">OVERALL</span>
+                <span id="overall-percent" class="mono text-yellow" style="font-size: 1.5rem; font-weight: 900;">0%</span>
+            </div>
+            <div class="progress-bar">
+                <div id="overall-progress-fill" class="progress-fill striped"></div>
+                <div class="progress-text" id="overall-progress-text">0 / 0 GB</div>
+            </div>
+        </div>
+
+        <!-- Per-file progress -->
+        <div id="file-progress-list" class="file-progress-container">
+            <!-- Rows inserted by JS -->
+        </div>
+
+        <!-- Resume file picker (hidden until resume mode) -->
+        <div id="resume-picker" class="resume-picker hidden">
+            <input type="file" accept=".zip" id="resumeFileInput" multiple>
+            <label for="resumeFileInput" class="btn-primary" style="cursor: pointer;">
+                <span class="material-symbols-outlined icon-sm">folder_open</span>
+                SELECT FILES TO RESUME
+            </label>
+            <span id="resume-match-status" class="mono text-muted" style="font-size: 0.8rem;"></span>
+        </div>
+
+        <!-- Speed & ETA -->
+        <div class="upload-footer">
+            <div class="speed-eta">
+                <span id="speed-display" class="mono text-muted">Speed: — MB/s</span>
+                <span class="separator">·</span>
+                <span id="eta-display" class="mono text-muted">ETA: —</span>
+            </div>
+            <button type="button" id="btn-cancel" class="btn-danger">CANCEL</button>
+        </div>
+    </div>
+</section>
+
+<!-- JavaScript: ChunkedUploader class + UI logic -->
+<script>
+const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_CONCURRENT_CHUNKS = 2;
+const SPEED_WINDOW = 10; // rolling average over 10 chunks
+// Use tier-aware limit from TIER_INFO (null = unlimited)
+const MAX_UPLOAD_BYTES = TIER_INFO.max_upload_bytes;
+
+class ChunkedUploader {
+    constructor(files, options = {}) {
+        this.files = Array.from(files);
+        this.chunkSize = CHUNK_SIZE;
+        this.sessionId = null;
+        this.aborted = false;
+        this.onProgress = options.onProgress || (() => {});
+        this.onFileComplete = options.onFileComplete || (() => {});
+        this.onAllComplete = options.onAllComplete || (() => {});
+        this.onError = options.onError || (() => {});
+        this.onHash = options.onHash || (() => {});
+
+        // For speed calculation
+        this.chunkTimestamps = [];
+        this.chunkBytes = [];
+    }
+
+    /**
+     * Compute SHA-256 for all files using Web Crypto API
+     * For files > 500MB, skip client-side hash (server will compute)
+     */
+    async computeHashes() {
+        const hashes = [];
+
+        for (let i = 0; i < this.files.length; i++) {
+            const file = this.files[i];
+            let hash = '';
+
+            this.onHash({ fileIndex: i, filename: file.name, status: 'computing' });
+
+            try {
+                // For large files, skip client-side hashing (5GB+ will OOM browser)
+                if (file.size > 500 * 1024 * 1024) {
+                    // Server will compute SHA-256 after assembly
+                    hash = '';
+                    this.onHash({ fileIndex: i, filename: file.name, status: 'skipped' });
+                } else {
+                    // Read entire file into ArrayBuffer and compute digest
+                    const buffer = await file.arrayBuffer();
+                    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+                    hash = Array.from(new Uint8Array(hashBuffer))
+                        .map(b => b.toString(16).padStart(2, '0'))
+                        .join('');
+                    this.onHash({ fileIndex: i, filename: file.name, status: 'complete', hash });
+                }
+            } catch (err) {
+                console.error(`Failed to hash ${file.name}:`, err);
+                this.onHash({ fileIndex: i, filename: file.name, status: 'error', error: err.message });
+                throw new Error(`Failed to compute hash for ${file.name}: ${err.message}`);
+            }
+
+            hashes.push(hash);
+        }
+
+        return hashes;
+    }
+
+    /**
+     * Initialize upload session on server
+     */
+    async initSession(fileManifest) {
+        const response = await fetch('/api/upload/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(fileManifest)
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `Init failed: ${response.status}`);
+        }
+
+        const data = await response.json();
+        this.sessionId = data.session_id;
+
+        // Save session to localStorage for resume
+        localStorage.snatched_upload_session = this.sessionId;
+
+        return data;
+    }
+
+    /**
+     * Upload all files sequentially (fresh upload)
+     */
+    async uploadAll() {
+        for (let i = 0; i < this.files.length; i++) {
+            if (this.aborted) throw new Error('Upload cancelled');
+            await this.uploadFile(i, 0);
+        }
+    }
+
+    /**
+     * Resume upload using server state. Skips complete files,
+     * resumes partial files from their bytes_received offset.
+     */
+    async resumeAll(sessionId, serverFiles) {
+        this.sessionId = sessionId;
+
+        for (let i = 0; i < this.files.length; i++) {
+            if (this.aborted) throw new Error('Upload cancelled');
+
+            const sf = serverFiles[i];
+            if (sf && sf.status === 'complete') {
+                // Already verified on server — skip
+                this.onFileComplete({ fileIndex: i });
+                continue;
+            }
+
+            const startOffset = sf ? sf.bytes_received : 0;
+            await this.uploadFile(i, startOffset);
+        }
+    }
+
+    /**
+     * Upload a single file in chunks, optionally starting from an offset (resume)
+     */
+    async uploadFile(fileIndex, startOffset = 0) {
+        const file = this.files[fileIndex];
+        const totalChunks = Math.ceil(file.size / this.chunkSize);
+        const startChunk = Math.floor(startOffset / this.chunkSize);
+
+        // Report initial progress if resuming mid-file
+        if (startOffset > 0) {
+            this.onProgress({ fileIndex, bytesUploaded: startOffset, fileSize: file.size });
+        }
+
+        for (let chunkIdx = startChunk; chunkIdx < totalChunks; chunkIdx++) {
+            if (this.aborted) throw new Error('Upload cancelled');
+
+            const start = chunkIdx * this.chunkSize;
+            const end = Math.min(start + this.chunkSize, file.size);
+            const chunk = file.slice(start, end);
+
+            const timestamp = Date.now();
+            await this.sendChunk(fileIndex, start, chunk);
+
+            // Track for speed calculation
+            this.chunkTimestamps.push(timestamp);
+            this.chunkBytes.push(end - start);
+
+            // Keep only last SPEED_WINDOW entries
+            if (this.chunkTimestamps.length > SPEED_WINDOW) {
+                this.chunkTimestamps.shift();
+                this.chunkBytes.shift();
+            }
+
+            this.onProgress({ fileIndex, bytesUploaded: end, fileSize: file.size });
+        }
+
+        // Verify file after all chunks uploaded
+        await this.verifyFile(fileIndex);
+    }
+
+    /**
+     * Send a single chunk with retry (3 attempts, exponential backoff)
+     */
+    async sendChunk(fileIndex, offset, chunk, attempt = 0) {
+        try {
+            const response = await fetch(
+                `/api/upload/chunk/${this.sessionId}/${fileIndex}`,
+                {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/octet-stream',
+                        'X-Chunk-Offset': offset.toString()
+                    },
+                    body: chunk
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`Chunk failed: ${response.status}`);
+            }
+        } catch (err) {
+            if (attempt < 2) {
+                const backoff = [1000, 2000, 4000][attempt];
+                await new Promise(r => setTimeout(r, backoff));
+                return this.sendChunk(fileIndex, offset, chunk, attempt + 1);
+            }
+            throw new Error(`Chunk upload failed after 3 attempts: ${err.message}`);
+        }
+    }
+
+    /**
+     * Verify file integrity after upload
+     */
+    async verifyFile(fileIndex) {
+        const response = await fetch(
+            `/api/upload/verify/${this.sessionId}/${fileIndex}`,
+            { method: 'POST' }
+        );
+
+        if (!response.ok) {
+            let errorMsg;
+            try {
+                const data = await response.json();
+                errorMsg = data.detail || `Server error: ${response.status}`;
+            } catch (parseErr) {
+                const text = await response.text().catch(() => '');
+                errorMsg = `Server error ${response.status}: ${text.substring(0, 200) || 'Unknown error'}`;
+            }
+            throw new Error(errorMsg);
+        }
+
+        const data = await response.json();
+
+        if (!data.verified) {
+            throw new Error(`Verification failed: expected ${data.expected}, got ${data.actual}`);
+        }
+
+        this.onFileComplete({ fileIndex });
+
+        if (data.job_id) {
+            this.onAllComplete({ jobId: data.job_id });
+        } else if (data.warning) {
+            this.onError(new Error(data.warning));
+        }
+    }
+
+    /**
+     * Get current upload status (for resume)
+     */
+    async resume(sessionId) {
+        const response = await fetch(`/api/upload/status/${sessionId}`);
+        if (!response.ok) {
+            throw new Error(`Status check failed: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Cancel and clean up
+     */
+    async abort() {
+        this.aborted = true;
+        if (this.sessionId) {
+            await fetch(`/api/upload/abort/${this.sessionId}`, { method: 'DELETE' }).catch(() => {});
+            localStorage.removeItem('snatched_upload_session');
+        }
+    }
+
+    /**
+     * Calculate rolling average speed (MB/s)
+     */
+    getRollingSpeed() {
+        if (this.chunkTimestamps.length < 2) return 0;
+        const totalBytes = this.chunkBytes.reduce((a, b) => a + b, 0);
+        const totalMs = this.chunkTimestamps[this.chunkTimestamps.length - 1] - this.chunkTimestamps[0];
+        return totalMs > 0 ? (totalBytes / 1024 / 1024) / (totalMs / 1000) : 0;
+    }
+
+    /**
+     * Calculate ETA
+     */
+    getETA(remainingBytes) {
+        const speed = this.getRollingSpeed();
+        if (speed <= 0) return null;
+        return Math.ceil((remainingBytes / 1024 / 1024) / speed);
+    }
+}
+
+// ============================================================
+// UI LOGIC
+// ============================================================
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const fileListContainer = document.getElementById('file-list-container');
+const fileListBody = document.getElementById('file-list-body');
+const fileSummary = document.getElementById('file-list-summary');
+const btnUpload = document.getElementById('btn-upload');
+const btnCancel = document.getElementById('btn-cancel');
+
+const phaseSelect = document.getElementById('phase-select');
+const phaseHashing = document.getElementById('phase-hashing');
+const phaseUpload = document.getElementById('phase-upload');
+
+let selectedFiles = [];
+let uploader = null;
+let isActivelyUploading = false;
+
+// Format bytes for display
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+}
+
+// Format seconds to human-readable time
+function formatTime(seconds) {
+    if (seconds < 60) return Math.round(seconds) + 's';
+    if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+    return Math.round(seconds / 3600) + 'h';
+}
+
+// Drag-drop handlers
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(event => {
+    dropzone.addEventListener(event, e => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+});
+
+['dragenter', 'dragover'].forEach(event => {
+    dropzone.addEventListener(event, () => dropzone.classList.add('highlight'));
+});
+
+['dragleave', 'drop'].forEach(event => {
+    dropzone.addEventListener(event, () => dropzone.classList.remove('highlight'));
+});
+
+dropzone.addEventListener('drop', e => {
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        addFiles(Array.from(files));
+    }
+});
+
+fileInput.addEventListener('change', () => {
+    addFiles(Array.from(fileInput.files));
+    fileInput.value = ''; // Reset so re-selecting the same file triggers change
+});
+
+/**
+ * Add files to selectedFiles list (append, not replace).
+ * Deduplicates by name+size. Validates .zip and total size.
+ */
+function addFiles(newFiles) {
+    // Filter to .zip only
+    const nonZip = newFiles.filter(f => !f.name.toLowerCase().endsWith('.zip'));
+    if (nonZip.length > 0) {
+        alert(`Only .zip files allowed. Rejected: ${nonZip.map(f => f.name).join(', ')}`);
+        newFiles = newFiles.filter(f => f.name.toLowerCase().endsWith('.zip'));
+    }
+
+    if (newFiles.length === 0) return;
+
+    // Append new files, skip duplicates (same name + size)
+    for (const f of newFiles) {
+        if (!selectedFiles.some(e => e.name === f.name && e.size === f.size)) {
+            selectedFiles.push(f);
+        }
+    }
+
+    renderFileList();
+}
+
+/**
+ * Render the file list table from selectedFiles array.
+ * Enforces tier upload size limit and updates bulk job group badge.
+ */
+function renderFileList() {
+    if (selectedFiles.length === 0) {
+        fileListContainer.classList.add('hidden');
+        btnUpload.disabled = true;
+        updateSizeLimitBar(0);
+        updateJobGroupBadge();
+        return;
+    }
+
+    const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+
+    // Render table rows
+    fileListBody.innerHTML = selectedFiles.map((file, idx) => `
+        <tr>
+            <td>${file.name}</td>
+            <td>${formatBytes(file.size)}</td>
+            <td><button type="button" class="btn-remove" data-index="${idx}">Remove</button></td>
+        </tr>
+    `).join('');
+
+    // Add remove handlers
+    document.querySelectorAll('.btn-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-index'));
+            selectedFiles.splice(idx, 1);
+            renderFileList();
+        });
+    });
+
+    // Update summary
+    fileSummary.textContent = `Total: ${formatBytes(totalSize)} · ${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''}`;
+
+    fileListContainer.classList.remove('hidden');
+
+    // Enforce size limit
+    const isOverLimit = updateSizeLimitBar(totalSize);
+    btnUpload.disabled = isOverLimit;
+
+    // Show bulk job group badge
+    updateJobGroupBadge();
+}
+
+/**
+ * Update the size limit progress bar.
+ * Returns true if over the limit (button should be disabled).
+ */
+function updateSizeLimitBar(totalSize) {
+    const fill = document.getElementById('size-limit-fill');
+    const label = document.getElementById('size-limit-label');
+    const warning = document.getElementById('size-over-warning');
+    const warningText = document.getElementById('size-over-text');
+
+    // Unlimited tier — hide bar, never block
+    if (MAX_UPLOAD_BYTES === null) {
+        document.getElementById('size-limit-bar-container').style.display = 'none';
+        warning.classList.add('hidden');
+        return false;
+    }
+
+    document.getElementById('size-limit-bar-container').style.display = '';
+    const pct = Math.min((totalSize / MAX_UPLOAD_BYTES) * 100, 100);
+    const isOver = totalSize > MAX_UPLOAD_BYTES;
+
+    fill.style.width = pct + '%';
+    fill.style.background = isOver ? 'var(--danger)' : (pct > 80 ? 'var(--warning, #f59e0b)' : 'var(--snap-yellow)');
+    label.textContent = `${formatBytes(totalSize)} / ${TIER_INFO.max_upload_label}`;
+    label.style.color = isOver ? 'var(--danger)' : 'var(--text-muted)';
+
+    if (isOver) {
+        warningText.textContent = `Total size ${formatBytes(totalSize)} exceeds your ${TIER_INFO.label} plan limit of ${TIER_INFO.max_upload_label}.`;
+        warning.style.display = 'flex';
+        warning.classList.remove('hidden');
+    } else {
+        warning.classList.add('hidden');
+        warning.style.display = '';
+    }
+
+    return isOver;
+}
+
+/**
+ * Show/hide the job group badge when bulk is enabled and multiple files selected.
+ * Also generates and stores the job group UUID for this session.
+ */
+let currentJobGroupId = null;
+
+function updateJobGroupBadge() {
+    const badge = document.getElementById('job-group-badge');
+    const summary = document.getElementById('job-group-summary');
+
+    if (!TIER_INFO.bulk_upload || selectedFiles.length <= 1) {
+        badge.classList.add('hidden');
+        currentJobGroupId = null;
+        return;
+    }
+
+    // Generate a stable group ID for this file selection session
+    if (!currentJobGroupId) {
+        currentJobGroupId = crypto.randomUUID();
+    }
+
+    const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+    summary.textContent = `${selectedFiles.length} files · ${formatBytes(totalSize)} · will be linked as a group`;
+    badge.classList.remove('hidden');
+}
+
+// Upload button click
+btnUpload.addEventListener('click', async () => {
+    if (selectedFiles.length === 0) return;
+
+    // Hide select phase, show hashing phase
+    phaseSelect.classList.add('hidden');
+    phaseHashing.classList.remove('hidden');
+
+    try {
+        // Phase 1: Compute hashes
+        const uploader_temp = new ChunkedUploader(selectedFiles, {
+            onHash: (e) => updateHashProgress(e),
+            onProgress: () => {},
+            onFileComplete: () => {},
+            onAllComplete: () => {}
+        });
+
+        const hashes = await uploader_temp.computeHashes();
+
+        // Phase 2: Initialize session on server
+        const fileManifest = {
+            files: selectedFiles.map((file, idx) => ({
+                filename: file.name,
+                size: file.size,
+                sha256: hashes[idx]
+            })),
+            processing_mode: document.querySelector('input[name="processing_mode"]:checked').value,
+            // Bulk upload: attach job group ID when bulk is enabled and multiple files selected
+            job_group_id: (TIER_INFO.bulk_upload && selectedFiles.length > 1 && currentJobGroupId)
+                ? currentJobGroupId
+                : null,
+        };
+
+        uploader = new ChunkedUploader(selectedFiles, {
+            onProgress: (e) => updateUploadProgress(e),
+            onFileComplete: (e) => updateFileComplete(e),
+            onAllComplete: (e) => handleAllComplete(e),
+            onError: (e) => handleUploadError(e)
+        });
+
+        await uploader.initSession(fileManifest);
+
+        // Phase 3: Upload files
+        phaseHashing.classList.add('hidden');
+        phaseUpload.classList.remove('hidden');
+        initUploadUI();
+
+        isActivelyUploading = true;
+        await uploader.uploadAll();
+
+    } catch (err) {
+        console.error('Upload failed:', err);
+        handleUploadError(err);
+    }
+});
+
+// Cancel button
+btnCancel.addEventListener('click', async () => {
+    if (uploader) {
+        await uploader.abort();
+        phaseUpload.classList.add('hidden');
+        phaseSelect.classList.remove('hidden');
+        alert('Upload cancelled');
+    }
+});
+
+// Hash progress update
+function updateHashProgress(e) {
+    const container = document.getElementById('hash-progress-list');
+    let row = document.getElementById(`hash-row-${e.fileIndex}`);
+
+    if (!row) {
+        row = document.createElement('div');
+        row.id = `hash-row-${e.fileIndex}`;
+        row.className = 'hash-progress-row';
+        container.appendChild(row);
+    }
+
+    let statusText = '';
+    if (e.status === 'computing') statusText = 'Computing...';
+    else if (e.status === 'skipped') statusText = 'Skipped (large file)';
+    else if (e.status === 'complete') statusText = '✓ Hash: ' + (e.hash ? e.hash.substring(0, 16) + '...' : '');
+    else if (e.status === 'error') statusText = '✗ Error: ' + e.error;
+
+    row.innerHTML = `
+        <div class="hash-row-content">
+            <span class="hash-filename">${e.filename}</span>
+            <span class="hash-status mono text-muted">${statusText}</span>
+        </div>
+    `;
+}
+
+// Initialize upload progress UI
+function initUploadUI() {
+    const container = document.getElementById('file-progress-list');
+    container.innerHTML = selectedFiles.map((file, idx) => `
+        <div class="file-progress-row" id="progress-row-${idx}">
+            <div class="file-progress-header">
+                <span class="file-progress-name">${file.name}</span>
+                <span class="file-progress-status mono text-muted">⏳ Waiting</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill-${idx}" style="width: 0%"></div>
+                <div class="progress-text" id="progress-text-${idx}">0%</div>
+            </div>
+            <div class="file-progress-details">
+                <span class="file-progress-bytes mono text-muted" id="progress-bytes-${idx}">0 / ${formatBytes(file.size)}</span>
+            </div>
+        </div>
+    `).join('');
+
+    // Reset overall progress
+    const overallFill = document.getElementById('overall-progress-fill');
+    if (overallFill) overallFill.style.width = '0%';
+    const overallPct = document.getElementById('overall-percent');
+    if (overallPct) overallPct.textContent = '0%';
+
+    // Ensure correct banner state for active upload
+    document.getElementById('banner-active').classList.remove('hidden');
+    document.getElementById('banner-paused').classList.add('hidden');
+    const resumePicker = document.getElementById('resume-picker');
+    if (resumePicker) resumePicker.classList.add('hidden');
+}
+
+// Upload progress update
+function updateUploadProgress(e) {
+    const { fileIndex, bytesUploaded, fileSize } = e;
+    const pct = Math.round((bytesUploaded / fileSize) * 100);
+
+    const fill = document.getElementById(`progress-fill-${fileIndex}`);
+    const text = document.getElementById(`progress-text-${fileIndex}`);
+    const bytes = document.getElementById(`progress-bytes-${fileIndex}`);
+    const status = document.querySelector(`#progress-row-${fileIndex} .file-progress-status`);
+
+    fill.style.width = pct + '%';
+    text.textContent = pct + '%';
+    bytes.textContent = `${formatBytes(bytesUploaded)} / ${formatBytes(fileSize)}`;
+    status.textContent = '⟳ Uploading';
+
+    // Update overall progress
+    const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+    let totalUploaded = 0;
+    for (let i = 0; i < fileIndex; i++) {
+        totalUploaded += selectedFiles[i].size;
+    }
+    totalUploaded += bytesUploaded;
+
+    const overallPct = Math.round((totalUploaded / totalSize) * 100);
+    document.getElementById('overall-percent').textContent = overallPct + '%';
+    document.getElementById('overall-progress-fill').style.width = overallPct + '%';
+    document.getElementById('overall-progress-text').textContent =
+        `${formatBytes(totalUploaded)} / ${formatBytes(totalSize)}`;
+
+    // Update speed and ETA
+    const remaining = totalSize - totalUploaded;
+    const speed = uploader.getRollingSpeed();
+    const eta = uploader.getETA(remaining);
+
+    document.getElementById('speed-display').textContent =
+        speed > 0 ? `Speed: ${speed.toFixed(1)} MB/s` : 'Speed: — MB/s';
+    document.getElementById('eta-display').textContent =
+        eta ? `ETA: ${formatTime(eta)}` : 'ETA: —';
+}
+
+// File complete
+function updateFileComplete(e) {
+    const status = document.querySelector(`#progress-row-${e.fileIndex} .file-progress-status`);
+    if (status) {
+        status.textContent = '✓ Complete';
+    }
+}
+
+// All complete - redirect to job
+function handleAllComplete(e) {
+    const { jobId } = e;
+    isActivelyUploading = false;
+    localStorage.removeItem('snatched_upload_session');
+    setTimeout(() => {
+        window.location.href = `/job/${jobId}`;
+    }, 1000);
+}
+
+// Error handling
+function handleUploadError(err) {
+    isActivelyUploading = false;
+    console.error('Error:', err);
+
+    // If it's a concurrent session error, show resume UI
+    if (err.message && err.message.includes('concurrent')) {
+        checkExistingSession();
+        return;
+    }
+
+    alert(`Upload failed: ${err.message}`);
+    phaseUpload.classList.add('hidden');
+    phaseHashing.classList.add('hidden');
+    phaseSelect.classList.remove('hidden');
+    if (uploader) {
+        uploader.aborted = true;
+    }
+}
+
+// ============================================================
+// RESUME: Interactive upload progress screen on page reload
+// ============================================================
+
+let resumeSessionId = null;
+let resumeServerFiles = null;
+
+/**
+ * Check for existing active upload session on page load.
+ * If found, shows the upload progress screen with paused state.
+ */
+async function checkExistingSession() {
+    if (isActivelyUploading) return false;
+    const savedSession = localStorage.getItem('snatched_upload_session');
+    if (!savedSession) return false;
+
+    try {
+        const resp = await fetch(`/api/upload/status/${savedSession}`);
+        if (!resp.ok) {
+            localStorage.removeItem('snatched_upload_session');
+            return false;
+        }
+
+        const data = await resp.json();
+
+        if (data.status !== 'active') {
+            localStorage.removeItem('snatched_upload_session');
+            return false;
+        }
+
+        // Active session — show upload screen in paused/resume mode
+        enterResumeMode(data, savedSession);
+        return true;
+
+    } catch (err) {
+        console.error('Error checking session:', err);
+        localStorage.removeItem('snatched_upload_session');
+        return false;
+    }
+}
+
+/**
+ * Show the upload progress screen pre-filled from server state,
+ * with a file picker to re-select files and continue.
+ */
+function enterResumeMode(data, sessionId) {
+    resumeSessionId = sessionId;
+    resumeServerFiles = data.files;
+
+    // Hide other phases, show upload phase
+    phaseSelect.classList.add('hidden');
+    phaseHashing.classList.add('hidden');
+    phaseUpload.classList.remove('hidden');
+
+    // Swap banners: hide active, show paused
+    document.getElementById('banner-active').classList.add('hidden');
+    document.getElementById('banner-paused').classList.remove('hidden');
+
+    // Show resume file picker
+    document.getElementById('resume-picker').classList.remove('hidden');
+
+    // Populate overall progress from server
+    const pct = Math.round(data.percent);
+    document.getElementById('overall-percent').textContent = pct + '%';
+    document.getElementById('overall-progress-fill').style.width = pct + '%';
+    document.getElementById('overall-progress-text').textContent =
+        `${formatBytes(data.bytes_received)} / ${formatBytes(data.total_bytes)}`;
+    document.getElementById('speed-display').textContent = 'Speed: Paused';
+    document.getElementById('eta-display').textContent = 'ETA: —';
+
+    // Populate per-file progress bars from server state
+    const container = document.getElementById('file-progress-list');
+    container.innerHTML = data.files.map((f, idx) => {
+        const filePct = f.file_size > 0 ? Math.round((f.bytes_received / f.file_size) * 100) : 0;
+        const isComplete = f.status === 'complete';
+        const statusText = isComplete ? '✓ Complete' : (f.bytes_received > 0 ? '⏸ Paused' : '⏳ Waiting');
+        const fillClass = isComplete ? '' : 'striped';
+
+        return `
+        <div class="file-progress-row ${isComplete ? 'complete' : ''}" id="progress-row-${idx}">
+            <div class="file-progress-header">
+                <span class="file-progress-name">${f.filename}</span>
+                <span class="file-progress-status mono text-muted">${statusText}</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill ${fillClass}" id="progress-fill-${idx}" style="width: ${filePct}%"></div>
+                <div class="progress-text" id="progress-text-${idx}">${filePct}%</div>
+            </div>
+            <div class="file-progress-details">
+                <span class="file-progress-bytes mono text-muted" id="progress-bytes-${idx}">${formatBytes(f.bytes_received)} / ${formatBytes(f.file_size)}</span>
+            </div>
+        </div>`;
+    }).join('');
+
+    // Wire resume file picker
+    const resumeInput = document.getElementById('resumeFileInput');
+    resumeInput.addEventListener('change', () => {
+        handleResumeFileSelection(Array.from(resumeInput.files));
+    });
+
+    // Wire cancel to abort session and return to file selection
+    btnCancel.onclick = async () => {
+        try {
+            await fetch(`/api/upload/abort/${sessionId}`, { method: 'DELETE' });
+        } catch (e) { /* ignore */ }
+        localStorage.removeItem('snatched_upload_session');
+        resumeSessionId = null;
+        resumeServerFiles = null;
+        phaseUpload.classList.add('hidden');
+        phaseSelect.classList.remove('hidden');
+    };
+}
+
+/**
+ * Handle file re-selection for resume. Matches selected files to
+ * the server session by name+size, then resumes uploading.
+ */
+async function handleResumeFileSelection(files) {
+    const matchStatus = document.getElementById('resume-match-status');
+
+    // Match files to server session by name + size
+    const matched = [];
+    const missing = [];
+
+    for (const sf of resumeServerFiles) {
+        const localFile = files.find(f => f.name === sf.filename && f.size === sf.file_size);
+        if (localFile) {
+            matched.push(localFile);
+        } else {
+            missing.push(sf.filename);
+        }
+    }
+
+    if (missing.length > 0) {
+        matchStatus.textContent = `Missing: ${missing.join(', ')}`;
+        matchStatus.style.color = 'var(--danger)';
+        return;
+    }
+
+    matchStatus.textContent = `All ${matched.length} files matched`;
+    matchStatus.style.color = 'var(--success)';
+
+    // Transition to active upload mode
+    document.getElementById('banner-paused').classList.add('hidden');
+    document.getElementById('banner-active').classList.remove('hidden');
+    document.getElementById('resume-picker').classList.add('hidden');
+
+    // Store files for progress tracking
+    selectedFiles = matched;
+
+    // Create uploader and resume
+    uploader = new ChunkedUploader(matched, {
+        onProgress: (e) => updateUploadProgress(e),
+        onFileComplete: (e) => updateFileComplete(e),
+        onAllComplete: (e) => handleAllComplete(e),
+        onError: (e) => handleUploadError(e)
+    });
+
+    try {
+        await uploader.resumeAll(resumeSessionId, resumeServerFiles);
+    } catch (err) {
+        console.error('Resume failed:', err);
+        handleUploadError(err);
+    }
+}
+
+// Check for existing session on page load
+window.addEventListener('load', () => {
+    checkExistingSession();
+});
+
+// ============================================================
+// MODE TOGGLE: Speed Run vs Power User
+// ============================================================
+(function() {
+    const modeCards = document.querySelectorAll('.mode-card');
+    const modeInputs = document.querySelectorAll('input[name="processing_mode"]');
+
+    modeInputs.forEach(input => {
+        input.addEventListener('change', () => {
+            modeCards.forEach(card => {
+                const isActive = card.querySelector('input').checked;
+                card.classList.toggle('mode-card--active', isActive);
+                card.style.borderColor = isActive ? 'var(--snap-yellow)' : 'var(--border-dark)';
+                card.style.background = isActive ? 'rgba(255,252,0,0.06)' : 'transparent';
+                const icon = card.querySelector('.material-symbols-outlined');
+                const title = card.querySelector('strong');
+                if (icon) icon.style.color = isActive ? 'var(--snap-yellow)' : 'var(--text-muted)';
+                if (title) title.style.color = isActive ? 'var(--snap-yellow)' : 'var(--text-muted)';
+            });
+
+            // Update button text
+            const btn = document.getElementById('btn-upload');
+            const mode = document.querySelector('input[name="processing_mode"]:checked').value;
+            btn.textContent = mode === 'speed_run' ? 'UPLOAD & GO' : 'UPLOAD & CONFIGURE';
+        });
+    });
+})();
+</script>
+
+{% endblock %}
+
+{# themed: 2026-02-25 #}

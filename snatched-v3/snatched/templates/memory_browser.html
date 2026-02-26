@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav class="breadcrumb mb-3">
+    <a href="/results/{{ job_id }}" class="text-muted">Results</a>
+    <span class="text-muted" style="margin: 0 0.5rem;">/</span>
+    <span class="text-yellow">Memory Browser</span>
+</nav>
+
+<!-- Sticky header -->
+<div class="sticky-header" style="flex-wrap: wrap; gap: 0.75rem; align-items: center;">
+    <h1 class="mb-0">Memory Browser</h1>
+    <div class="gap-row" style="flex-wrap: wrap;">
+        <span class="mono text-muted" id="stats-bar" style="font-size: 0.8rem;">
+            {{ total_assets }} total &mdash; {{ total_matched }} matched
+        </span>
+        <a href="/results/{{ job_id }}" class="btn-outline" style="font-size: 0.8rem;">BACK TO RESULTS</a>
+    </div>
+</div>
+
+<!-- Filter bar -->
+<details id="filter-details" open>
+    <summary class="filter-summary">
+        <span class="material-symbols-outlined icon-sm">filter_list</span>
+        Filters
+    </summary>
+    <form id="filter-form" class="filter-form">
+        <div class="filter-grid">
+            <!-- Date start -->
+            <label class="filter-label">
+                <span class="filter-label-text">DATE FROM</span>
+                <input type="date" name="date_start" id="f-date-start" value="{{ filters.date_start or '' }}"
+                       class="filter-input">
+            </label>
+            <!-- Date end -->
+            <label class="filter-label">
+                <span class="filter-label-text">DATE TO</span>
+                <input type="date" name="date_end" id="f-date-end" value="{{ filters.date_end or '' }}"
+                       class="filter-input">
+            </label>
+            <!-- Type dropdown -->
+            <label class="filter-label">
+                <span class="filter-label-text">TYPE</span>
+                <select name="asset_type" id="f-type" class="filter-input">
+                    <option value="">All</option>
+                    {% for t in type_options %}
+                    <option value="{{ t }}" {% if filters.asset_type == t %}selected{% endif %}>{{ t }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <!-- Lane dropdown -->
+            <label class="filter-label">
+                <span class="filter-label-text">LANE</span>
+                <select name="lane" id="f-lane" class="filter-input">
+                    <option value="">All</option>
+                    <option value="memories" {% if filters.lane == 'memories' %}selected{% endif %}>memories</option>
+                    <option value="chats" {% if filters.lane == 'chats' %}selected{% endif %}>chats</option>
+                    <option value="stories" {% if filters.lane == 'stories' %}selected{% endif %}>stories</option>
+                </select>
+            </label>
+            <!-- Confidence min -->
+            <label class="filter-label">
+                <span class="filter-label-text">
+                    MIN CONFIDENCE: <span id="conf-display">{{ ((filters.confidence_min or 0) * 100) | int }}%</span>
+                </span>
+                <input type="range" name="confidence_min" id="f-conf" min="0" max="100" step="5"
+                       value="{{ ((filters.confidence_min or 0) * 100) | int }}"
+                       oninput="document.getElementById('conf-display').textContent=this.value+'%'"
+                       style="width: 100%; accent-color: var(--snap-yellow);">
+            </label>
+            <!-- Search -->
+            <label class="filter-label">
+                <span class="filter-label-text">SEARCH</span>
+                <input type="text" name="search" id="f-search" value="{{ filters.search or '' }}"
+                       placeholder="filename or display name..."
+                       class="filter-input">
+            </label>
+        </div>
+        <div class="gap-row">
+            <button type="button" class="btn-primary" onclick="applyFilters()" style="font-size: 0.8rem;">
+                APPLY FILTERS
+            </button>
+            <a href="/browse/{{ job_id }}" class="btn-outline" style="font-size: 0.8rem;">RESET</a>
+        </div>
+    </form>
+</details>
+
+<!-- Showing X of Y bar -->
+<p id="gallery-count-bar" class="mono text-muted mb-2" style="font-size: 0.75rem;">
+    Loading gallery...
+</p>
+
+<!-- Gallery grid (initial load via htmx) -->
+<div id="gallery-grid"
+     class="gallery-grid"
+     hx-get="/api/jobs/{{ job_id }}/gallery/html?page=1"
+     hx-trigger="load"
+     hx-target="#gallery-grid"
+     hx-swap="innerHTML">
+    <!-- Cards injected by htmx -->
+    <div class="empty-state" style="grid-column: 1/-1;">
+        <span class="material-symbols-outlined" style="font-size: 2.5rem; color: var(--text-muted);">hourglass_empty</span>
+        <p>Loading memories...</p>
+    </div>
+</div>
+
+<script>
+var _currentFilters = {
+    date_start: "{{ filters.date_start or '' }}",
+    date_end:   "{{ filters.date_end or '' }}",
+    asset_type: "{{ filters.asset_type or '' }}",
+    lane:       "{{ filters.lane or '' }}",
+    confidence_min: "{{ ((filters.confidence_min or 0) * 100) | int }}",
+    search:     "{{ filters.search or '' }}",
+};
+
+function _buildQS(page) {
+    var conf = parseFloat(document.getElementById('f-conf').value) / 100;
+    var params = new URLSearchParams();
+    params.set('page', page);
+    var ds = document.getElementById('f-date-start').value;
+    var de = document.getElementById('f-date-end').value;
+    var at = document.getElementById('f-type').value;
+    var ln = document.getElementById('f-lane').value;
+    var sr = document.getElementById('f-search').value.trim();
+    if (ds) params.set('date_start', ds);
+    if (de) params.set('date_end', de);
+    if (at) params.set('asset_type', at);
+    if (ln) params.set('lane', ln);
+    if (conf > 0) params.set('confidence_min', conf.toFixed(2));
+    if (sr) params.set('search', sr);
+    return params.toString();
+}
+
+function applyFilters() {
+    var grid = document.getElementById('gallery-grid');
+    var qs = _buildQS(1);
+    grid.innerHTML = '<div class="gallery-empty"><span class="material-symbols-outlined">hourglass_empty</span><p>Loading...</p></div>';
+    htmx.ajax('GET', '/api/jobs/{{ job_id }}/gallery/html?' + qs, {
+        target: '#gallery-grid',
+        swap: 'innerHTML'
+    });
+}
+
+// Called by the "Load More" button rendered in the htmx fragment
+function loadMoreGallery(nextPage) {
+    var qs = _buildQS(nextPage);
+    var grid = document.getElementById('gallery-grid');
+    // Remove the existing load-more container before appending
+    var old = document.getElementById('load-more-container');
+    if (old) old.remove();
+    htmx.ajax('GET', '/api/jobs/{{ job_id }}/gallery/html?' + qs, {
+        target: '#gallery-grid',
+        swap: 'beforeend'
+    });
+}
+
+// Update the count bar from response header
+document.body.addEventListener('htmx:afterRequest', function(evt) {
+    var xhr = evt.detail.xhr;
+    if (!xhr) return;
+    var total = xhr.getResponseHeader('X-Gallery-Total');
+    var showing = xhr.getResponseHeader('X-Gallery-Showing');
+    if (total !== null && showing !== null) {
+        document.getElementById('gallery-count-bar').textContent =
+            'Showing ' + showing + ' of ' + total + ' assets';
+    }
+});
+</script>
+
+{% endblock %}
+{# themed: 2026-02-25 #}

@@ -1,0 +1,313 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav class="breadcrumb mb-3">
+    <a href="/results/{{ job_id }}" class="text-muted">Results</a>
+    <span class="text-muted separator">/</span>
+    <a href="/results/{{ job_id }}" class="text-muted">Job #{{ job_id }}</a>
+    <span class="text-muted separator">/</span>
+    <span class="text-yellow">Asset #{{ asset_id }}</span>
+</nav>
+
+<!-- Page header -->
+<div class="sticky-header">
+    <h1 class="mb-0" style="font-size: 1.5rem;">Tag Inspector</h1>
+    <div class="gap-row">
+        <a href="/results/{{ job_id }}" class="btn-outline" style="font-size: 0.8rem;">BACK TO RESULTS</a>
+    </div>
+</div>
+
+<!-- Asset info card -->
+<div class="info-card mb-3">
+    <h3 class="mt-0 text-yellow" style="font-style: normal; text-transform: none;">Asset Info</h3>
+    <div class="stats-grid mb-0">
+        <div class="stat-card" style="padding: 0.75rem 1rem;">
+            <p class="stat-label">Filename</p>
+            <p class="mono mb-0" style="font-size: 0.85rem; word-break: break-all;">
+                {{ asset.filename or asset.file_path or 'N/A' }}
+            </p>
+        </div>
+        <div class="stat-card" style="padding: 0.75rem 1rem;">
+            <p class="stat-label">Type</p>
+            <p class="stat-value white" style="font-size: 1rem;">{{ asset.asset_type or 'unknown' }}</p>
+        </div>
+        <div class="stat-card" style="padding: 0.75rem 1rem;">
+            <p class="stat-label">Size</p>
+            <p class="stat-value white" style="font-size: 1rem;">
+                {{ ((asset.file_size or 0) / 1024 / 1024) | round(2) }} MB
+            </p>
+        </div>
+        <div class="stat-card" style="padding: 0.75rem 1rem;">
+            <p class="stat-label">EXIF Written</p>
+            {% if asset.exif_written %}
+            <p class="stat-value green" style="font-size: 1rem;">Yes</p>
+            {% else %}
+            <p class="stat-value text-muted" style="font-size: 1rem;">No</p>
+            {% endif %}
+        </div>
+    </div>
+    {% if asset.output_path or asset.path %}
+    <p class="mono text-muted mt-2" style="font-size: 0.7rem; margin-bottom: 0;">
+        Output: {{ asset.output_path or asset.path }}
+    </p>
+    {% endif %}
+</div>
+
+<!-- Tag read error state -->
+{% if tag_read_error %}
+<div class="info-card mb-3" style="border-left-color: var(--warning);">
+    <p class="mb-0" style="color: var(--warning);">
+        <strong>Could not read tags:</strong> {{ tag_read_error }}
+    </p>
+    <p class="text-muted mt-2 mb-0" style="font-size: 0.8rem;">
+        Tags will be available once the asset has been fully processed and exported.
+    </p>
+</div>
+{% endif %}
+
+<!-- Tag groups -->
+{% if grouped_tags %}
+<p class="text-center text-muted uppercase tracking-wider mono" style="font-size: 0.65rem; margin: 0 0 1.5rem 0;">
+    &mdash;&mdash; EXIF / XMP Metadata &mdash;&mdash;
+</p>
+
+<div id="save-banner" class="hidden" style="position: sticky; top: 0; z-index: 100; background: var(--charcoal); border-bottom: 2px solid var(--snap-yellow); padding: 0.75rem 1.25rem; display: flex; align-items: center; gap: 1rem;">
+    <span class="text-yellow mono" style="font-size: 0.85rem;">Unsaved changes</span>
+    <button class="btn-primary" style="font-size: 0.8rem; padding: 0.4rem 1rem;" onclick="saveAllChanges()">SAVE ALL</button>
+    <button class="btn-outline" style="font-size: 0.8rem; padding: 0.4rem 1rem;" onclick="discardChanges()">DISCARD</button>
+    <span id="save-status" class="mono text-muted" style="font-size: 0.8rem;"></span>
+</div>
+
+{% for group_name, group_tags in grouped_tags.items() %}
+<details class="tag-group" open>
+    <summary class="tag-group-summary">
+        <span class="tag-group-name">{{ group_name }}</span>
+        <span class="tag-group-count text-muted mono" style="font-size: 0.75rem;">{{ group_tags | length }} tag{{ 's' if group_tags | length != 1 else '' }}</span>
+    </summary>
+    <div class="tag-group-body">
+        <table class="tag-table">
+            <thead>
+                <tr>
+                    <th style="width: 35%;">Tag</th>
+                    <th style="width: 35%;">Current Value</th>
+                    <th style="width: 30%;">Edit</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tag_key, tag_value in group_tags.items() %}
+                <tr class="tag-row" data-tag="{{ tag_key }}">
+                    <td>
+                        <code class="mono text-green" style="font-size: 0.75rem;">{{ tag_key }}</code>
+                    </td>
+                    <td>
+                        <span class="tag-current-value text-muted" style="font-size: 0.85rem; word-break: break-all;">
+                            {{ tag_value if tag_value is not none else '' }}
+                        </span>
+                    </td>
+                    <td>
+                        <input
+                            type="text"
+                            class="tag-edit-input"
+                            data-tag="{{ tag_key }}"
+                            data-original="{{ tag_value if tag_value is not none else '' }}"
+                            value="{{ tag_value if tag_value is not none else '' }}"
+                            placeholder="Edit value..."
+                            style="font-size: 0.8rem; margin: 0; padding: 0.3rem 0.5rem; font-family: 'JetBrains Mono', monospace;"
+                        >
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div style="display: flex; justify-content: flex-end; padding: 0.75rem 0 0.25rem;">
+            <button
+                class="btn-primary save-group-btn"
+                style="font-size: 0.75rem; padding: 0.4rem 1rem;"
+                data-group="{{ group_name }}"
+            >SAVE {{ group_name | upper }}</button>
+        </div>
+    </div>
+</details>
+{% endfor %}
+
+{% elif not tag_read_error %}
+<div class="empty-state">
+    <p>No metadata tags found in this file.</p>
+</div>
+{% endif %}
+
+<!-- Edit history -->
+<section class="mt-3">
+    <h2 style="font-style: normal; text-transform: none; font-size: 1.2rem;">Edit History</h2>
+    {% if edit_history %}
+    <table>
+        <thead>
+            <tr>
+                <th>Field</th>
+                <th>Old Value</th>
+                <th>New Value</th>
+                <th>Type</th>
+                <th>When</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for edit in edit_history %}
+            <tr>
+                <td><code class="mono text-green" style="font-size: 0.75rem;">{{ edit.field_name }}</code></td>
+                <td class="text-muted" style="font-size: 0.8rem; word-break: break-all;">{{ edit.old_value or '—' }}</td>
+                <td class="text-yellow" style="font-size: 0.8rem; word-break: break-all;">{{ edit.new_value or '—' }}</td>
+                <td><span class="mono text-muted" style="font-size: 0.7rem;">{{ edit.edit_type }}</span></td>
+                <td class="text-muted" style="font-size: 0.75rem; white-space: nowrap;">
+                    {{ edit.created_at.strftime('%b %d %H:%M') if edit.created_at else '—' }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state" style="padding: 1.5rem;">
+        <p class="text-muted mb-0" style="font-size: 0.9rem;">No edits made to this asset yet.</p>
+    </div>
+    {% endif %}
+</section>
+
+<!-- XMP Sidecar Viewer & Editor (#10) — include _xmp_viewer.html -->
+{% include "_xmp_viewer.html" %}
+
+<script>
+(function () {
+    var jobId = {{ job_id }};
+    var assetId = {{ asset_id }};
+    var pendingEdits = {};
+
+    function updateSaveBanner() {
+        var banner = document.getElementById('save-banner');
+        if (!banner) return;
+        if (Object.keys(pendingEdits).length > 0) {
+            banner.classList.remove('hidden');
+        } else {
+            banner.classList.add('hidden');
+        }
+    }
+
+    function setStatus(msg, color) {
+        var el = document.getElementById('save-status');
+        if (el) {
+            el.textContent = msg;
+            el.style.color = color || 'var(--text-muted)';
+        }
+    }
+
+    // Wire up all tag inputs for dirty tracking
+    document.querySelectorAll('.tag-edit-input').forEach(function(input) {
+        input.addEventListener('input', function() {
+            var tag = this.dataset.tag;
+            var original = this.dataset.original;
+            var current = this.value;
+            if (current !== original) {
+                pendingEdits[tag] = current || null;
+                this.classList.add('dirty');
+            } else {
+                delete pendingEdits[tag];
+                this.classList.remove('dirty');
+            }
+            updateSaveBanner();
+        });
+    });
+
+    async function submitEdits(edits) {
+        setStatus('Saving...', 'var(--snap-yellow)');
+        try {
+            var resp = await fetch(
+                '/api/assets/' + assetId + '/tags?job_id=' + jobId,
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ edits: edits }),
+                }
+            );
+            var data = await resp.json();
+            if (resp.ok && data.success) {
+                // Update original values to reflect saved state
+                Object.keys(edits).forEach(function(tag) {
+                    var inp = document.querySelector('.tag-edit-input[data-tag="' + CSS.escape(tag) + '"]');
+                    if (inp) {
+                        inp.dataset.original = inp.value;
+                        inp.classList.remove('dirty');
+                    }
+                    delete pendingEdits[tag];
+                });
+
+                // Update displayed current values from returned tags
+                if (data.tags) {
+                    Object.keys(data.tags).forEach(function(tag) {
+                        var row = document.querySelector('.tag-row[data-tag="' + CSS.escape(tag) + '"]');
+                        if (row) {
+                            var span = row.querySelector('.tag-current-value');
+                            if (span) span.textContent = data.tags[tag] !== null ? String(data.tags[tag]) : '';
+                        }
+                    });
+                }
+
+                updateSaveBanner();
+                var warnings = data.warnings && data.warnings.length > 0 ? ' Warnings: ' + data.warnings.join('; ') : '';
+                setStatus('Saved.' + warnings, 'var(--success)');
+                // Reload after save so edit history refreshes
+                setTimeout(function() { location.reload(); }, 1200);
+            } else {
+                var errMsg = (data && (data.detail || data.message)) || 'Unknown error';
+                setStatus('Error: ' + errMsg, 'var(--danger)');
+            }
+        } catch (err) {
+            setStatus('Network error: ' + err.message, 'var(--danger)');
+        }
+    }
+
+    // Save all button
+    window.saveAllChanges = function() {
+        if (Object.keys(pendingEdits).length === 0) {
+            setStatus('No changes to save.', 'var(--text-muted)');
+            return;
+        }
+        submitEdits(Object.assign({}, pendingEdits));
+    };
+
+    // Discard all button
+    window.discardChanges = function() {
+        document.querySelectorAll('.tag-edit-input').forEach(function(input) {
+            input.value = input.dataset.original;
+            input.classList.remove('dirty');
+        });
+        pendingEdits = {};
+        updateSaveBanner();
+        setStatus('Changes discarded.', 'var(--text-muted)');
+    };
+
+    // Per-group save buttons
+    document.querySelectorAll('.save-group-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            var details = btn.closest('details');
+            var groupEdits = {};
+            details.querySelectorAll('.tag-edit-input').forEach(function(input) {
+                var tag = input.dataset.tag;
+                var original = input.dataset.original;
+                var current = input.value;
+                if (current !== original) {
+                    groupEdits[tag] = current || null;
+                }
+            });
+            if (Object.keys(groupEdits).length === 0) {
+                setStatus('No changes in this group.', 'var(--text-muted)');
+                return;
+            }
+            submitEdits(groupEdits);
+        });
+    });
+})();
+</script>
+
+{% endblock %}
+{# themed: 2026-02-25 #}

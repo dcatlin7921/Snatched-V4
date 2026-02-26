@@ -1,0 +1,678 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Inject server-side data as JSON for client JS -->
+<script>
+const HISTOGRAM_DATA = {{ histogram_json | safe }};
+const STRATEGIES_DATA = {{ strategies_json | safe }};
+const PRESETS_DATA = {{ presets_json | safe }};
+const JOB_ID = {{ job_id }};
+const TOTAL_MATCHES = {{ total_matches }};
+const INITIAL_THRESHOLD = {{ current_threshold }};
+</script>
+
+<!-- Breadcrumb -->
+<nav class="breadcrumb mb-2">
+    <a href="/results/{{ job_id }}" class="text-muted">Results</a>
+    <span class="separator">/</span>
+    <span class="text-yellow">Match Config</span>
+</nav>
+
+<!-- Sticky header -->
+<div class="sticky-header">
+    <h1 class="mb-0" style="border-left: 4px solid var(--snap-yellow); padding-left: 0.75rem;">
+        Match Configuration
+    </h1>
+    <div class="gap-row">
+        <a href="/results/{{ job_id }}" class="btn-outline btn-small">BACK TO RESULTS</a>
+        <button class="btn-outline btn-small" onclick="saveAsDefault()">SAVE AS DEFAULT</button>
+        <button class="btn-primary btn-small" onclick="document.getElementById('preset-modal').classList.remove('hidden')">SAVE AS PRESET</button>
+    </div>
+</div>
+
+<!-- Summary stats bar -->
+<div class="stats-grid mb-3">
+    <div class="stat-card">
+        <p class="stat-label">Total Matches</p>
+        <p class="stat-value" id="stat-total">{{ total_matches }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Threshold</p>
+        <p class="stat-value text-yellow" id="stat-threshold">{{ (current_threshold * 100) | int }}%</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Kept</p>
+        <p class="stat-value green" id="stat-kept">—</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Filtered Out</p>
+        <p class="stat-value text-danger" id="stat-filtered">—</p>
+    </div>
+</div>
+
+<!-- ============================================================
+     SECTION 1: CONFIDENCE HISTOGRAM
+     ============================================================ -->
+<section class="info-card mb-3">
+    <h3 class="text-yellow mt-0" style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 1rem;">
+        Confidence Distribution
+    </h3>
+
+    <!-- Histogram container -->
+    <div id="histogram-wrap" style="position: relative; padding-bottom: 2rem;">
+        <!-- Bars -->
+        <div id="histogram-bars" style="display: flex; align-items: flex-end; gap: 4px; height: 140px; padding: 0 2px;">
+            <!-- Injected by JS -->
+        </div>
+        <!-- Threshold cutoff line -->
+        <div id="cutoff-line" style="
+            position: absolute; top: 0; bottom: 2rem;
+            width: 2px; background: var(--danger);
+            pointer-events: none; display: none;
+        "></div>
+        <!-- Bucket labels (10-20%, etc.) drawn below bars -->
+        <div id="histogram-labels" style="display: flex; gap: 4px; margin-top: 0.25rem;">
+            <!-- Injected by JS -->
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================
+     SECTION 2: THRESHOLD SLIDER
+     ============================================================ -->
+<section class="info-card mb-3">
+    <h3 class="text-yellow mt-0" style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 1rem;">
+        Confidence Threshold
+    </h3>
+
+    <div style="display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <div style="flex: 1; min-width: 200px;">
+            <input
+                type="range"
+                id="threshold-slider"
+                min="0" max="100" step="5"
+                value="{{ (current_threshold * 100) | int }}"
+                style="width: 100%; accent-color: var(--snap-yellow);"
+                oninput="onThresholdChange(this.value)"
+            >
+        </div>
+        <div class="text-center" style="min-width: 80px;">
+            <div id="threshold-display" class="mono text-yellow" style="font-size: 2.5rem; font-weight: 900; line-height: 1;">{{ (current_threshold * 100) | int }}%</div>
+            <div class="mono text-muted uppercase" style="font-size: 0.65rem; margin-top: 0.25rem;">threshold</div>
+        </div>
+    </div>
+
+    <div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
+        <div class="info-card text-center" style="flex: 1; padding: 0.75rem; background: rgba(0,0,0,0.3);">
+            <div id="kept-count" class="mono text-success" style="font-size: 1.4rem; font-weight: 700;">—</div>
+            <div class="mono text-muted uppercase" style="font-size: 0.7rem; margin-top: 0.25rem;">matches kept</div>
+        </div>
+        <div class="info-card text-center" style="flex: 1; padding: 0.75rem; background: rgba(0,0,0,0.3);">
+            <div id="filtered-count" class="mono text-danger" style="font-size: 1.4rem; font-weight: 700;">—</div>
+            <div class="mono text-muted uppercase" style="font-size: 0.7rem; margin-top: 0.25rem;">filtered out</div>
+        </div>
+        <div class="info-card text-center" style="flex: 1; padding: 0.75rem; background: rgba(0,0,0,0.3);">
+            <div id="kept-pct" class="mono" style="font-size: 1.4rem; font-weight: 700;">—</div>
+            <div class="mono text-muted uppercase" style="font-size: 0.7rem; margin-top: 0.25rem;">% retained</div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================
+     SECTION 3: STRATEGY TABLE
+     ============================================================ -->
+<section class="info-card mb-3">
+    <h3 class="text-yellow mt-0" style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 1rem;">
+        Strategy Weights &amp; Ordering
+    </h3>
+
+    <p class="text-muted mb-2" style="font-size: 0.78rem;">
+        Reorder strategies with the arrow buttons. Enable/disable and override weights affect how matches are scored.
+        Higher weight = higher effective confidence. Changes are applied when you save.
+    </p>
+
+    <div style="overflow-x: auto;">
+        <table id="strategy-table">
+            <thead>
+                <tr>
+                    <th style="width: 32px;">Order</th>
+                    <th>Strategy</th>
+                    <th style="text-align: center;">Default</th>
+                    <th style="text-align: center;">Matches</th>
+                    <th style="text-align: center;">Best</th>
+                    <th style="text-align: center;">Enabled</th>
+                    <th style="text-align: center;">Weight</th>
+                    <th style="text-align: center;">Move</th>
+                </tr>
+            </thead>
+            <tbody id="strategy-tbody">
+                <!-- Injected by JS -->
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- ============================================================
+     SECTION 4: APPLY TO JOB PREVIEW
+     ============================================================ -->
+<section class="info-card mb-3">
+    <h3 class="text-yellow mt-0" style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.75rem;">
+        Apply to Job
+    </h3>
+    <p class="text-muted mb-2" style="font-size: 0.78rem;">
+        Preview how re-matching with the current settings would affect job <span class="mono text-yellow">#{{ job_id }}</span>.
+        This does not run a reprocess — it only shows what would change.
+    </p>
+    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+        <button class="btn-outline btn-small" onclick="applyPreview()">
+            PREVIEW CHANGES
+        </button>
+        <span id="preview-status" class="mono text-muted" style="font-size: 0.8rem;"></span>
+    </div>
+    <div id="preview-result" class="hidden" style="margin-top: 1rem;">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <p class="stat-label">Would Keep</p>
+                <p class="stat-value green" id="preview-kept">—</p>
+            </div>
+            <div class="stat-card">
+                <p class="stat-label">Would Filter</p>
+                <p class="stat-value text-danger" id="preview-filtered">—</p>
+            </div>
+            <div class="stat-card">
+                <p class="stat-label">Strategies Active</p>
+                <p class="stat-value" id="preview-active-strategies">—</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================
+     SECTION 5: SAVED PRESETS
+     ============================================================ -->
+<section class="info-card mb-3">
+    <h3 class="text-yellow mt-0" style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.75rem;">
+        Saved Presets
+    </h3>
+    <div id="presets-list">
+        <!-- Injected by JS -->
+    </div>
+    <p id="no-presets-msg" class="text-muted hidden" style="font-size: 0.8rem;">
+        No saved presets yet. Use "Save as Preset" to create one.
+    </p>
+</section>
+
+<!-- ============================================================
+     SAVE AS PRESET MODAL
+     ============================================================ -->
+<div id="preset-modal" class="modal-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-content" style="max-width: 420px;">
+        <h3>Save as Preset</h3>
+        <p class="text-muted" style="font-size: 0.85rem;">Give this configuration a name so you can reuse it across jobs.</p>
+
+        <div class="mb-2">
+            <label class="stat-label">Name</label>
+            <input type="text" id="preset-name-input" placeholder="e.g. Strict Match — No Fallback"
+                   style="width: 100%; background: var(--charcoal); border: 1px solid var(--border-dark); color: var(--text-primary); padding: 0.5rem 0.75rem; font-size: 0.9rem;">
+        </div>
+        <div style="margin-bottom: 1.25rem;">
+            <label class="stat-label">Description (optional)</label>
+            <textarea id="preset-desc-input" placeholder="What makes this config special..."
+                      style="width: 100%; background: var(--charcoal); border: 1px solid var(--border-dark); color: var(--text-primary); padding: 0.5rem 0.75rem; font-size: 0.85rem; resize: vertical; min-height: 60px;"></textarea>
+        </div>
+
+        <div class="gap-row">
+            <button class="btn-primary" onclick="savePreset()">SAVE PRESET</button>
+            <button class="btn-outline" onclick="document.getElementById('preset-modal').classList.add('hidden')">Cancel</button>
+        </div>
+        <p id="preset-save-status" class="mono text-muted" style="font-size: 0.8rem; margin-top: 0.75rem;"></p>
+    </div>
+</div>
+
+<!-- Toast notification -->
+<div id="toast" style="
+    position: fixed; bottom: 2rem; right: 2rem;
+    background: var(--charcoal); border: 1px solid var(--border-dark);
+    padding: 0.75rem 1.25rem; font-size: 0.85rem;
+    font-family: 'JetBrains Mono', monospace;
+    opacity: 0; transition: opacity 0.25s; pointer-events: none;
+    z-index: 9999;
+"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let strategyOrder = STRATEGIES_DATA.map(s => s.name);
+let strategyState = {};  // name -> {enabled, weight}
+STRATEGIES_DATA.forEach(s => {
+    strategyState[s.name] = { enabled: s.enabled, weight: s.weight };
+});
+
+// ---------------------------------------------------------------------------
+// Histogram rendering
+// ---------------------------------------------------------------------------
+function renderHistogram(thresholdPct) {
+    const barsEl = document.getElementById('histogram-bars');
+    const labelsEl = document.getElementById('histogram-labels');
+    const cutoffEl = document.getElementById('cutoff-line');
+    const wrapEl = document.getElementById('histogram-wrap');
+
+    if (!HISTOGRAM_DATA || HISTOGRAM_DATA.length === 0) {
+        barsEl.innerHTML = '<p class="text-muted mono" style="font-size:0.8rem; padding: 1rem;">No match data available for this job.</p>';
+        return;
+    }
+
+    const maxCount = Math.max(...HISTOGRAM_DATA.map(b => b.count), 1);
+    const barHeight = 120;  // px
+
+    barsEl.innerHTML = '';
+    labelsEl.innerHTML = '';
+
+    HISTOGRAM_DATA.forEach((bucket, idx) => {
+        const h = maxCount > 0 ? Math.round((bucket.count / maxCount) * barHeight) : 0;
+        const bucketMinPct = idx * 10;
+        const isFiltered = bucketMinPct < thresholdPct;
+
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; position:relative;';
+
+        const countLabel = document.createElement('div');
+        countLabel.style.cssText = 'font-size:0.6rem; color:var(--text-muted); font-family:"JetBrains Mono",monospace; height:14px; display:flex; align-items:flex-end;';
+        countLabel.textContent = bucket.count > 0 ? bucket.count : '';
+
+        const bar = document.createElement('div');
+        bar.style.cssText = `
+            width: 100%; height: ${h}px; min-height: ${bucket.count > 0 ? 2 : 0}px;
+            background: ${isFiltered ? 'var(--border)' : 'var(--snap-yellow)'};
+            transition: background 0.15s, height 0.2s;
+            border-top: ${bucket.count > 0 ? '2px' : '0'} solid ${isFiltered ? 'var(--text-muted)' : '#ffe000'};
+        `;
+        bar.title = `${bucket.label}: ${bucket.count} matches`;
+
+        wrapper.appendChild(countLabel);
+        wrapper.appendChild(bar);
+        barsEl.appendChild(wrapper);
+
+        const lbl = document.createElement('div');
+        lbl.style.cssText = 'flex:1; text-align:center; font-size:0.55rem; color:var(--text-muted); font-family:"JetBrains Mono",monospace; white-space:nowrap;';
+        lbl.textContent = `${bucketMinPct}%`;
+        labelsEl.appendChild(lbl);
+    });
+
+    // Position cutoff line
+    if (thresholdPct > 0 && thresholdPct < 100) {
+        const barsRect = barsEl.getBoundingClientRect();
+        const wrapRect = wrapEl.getBoundingClientRect();
+        const leftOffset = (thresholdPct / 100) * barsEl.offsetWidth;
+        cutoffEl.style.left = leftOffset + 'px';
+        cutoffEl.style.display = 'block';
+    } else {
+        cutoffEl.style.display = 'none';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Threshold logic — computed from histogram data
+// ---------------------------------------------------------------------------
+function computeKeepFilter(thresholdPct) {
+    let kept = 0, filtered = 0;
+    HISTOGRAM_DATA.forEach((bucket, idx) => {
+        const bucketMinPct = idx * 10;
+        if (bucketMinPct >= thresholdPct) {
+            kept += bucket.count;
+        } else {
+            filtered += bucket.count;
+        }
+    });
+    return { kept, filtered };
+}
+
+function onThresholdChange(val) {
+    const pct = parseInt(val, 10);
+    const threshold = pct / 100;
+
+    document.getElementById('threshold-display').textContent = pct + '%';
+    document.getElementById('stat-threshold').textContent = pct + '%';
+
+    const { kept, filtered } = computeKeepFilter(pct);
+    const total = kept + filtered;
+    const pctRetained = total > 0 ? Math.round((kept / total) * 100) : 100;
+
+    document.getElementById('kept-count').textContent = kept.toLocaleString();
+    document.getElementById('filtered-count').textContent = filtered.toLocaleString();
+    document.getElementById('kept-pct').textContent = pctRetained + '%';
+    document.getElementById('stat-kept').textContent = kept.toLocaleString();
+    document.getElementById('stat-filtered').textContent = filtered.toLocaleString();
+
+    renderHistogram(pct);
+}
+
+// ---------------------------------------------------------------------------
+// Strategy table rendering
+// ---------------------------------------------------------------------------
+function renderStrategyTable() {
+    const tbody = document.getElementById('strategy-tbody');
+    tbody.innerHTML = '';
+
+    strategyOrder.forEach((name, idx) => {
+        const s = STRATEGIES_DATA.find(x => x.name === name);
+        if (!s) return;
+        const state = strategyState[name];
+
+        const tr = document.createElement('tr');
+        tr.dataset.strategy = name;
+        tr.style.cssText = 'transition: opacity 0.15s;';
+        if (!state.enabled) tr.style.opacity = '0.45';
+
+        const badge = (n) => `<span class="mono" style="font-size:0.75rem; padding:0.1rem 0.4rem; background:var(--charcoal-alt); border:1px solid var(--border-dark);">${n.toFixed(1)}</span>`;
+
+        tr.innerHTML = `
+            <td class="mono text-muted" style="font-size:0.75rem;">${idx + 1}</td>
+            <td>
+                <span class="mono" style="font-size:0.85rem; color:${state.enabled ? 'var(--snap-yellow)' : 'var(--text-muted)'};">${name}</span>
+                <br><span class="text-muted" style="font-size:0.7rem;">${s.description}</span>
+            </td>
+            <td style="text-align:center;">${badge(s.default_confidence)}</td>
+            <td class="mono" style="text-align:center; font-size:0.8rem;">${s.match_count.toLocaleString()}</td>
+            <td class="mono text-success" style="text-align:center; font-size:0.8rem;">${s.best_count.toLocaleString()}</td>
+            <td style="text-align:center;">
+                <input type="checkbox" data-strategy="${name}" class="strategy-enabled"
+                    ${state.enabled ? 'checked' : ''}
+                    style="accent-color:var(--snap-yellow); width:16px; height:16px; cursor:pointer;"
+                    onchange="toggleStrategy('${name}', this.checked)">
+            </td>
+            <td style="text-align:center;">
+                <input type="number" data-strategy="${name}" class="strategy-weight"
+                    value="${state.weight}" min="0" max="1" step="0.1"
+                    style="width:64px; background:var(--charcoal-alt); border:1px solid var(--border-dark); color:var(--text-primary); padding:0.25rem 0.4rem; font-size:0.8rem; font-family:'JetBrains Mono',monospace; text-align:center;"
+                    oninput="updateWeight('${name}', this.value)">
+            </td>
+            <td style="text-align:center;">
+                <div style="display:flex; gap:2px; justify-content:center;">
+                    <button onclick="moveStrategy('${name}', -1)" title="Move up"
+                        style="background:none; border:1px solid var(--border-dark); color:var(--text-primary); padding:0.15rem 0.4rem; cursor:pointer; font-size:0.75rem; line-height:1;"
+                        ${idx === 0 ? 'disabled style="opacity:0.3;pointer-events:none;border:1px solid var(--border-dark);background:none;color:var(--text-primary);padding:0.15rem 0.4rem;font-size:0.75rem;"' : ''}>
+                        ↑
+                    </button>
+                    <button onclick="moveStrategy('${name}', 1)" title="Move down"
+                        style="background:none; border:1px solid var(--border-dark); color:var(--text-primary); padding:0.15rem 0.4rem; cursor:pointer; font-size:0.75rem; line-height:1;"
+                        ${idx === strategyOrder.length - 1 ? 'disabled style="opacity:0.3;pointer-events:none;border:1px solid var(--border-dark);background:none;color:var(--text-primary);padding:0.15rem 0.4rem;font-size:0.75rem;"' : ''}>
+                        ↓
+                    </button>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function toggleStrategy(name, enabled) {
+    strategyState[name].enabled = enabled;
+    renderStrategyTable();
+}
+
+function updateWeight(name, val) {
+    const n = parseFloat(val);
+    if (!isNaN(n) && n >= 0 && n <= 1) {
+        strategyState[name].weight = n;
+    }
+}
+
+function moveStrategy(name, direction) {
+    const idx = strategyOrder.indexOf(name);
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= strategyOrder.length) return;
+    strategyOrder.splice(idx, 1);
+    strategyOrder.splice(newIdx, 0, name);
+    renderStrategyTable();
+}
+
+// ---------------------------------------------------------------------------
+// Build config payload from current UI state
+// ---------------------------------------------------------------------------
+function buildConfigPayload() {
+    const threshold = parseInt(document.getElementById('threshold-slider').value, 10) / 100;
+    const weights = {};
+    strategyOrder.forEach((name, idx) => {
+        const state = strategyState[name];
+        weights[name] = state.weight;
+        weights[`${name}_enabled`] = state.enabled;
+        weights[`${name}_order`] = idx;
+    });
+    return { match_confidence_min: threshold, strategy_weights_json: weights };
+}
+
+// ---------------------------------------------------------------------------
+// Save as default
+// ---------------------------------------------------------------------------
+async function saveAsDefault() {
+    const payload = buildConfigPayload();
+    try {
+        const resp = await fetch('/api/match-preferences', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        showToast('Default preferences saved.', 'success');
+    } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Save as preset
+// ---------------------------------------------------------------------------
+async function savePreset() {
+    const name = document.getElementById('preset-name-input').value.trim();
+    const desc = document.getElementById('preset-desc-input').value.trim();
+    const statusEl = document.getElementById('preset-save-status');
+
+    if (!name) {
+        statusEl.textContent = 'Name is required.';
+        statusEl.style.color = 'var(--danger)';
+        return;
+    }
+
+    const payload = buildConfigPayload();
+    const body = {
+        name,
+        description: desc,
+        config_json: payload,
+    };
+
+    statusEl.textContent = 'Saving...';
+    statusEl.style.color = 'var(--text-muted)';
+
+    try {
+        const resp = await fetch('/api/pipeline-configs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // Add to local list
+        PRESETS_DATA.unshift({
+            id: data.id,
+            name: data.name,
+            description: desc,
+            config_json: payload,
+            is_default: false,
+            created_at: new Date().toISOString(),
+            updated_at: null,
+        });
+
+        document.getElementById('preset-modal').classList.add('hidden');
+        document.getElementById('preset-name-input').value = '';
+        document.getElementById('preset-desc-input').value = '';
+        statusEl.textContent = '';
+
+        renderPresets();
+        showToast(`Preset "${name}" saved.`, 'success');
+    } catch (e) {
+        statusEl.textContent = 'Save failed: ' + e.message;
+        statusEl.style.color = 'var(--danger)';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Load preset
+// ---------------------------------------------------------------------------
+function loadPreset(presetId) {
+    const preset = PRESETS_DATA.find(p => p.id === presetId);
+    if (!preset || !preset.config_json) return;
+
+    const cfg = preset.config_json;
+
+    // Restore threshold
+    const thresholdPct = Math.round((cfg.match_confidence_min || 0) * 100);
+    document.getElementById('threshold-slider').value = thresholdPct;
+
+    // Restore weights/enabled/order from config
+    const weights = cfg.strategy_weights_json || {};
+
+    // Rebuild order from _order keys, fall back to current order
+    const ordered = [...strategyOrder];
+    ordered.sort((a, b) => {
+        const oa = weights[`${a}_order`];
+        const ob = weights[`${b}_order`];
+        if (oa === undefined && ob === undefined) return 0;
+        if (oa === undefined) return 1;
+        if (ob === undefined) return -1;
+        return oa - ob;
+    });
+    strategyOrder = ordered;
+
+    // Restore state
+    strategyOrder.forEach(name => {
+        const w = weights[name];
+        const enabled = weights[`${name}_enabled`];
+        if (w !== undefined) strategyState[name].weight = w;
+        if (enabled !== undefined) strategyState[name].enabled = enabled;
+    });
+
+    onThresholdChange(thresholdPct);
+    renderStrategyTable();
+    showToast(`Preset "${preset.name}" loaded.`, 'success');
+}
+
+// ---------------------------------------------------------------------------
+// Delete preset
+// ---------------------------------------------------------------------------
+async function deletePreset(presetId) {
+    if (!confirm('Delete this preset?')) return;
+    try {
+        const resp = await fetch(`/api/pipeline-configs/${presetId}`, { method: 'DELETE' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const idx = PRESETS_DATA.findIndex(p => p.id === presetId);
+        if (idx !== -1) PRESETS_DATA.splice(idx, 1);
+        renderPresets();
+        showToast('Preset deleted.', 'success');
+    } catch (e) {
+        showToast('Delete failed: ' + e.message, 'error');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Render presets list
+// ---------------------------------------------------------------------------
+function renderPresets() {
+    const container = document.getElementById('presets-list');
+    const noMsg = document.getElementById('no-presets-msg');
+
+    if (!PRESETS_DATA || PRESETS_DATA.length === 0) {
+        container.innerHTML = '';
+        noMsg.style.display = 'block';
+        return;
+    }
+
+    noMsg.style.display = 'none';
+    container.innerHTML = '';
+
+    PRESETS_DATA.forEach(p => {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex; align-items:center; gap:0.75rem; padding:0.6rem 0; border-bottom:1px solid var(--border-dark); flex-wrap:wrap;';
+
+        const nameBlock = document.createElement('div');
+        nameBlock.style.cssText = 'flex:1; min-width: 0;';
+        nameBlock.innerHTML = `
+            <span style="font-weight:700; font-size:0.875rem;">${escHtml(p.name)}</span>
+            ${p.description ? `<br><span class="text-muted" style="font-size:0.75rem;">${escHtml(p.description)}</span>` : ''}
+            <br><span class="mono text-muted" style="font-size:0.65rem;">${p.created_at ? p.created_at.slice(0, 10) : ''}</span>
+        `;
+
+        const loadBtn = document.createElement('button');
+        loadBtn.className = 'btn-outline btn-small';
+        loadBtn.textContent = 'LOAD';
+        loadBtn.onclick = () => loadPreset(p.id);
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn-danger btn-small';
+        delBtn.textContent = 'DELETE';
+        delBtn.onclick = () => deletePreset(p.id);
+
+        div.appendChild(nameBlock);
+        div.appendChild(loadBtn);
+        div.appendChild(delBtn);
+        container.appendChild(div);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Apply to Job preview (client-side simulation)
+// ---------------------------------------------------------------------------
+function applyPreview() {
+    const statusEl = document.getElementById('preview-status');
+    const resultEl = document.getElementById('preview-result');
+
+    statusEl.textContent = 'Computing preview...';
+
+    const thresholdPct = parseInt(document.getElementById('threshold-slider').value, 10);
+    const activeStrategies = strategyOrder.filter(name => strategyState[name].enabled);
+
+    const { kept, filtered } = computeKeepFilter(thresholdPct);
+
+    document.getElementById('preview-kept').textContent = kept.toLocaleString();
+    document.getElementById('preview-filtered').textContent = filtered.toLocaleString();
+    document.getElementById('preview-active-strategies').textContent = activeStrategies.length + ' / 7';
+
+    resultEl.style.display = 'block';
+    statusEl.textContent = '';
+}
+
+// ---------------------------------------------------------------------------
+// Toast
+// ---------------------------------------------------------------------------
+let toastTimer = null;
+function showToast(msg, type) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.color = type === 'error' ? 'var(--danger)' : (type === 'success' ? 'var(--success)' : 'var(--text-primary)');
+    el.style.borderColor = type === 'error' ? 'var(--danger)' : (type === 'success' ? 'var(--success)' : 'var(--border-dark)');
+    el.style.opacity = '1';
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.style.opacity = '0'; }, 2800);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+document.addEventListener('DOMContentLoaded', function() {
+    const initialPct = Math.round(INITIAL_THRESHOLD * 100);
+    onThresholdChange(initialPct);
+    renderStrategyTable();
+    renderPresets();
+});
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

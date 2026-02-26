@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav class="breadcrumb mb-3">
+    <a href="/results/{{ job_id }}" class="text-muted">Results</a>
+    <span class="separator">/</span>
+    <span class="text-yellow">Duplicates</span>
+</nav>
+
+<!-- Sticky header -->
+<div class="sticky-header" style="flex-wrap: wrap; gap: 0.75rem; align-items: center;">
+    <h1 class="mb-0">Duplicate Detection</h1>
+    <div class="gap-row" style="flex-wrap: wrap; align-items: center;">
+        <span class="mono text-muted" style="font-size: 0.8rem;">
+            Job #{{ job_id }}{% if job.upload_filename %} &mdash; {{ job.upload_filename }}{% endif %}
+        </span>
+        <a href="/results/{{ job_id }}" class="btn-outline btn-small">BACK TO RESULTS</a>
+    </div>
+</div>
+
+<!-- Summary stats -->
+<div class="stats-grid mb-3">
+    <div class="stat-card">
+        <p class="stat-label">Total Assets</p>
+        <p class="stat-value">{{ stats.total_assets }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Unique Hashes</p>
+        <p class="stat-value white">{{ stats.unique_hashes }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Duplicate Groups</p>
+        <p class="stat-value" style="color: {% if stats.duplicate_groups > 0 %}var(--warning){% else %}var(--success){% endif %};">
+            {{ stats.duplicate_groups }}
+        </p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Duplicate Files</p>
+        <p class="stat-value" style="color: {% if stats.duplicate_files > 0 %}var(--danger){% else %}var(--success){% endif %};">
+            {{ stats.duplicate_files }}
+        </p>
+    </div>
+</div>
+
+<!-- Scan button + results area -->
+<div class="mb-3">
+    <button
+        class="btn-primary mb-2"
+        hx-get="/api/jobs/{{ job_id }}/duplicates/html"
+        hx-target="#dup-results"
+        hx-swap="innerHTML"
+        hx-indicator="#dup-spinner"
+    >
+        SCAN FOR DUPLICATES
+    </button>
+
+    <!-- Progress indicator -->
+    <span id="dup-spinner" class="htmx-indicator mono text-muted" style="font-size: 0.8rem; margin-left: 1rem;">
+        <span class="spinner" style="width: 16px; height: 16px; border-width: 2px; display: inline-block; margin: 0 0.4rem -3px 0;"></span>
+        Scanning...
+    </span>
+</div>
+
+<!-- Results container (populated by htmx) -->
+<div id="dup-results">
+    {% if stats.duplicate_groups == 0 %}
+    <div class="empty-state">
+        <span class="material-symbols-outlined text-success" style="font-size: 2.5rem; display: block; margin-bottom: 1rem;">check_circle</span>
+        <p class="text-success mono">No duplicates found &mdash; all files are unique</p>
+        <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">Click "Scan for Duplicates" to re-check.</p>
+    </div>
+    {% else %}
+    <p class="mono text-muted mb-2" style="font-size: 0.8rem;">
+        Click "Scan for Duplicates" to load duplicate groups.
+    </p>
+    {% endif %}
+</div>
+
+<style>
+/* Duplicate-group styles — used by both static and htmx-loaded fragments */
+.dup-group {
+    background: var(--charcoal);
+    border: 1px solid var(--border-dark);
+    margin-bottom: 1.25rem;
+}
+
+.dup-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border-dark);
+}
+
+.dup-group-header:hover {
+    background: rgba(255, 252, 0, 0.04);
+}
+
+.dup-hash {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--snap-yellow);
+}
+
+.dup-count-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.2rem 0.5rem;
+    background: rgba(255, 252, 0, 0.12);
+    color: var(--snap-yellow);
+    border: 1px solid rgba(255, 252, 0, 0.3);
+    text-transform: uppercase;
+    margin-left: 0.75rem;
+}
+
+.dup-group-body {
+    padding: 0.75rem 1rem;
+}
+
+.dup-group-body table {
+    width: 100%;
+    margin-bottom: 0.75rem;
+    font-size: 0.82rem;
+}
+
+.dup-group-body table th {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.dup-row-best {
+    background: rgba(0, 255, 135, 0.06);
+}
+
+.dup-row-best td:first-child::before {
+    content: "BEST";
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 0.1rem 0.35rem;
+    background: var(--success);
+    color: #000;
+    margin-right: 0.5rem;
+    vertical-align: middle;
+}
+
+.dup-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.dup-actions button {
+    font-size: 0.78rem;
+}
+
+.dup-status {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+    display: none;
+}
+</style>
+
+<script>
+function toggleDupGroup(id) {
+    var body = document.getElementById('dup-body-' + id);
+    var icon = document.getElementById('dup-icon-' + id);
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        icon.textContent = 'expand_less';
+    } else {
+        body.style.display = 'none';
+        icon.textContent = 'expand_more';
+    }
+}
+
+async function resolveDuplicate(hash, keepAssetId, action, btnEl) {
+    var groupEl = btnEl.closest('.dup-group');
+    var statusEl = groupEl.querySelector('.dup-status');
+    btnEl.disabled = true;
+    statusEl.style.display = 'block';
+    statusEl.style.color = 'var(--snap-yellow)';
+    statusEl.textContent = 'Resolving...';
+
+    try {
+        var resp = await fetch('/api/jobs/{{ job_id }}/duplicates/resolve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash: hash, keep_asset_id: keepAssetId, action: action }),
+        });
+        var data = await resp.json();
+        if (resp.ok && data.resolved) {
+            statusEl.style.color = 'var(--success)';
+            statusEl.textContent = 'Resolved — kept asset #' + data.kept;
+            groupEl.style.opacity = '0.5';
+            groupEl.querySelector('.dup-actions').innerHTML =
+                '<span class="mono" style="font-size:0.75rem; color:var(--success);">RESOLVED</span>';
+        } else {
+            statusEl.style.color = 'var(--danger)';
+            statusEl.textContent = 'Failed: ' + (data.detail || 'Unknown error');
+            btnEl.disabled = false;
+        }
+    } catch (err) {
+        statusEl.style.color = 'var(--danger)';
+        statusEl.textContent = 'Error: ' + err.message;
+        btnEl.disabled = false;
+    }
+}
+
+async function dismissGroup(hash, btnEl) {
+    var groupEl = btnEl.closest('.dup-group');
+    groupEl.style.opacity = '0.4';
+    groupEl.querySelector('.dup-actions').innerHTML =
+        '<span class="mono" style="font-size:0.75rem; color:var(--text-muted);">DISMISSED</span>';
+}
+</script>
+{% endblock %}
+
+{# themed: 2026-02-25 #}

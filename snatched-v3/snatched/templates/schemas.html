@@ -1,0 +1,530 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page header -->
+<div class="section-header">
+    <h1 class="mb-0" style="border-left: 4px solid var(--snap-yellow); padding-left: 1rem;">
+        Custom Metadata Schemas
+    </h1>
+</div>
+
+<!-- ============================================================
+     INFO CARD — what custom schemas do
+     ============================================================ -->
+<div class="info-card mb-3">
+    <h3 class="mt-0 text-yellow uppercase tracking-wide" style="font-size: 0.9rem;">
+        What are Custom Schemas?
+    </h3>
+    <p style="font-size: 0.9rem; margin-bottom: 0.75rem;">
+        XMP metadata supports user-defined namespaces. Custom schemas let you define your own
+        metadata fields (e.g. <code>family:event</code>, <code>archive:source</code>) that
+        get embedded into exported XMP sidecar files alongside standard EXIF and Dublin Core fields.
+    </p>
+    <ul class="text-muted mb-0" style="font-size: 0.85rem; padding-left: 1.5rem;">
+        <li>Each schema has a <strong>namespace prefix</strong> (e.g. <code>family</code>) and a <strong>namespace URI</strong>
+            (e.g. <code>https://example.com/ns/family/1.0/</code>)</li>
+        <li>Fields you define appear as editable inputs in the XMP Sidecar Viewer on each asset</li>
+        <li>Exported XMP files reference your namespace so any XMP-aware tool can read them</li>
+        <li>Supported field types: <code>text</code>, <code>number</code>, <code>date</code>, <code>boolean</code>, <code>url</code></li>
+    </ul>
+</div>
+
+<!-- ============================================================
+     CREATE BUTTON
+     ============================================================ -->
+<div class="section-header mb-3" style="justify-content: flex-end;">
+    <button type="button" class="btn-primary"
+            onclick="document.getElementById('schema-create-modal').classList.remove('hidden')">
+        + CREATE SCHEMA
+    </button>
+</div>
+
+<!-- ============================================================
+     SCHEMAS LIST
+     ============================================================ -->
+{% if not schemas %}
+<div class="empty-state" style="border: 1px dashed var(--border-dark);">
+    <p class="text-muted mono" style="font-size: 1rem;">No custom schemas defined yet.</p>
+    <p class="text-dim mb-3" style="font-size: 0.85rem;">
+        Create a schema to start embedding custom metadata into your XMP sidecar files.
+    </p>
+    <button type="button" class="btn-primary"
+            onclick="document.getElementById('schema-create-modal').classList.remove('hidden')">
+        CREATE YOUR FIRST SCHEMA
+    </button>
+</div>
+{% else %}
+<div id="schemas-list">
+    {% for schema in schemas %}
+    <div class="info-card schema-card mb-2" id="schema-card-{{ schema.id }}"
+         style="border-left: 3px solid var(--border-dark);">
+
+        <!-- Schema header row -->
+        <div class="section-header" style="flex-wrap: wrap; margin-bottom: 0;">
+            <div>
+                <span class="mono text-yellow font-black" style="font-size: 1.1rem;">
+                    {{ schema.namespace_prefix }}:
+                </span>
+                <span class="mono text-muted" style="font-size: 0.85rem; margin-left: 0.25rem;">
+                    {{ schema.namespace_uri }}
+                </span>
+            </div>
+            <div class="gap-row" style="gap: 0.5rem; flex-shrink: 0;">
+                <span class="mono" style="font-size: 0.7rem; background: var(--charcoal-alt);
+                       padding: 0.2rem 0.5rem; border: 1px solid var(--border-dark);">
+                    {{ schema.field_count }} field{{ 's' if schema.field_count != 1 else '' }}
+                </span>
+                <button type="button" class="btn-outline btn-xs"
+                        onclick="openEditSchema({{ schema.id }}, {{ schema | tojson | e }})">
+                    EDIT
+                </button>
+                <button type="button" class="btn-danger btn-xs"
+                        onclick="deleteSchema({{ schema.id }}, '{{ schema.namespace_prefix | e }}')">
+                    DELETE
+                </button>
+            </div>
+        </div>
+
+        <!-- Fields table -->
+        {% if schema.fields_json %}
+        <div class="mt-2" style="overflow-x: auto;">
+            <table style="font-size: 0.82rem; margin: 0; width: 100%;">
+                <thead>
+                    <tr>
+                        <th style="width: 35%;">Field Name</th>
+                        <th style="width: 20%;">Type</th>
+                        <th>Default Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for field in schema.fields_json %}
+                    <tr>
+                        <td class="mono">{{ field.name }}</td>
+                        <td class="mono text-muted">{{ field.type }}</td>
+                        <td class="mono text-muted">{{ field.default or '—' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="mono text-muted mt-2 mb-0" style="font-size: 0.82rem;">
+            No fields defined.
+        </p>
+        {% endif %}
+
+        <!-- Created / updated timestamps -->
+        <p class="mono text-muted mt-2 mb-0" style="font-size: 0.7rem;">
+            Created {{ schema.created_at.strftime('%Y-%m-%d') if schema.created_at else '—' }}
+            {% if schema.updated_at and schema.updated_at != schema.created_at %}
+            &middot; Updated {{ schema.updated_at.strftime('%Y-%m-%d') }}
+            {% endif %}
+        </p>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+
+<!-- ============================================================
+     CREATE SCHEMA MODAL
+     ============================================================ -->
+<div id="schema-create-modal" class="modal-overlay hidden"
+     onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-box" style="max-width: 620px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+            <h3 class="mb-0">Create Custom Schema</h3>
+        </div>
+        <div class="modal-body">
+            <div class="gap-row mb-2" style="gap: 1rem; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 160px;">
+                    <label for="create-ns-prefix" style="display: block; font-size: 0.82rem; margin-bottom: 0.35rem;">
+                        Namespace Prefix <span class="text-danger">*</span>
+                    </label>
+                    <input type="text" id="create-ns-prefix" class="mono"
+                           placeholder="e.g. family"
+                           style="width: 100%;"
+                           oninput="updateCreateUri(this.value)">
+                    <small class="text-muted" style="font-size: 0.7rem;">Alphanumeric + underscore only</small>
+                </div>
+                <div style="flex: 2; min-width: 260px;">
+                    <label for="create-ns-uri" style="display: block; font-size: 0.82rem; margin-bottom: 0.35rem;">
+                        Namespace URI <span class="text-danger">*</span>
+                    </label>
+                    <input type="text" id="create-ns-uri" class="mono"
+                           placeholder="e.g. https://example.com/ns/family/1.0/"
+                           style="width: 100%;">
+                    <small class="text-muted" style="font-size: 0.7rem;">Must start with http:// or https://</small>
+                </div>
+            </div>
+
+            <div class="mb-2">
+                <div class="section-header mb-1">
+                    <label style="font-size: 0.82rem; font-weight: 600;">Fields</label>
+                    <button type="button" class="btn-outline btn-xs"
+                            onclick="addFieldRow('create-fields-list')">
+                        + ADD FIELD
+                    </button>
+                </div>
+                <div id="create-fields-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <!-- Field rows injected by JS -->
+                </div>
+                <p id="create-fields-empty" class="mono text-muted mt-1 mb-0" style="font-size: 0.8rem;">
+                    No fields yet. Click "Add Field" to define metadata fields for this schema.
+                </p>
+            </div>
+
+            <p id="create-error" class="mono text-danger mb-1" style="font-size: 0.82rem; min-height: 1.2em;"></p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-outline"
+                    onclick="document.getElementById('schema-create-modal').classList.add('hidden'); resetCreateForm()">
+                Cancel
+            </button>
+            <button type="button" class="btn-primary" onclick="submitCreateSchema()">
+                SAVE SCHEMA
+            </button>
+        </div>
+    </div>
+</div>
+
+
+<!-- ============================================================
+     EDIT SCHEMA MODAL
+     ============================================================ -->
+<div id="schema-edit-modal" class="modal-overlay hidden"
+     onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-box" style="max-width: 620px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+            <h3 class="mb-0">Edit Schema</h3>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-schema-id">
+
+            <div class="gap-row mb-2" style="gap: 1rem; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 160px;">
+                    <label for="edit-ns-prefix" style="display: block; font-size: 0.82rem; margin-bottom: 0.35rem;">
+                        Namespace Prefix <span class="text-danger">*</span>
+                    </label>
+                    <input type="text" id="edit-ns-prefix" class="mono"
+                           placeholder="e.g. family"
+                           style="width: 100%;">
+                    <small class="text-muted" style="font-size: 0.7rem;">Alphanumeric + underscore only</small>
+                </div>
+                <div style="flex: 2; min-width: 260px;">
+                    <label for="edit-ns-uri" style="display: block; font-size: 0.82rem; margin-bottom: 0.35rem;">
+                        Namespace URI <span class="text-danger">*</span>
+                    </label>
+                    <input type="text" id="edit-ns-uri" class="mono"
+                           placeholder="e.g. https://example.com/ns/family/1.0/"
+                           style="width: 100%;">
+                    <small class="text-muted" style="font-size: 0.7rem;">Must start with http:// or https://</small>
+                </div>
+            </div>
+
+            <div class="mb-2">
+                <div class="section-header mb-1">
+                    <label style="font-size: 0.82rem; font-weight: 600;">Fields</label>
+                    <button type="button" class="btn-outline btn-xs"
+                            onclick="addFieldRow('edit-fields-list')">
+                        + ADD FIELD
+                    </button>
+                </div>
+                <div id="edit-fields-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <!-- Field rows injected by JS -->
+                </div>
+                <p id="edit-fields-empty" class="mono text-muted mt-1 mb-0" style="font-size: 0.8rem;"></p>
+            </div>
+
+            <p id="edit-error" class="mono text-danger mb-1" style="font-size: 0.82rem; min-height: 1.2em;"></p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-outline"
+                    onclick="document.getElementById('schema-edit-modal').classList.add('hidden')">
+                Cancel
+            </button>
+            <button type="button" class="btn-primary" onclick="submitEditSchema()">
+                SAVE CHANGES
+            </button>
+        </div>
+    </div>
+</div>
+
+
+<!-- ============================================================
+     MINIMAL CSS — field-row and schema-card hover
+     (not in style.css — kept minimal)
+     ============================================================ -->
+<style>
+/* Field row in schema modals */
+.field-row {
+    display: grid;
+    grid-template-columns: 1fr 100px 1fr 32px;
+    gap: 0.4rem;
+    align-items: center;
+    background: var(--charcoal-alt);
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border-dark);
+}
+.field-row input, .field-row select {
+    font-size: 0.82rem;
+    padding: 0.3rem 0.4rem;
+    margin: 0;
+}
+.field-row .btn-remove {
+    background: none;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.2rem 0.4rem;
+    line-height: 1;
+}
+.field-row .btn-remove:hover {
+    background: var(--danger);
+    color: white;
+}
+
+/* Schema card hover effect */
+.schema-card { transition: border-color 0.15s; }
+.schema-card:hover { border-left-color: var(--snap-yellow) !important; }
+</style>
+
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+const FIELD_TYPES = ['text', 'number', 'date', 'boolean', 'url'];
+
+// ============================================================
+// Field row builder
+// ============================================================
+function addFieldRow(listId, field) {
+    field = field || { name: '', type: 'text', default: '' };
+    const list = document.getElementById(listId);
+    const emptyMsg = document.getElementById(listId.replace('-list', '-empty'));
+
+    const row = document.createElement('div');
+    row.className = 'field-row';
+
+    // Name input
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'field_name';
+    nameInput.className = 'mono field-name-input';
+    nameInput.value = field.name || '';
+    nameInput.setAttribute('data-role', 'name');
+
+    // Type select
+    const typeSelect = document.createElement('select');
+    typeSelect.setAttribute('data-role', 'type');
+    FIELD_TYPES.forEach(function(t) {
+        const opt = document.createElement('option');
+        opt.value = t;
+        opt.textContent = t;
+        if (t === (field.type || 'text')) opt.selected = true;
+        typeSelect.appendChild(opt);
+    });
+
+    // Default value
+    const defaultInput = document.createElement('input');
+    defaultInput.type = 'text';
+    defaultInput.placeholder = 'default value';
+    defaultInput.value = field.default || '';
+    defaultInput.setAttribute('data-role', 'default');
+
+    // Remove button
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn-remove';
+    removeBtn.textContent = '✕';
+    removeBtn.onclick = function() {
+        row.remove();
+        updateFieldsEmptyMsg(listId);
+    };
+
+    row.appendChild(nameInput);
+    row.appendChild(typeSelect);
+    row.appendChild(defaultInput);
+    row.appendChild(removeBtn);
+    list.appendChild(row);
+
+    if (emptyMsg) emptyMsg.style.display = 'none';
+}
+
+function updateFieldsEmptyMsg(listId) {
+    const list = document.getElementById(listId);
+    const emptyMsg = document.getElementById(listId.replace('-list', '-empty'));
+    if (!emptyMsg) return;
+    emptyMsg.style.display = list.children.length === 0 ? '' : 'none';
+}
+
+function collectFields(listId) {
+    const rows = document.querySelectorAll('#' + listId + ' .field-row');
+    const fields = [];
+    let error = null;
+    rows.forEach(function(row) {
+        const name = row.querySelector('[data-role="name"]').value.trim();
+        const type = row.querySelector('[data-role="type"]').value;
+        const dflt = row.querySelector('[data-role="default"]').value.trim();
+        if (!name) {
+            error = 'All fields must have a name.';
+            return;
+        }
+        if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+            error = 'Field name "' + name + '" must be alphanumeric + underscore only.';
+            return;
+        }
+        fields.push({ name: name, type: type, default: dflt });
+    });
+    return { fields: fields, error: error };
+}
+
+// ============================================================
+// Auto-generate URI from prefix
+// ============================================================
+function updateCreateUri(prefix) {
+    const uriInput = document.getElementById('create-ns-uri');
+    if (!uriInput.value || uriInput.dataset.autoGenerated === '1') {
+        if (prefix && /^[a-zA-Z0-9_]+$/.test(prefix)) {
+            uriInput.value = 'https://snatched.app/ns/' + prefix.toLowerCase() + '/1.0/';
+            uriInput.dataset.autoGenerated = '1';
+        }
+    }
+}
+document.addEventListener('DOMContentLoaded', function() {
+    const createUri = document.getElementById('create-ns-uri');
+    if (createUri) {
+        createUri.addEventListener('input', function() {
+            createUri.dataset.autoGenerated = '0';
+        });
+    }
+});
+
+// ============================================================
+// CREATE SCHEMA
+// ============================================================
+function resetCreateForm() {
+    document.getElementById('create-ns-prefix').value = '';
+    document.getElementById('create-ns-uri').value = '';
+    document.getElementById('create-ns-uri').dataset.autoGenerated = '0';
+    document.getElementById('create-fields-list').innerHTML = '';
+    document.getElementById('create-error').textContent = '';
+    updateFieldsEmptyMsg('create-fields-list');
+}
+
+async function submitCreateSchema() {
+    const prefix = document.getElementById('create-ns-prefix').value.trim();
+    const uri = document.getElementById('create-ns-uri').value.trim();
+    const errEl = document.getElementById('create-error');
+    errEl.textContent = '';
+
+    if (!prefix) { errEl.textContent = 'Namespace prefix is required.'; return; }
+    if (!uri) { errEl.textContent = 'Namespace URI is required.'; return; }
+
+    const { fields, error } = collectFields('create-fields-list');
+    if (error) { errEl.textContent = error; return; }
+
+    try {
+        const resp = await fetch('/api/schemas', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ namespace_prefix: prefix, namespace_uri: uri, fields: fields }),
+        });
+        const data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+            errEl.textContent = data.detail || 'Error: HTTP ' + resp.status;
+            return;
+        }
+        // Success — reload the page to show the new schema
+        window.location.reload();
+    } catch (err) {
+        errEl.textContent = 'Network error: ' + err.message;
+    }
+}
+
+// ============================================================
+// EDIT SCHEMA
+// ============================================================
+function openEditSchema(schemaId, schema) {
+    document.getElementById('edit-schema-id').value = schemaId;
+    document.getElementById('edit-ns-prefix').value = schema.namespace_prefix || '';
+    document.getElementById('edit-ns-uri').value = schema.namespace_uri || '';
+    document.getElementById('edit-error').textContent = '';
+
+    // Populate field rows
+    const list = document.getElementById('edit-fields-list');
+    list.innerHTML = '';
+    const fields = schema.fields_json || [];
+    fields.forEach(function(f) { addFieldRow('edit-fields-list', f); });
+    updateFieldsEmptyMsg('edit-fields-list');
+
+    document.getElementById('schema-edit-modal').classList.remove('hidden');
+}
+
+async function submitEditSchema() {
+    const schemaId = document.getElementById('edit-schema-id').value;
+    const prefix = document.getElementById('edit-ns-prefix').value.trim();
+    const uri = document.getElementById('edit-ns-uri').value.trim();
+    const errEl = document.getElementById('edit-error');
+    errEl.textContent = '';
+
+    if (!prefix) { errEl.textContent = 'Namespace prefix is required.'; return; }
+    if (!uri) { errEl.textContent = 'Namespace URI is required.'; return; }
+
+    const { fields, error } = collectFields('edit-fields-list');
+    if (error) { errEl.textContent = error; return; }
+
+    try {
+        const resp = await fetch('/api/schemas/' + schemaId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ namespace_prefix: prefix, namespace_uri: uri, fields: fields }),
+        });
+        const data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+            errEl.textContent = data.detail || 'Error: HTTP ' + resp.status;
+            return;
+        }
+        window.location.reload();
+    } catch (err) {
+        errEl.textContent = 'Network error: ' + err.message;
+    }
+}
+
+// ============================================================
+// DELETE SCHEMA
+// ============================================================
+async function deleteSchema(schemaId, prefix) {
+    if (!confirm('Delete schema "' + prefix + ':"?\n\nThis cannot be undone.')) return;
+
+    try {
+        const resp = await fetch('/api/schemas/' + schemaId, { method: 'DELETE' });
+        if (!resp.ok) {
+            const data = await resp.json().catch(function() { return {}; });
+            alert('Delete failed: ' + (data.detail || 'HTTP ' + resp.status));
+            return;
+        }
+        // Remove the card from the DOM without a full reload
+        const card = document.getElementById('schema-card-' + schemaId);
+        if (card) {
+            card.style.transition = 'opacity 0.2s';
+            card.style.opacity = '0';
+            setTimeout(function() {
+                card.remove();
+                // If no schemas left, show the empty state
+                const list = document.getElementById('schemas-list');
+                if (list && list.children.length === 0) {
+                    list.innerHTML = '<div class="empty-state" style="border:1px dashed var(--border-dark);">'
+                        + '<p class="text-muted mono">All schemas deleted.</p></div>';
+                }
+            }, 200);
+        }
+    } catch (err) {
+        alert('Network error: ' + err.message);
+    }
+}
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Header -->
+<div class="section-header">
+    <div>
+        <h1 class="mb-0">
+            Job Group
+        </h1>
+        <p class="mono text-muted mb-0" style="font-size: 0.8rem;">
+            <span class="material-symbols-outlined icon-sm">link</span>
+            {{ group_id }}
+        </p>
+    </div>
+    <a href="/dashboard" class="btn-outline">Back to Dashboard</a>
+</div>
+
+<!-- Summary bar -->
+<div class="stats-grid mb-3">
+    <div class="stat-card">
+        <p class="stat-label">Jobs in Group</p>
+        <p class="stat-value">{{ jobs | length }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Completed</p>
+        <p class="stat-value green">{{ jobs | selectattr('status', 'equalto', 'completed') | list | length }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Failed</p>
+        <p class="stat-value red">{{ jobs | selectattr('status', 'equalto', 'failed') | list | length }}</p>
+    </div>
+</div>
+
+<!-- Job cards -->
+<section>
+    <h2 class="mb-2">Linked Jobs</h2>
+
+    {% if jobs %}
+    <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+        {% for job in jobs %}
+        <div class="info-card" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+            <!-- Status indicator -->
+            <div style="flex-shrink: 0;">
+                {% if job.status == 'completed' %}
+                <span class="material-symbols-outlined text-success" style="font-size: 1.5rem; vertical-align: middle;">check_circle</span>
+                {% elif job.status == 'failed' %}
+                <span class="material-symbols-outlined text-danger" style="font-size: 1.5rem; vertical-align: middle;">error</span>
+                {% elif job.status == 'running' %}
+                <span class="material-symbols-outlined text-yellow" style="font-size: 1.5rem; vertical-align: middle;">sync</span>
+                {% elif job.status == 'pending' %}
+                <span class="material-symbols-outlined text-muted" style="font-size: 1.5rem; vertical-align: middle;">schedule</span>
+                {% else %}
+                <span class="material-symbols-outlined text-muted" style="font-size: 1.5rem; vertical-align: middle;">help</span>
+                {% endif %}
+            </div>
+
+            <!-- Job info -->
+            <div style="flex: 1; min-width: 0;">
+                <p style="margin: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    {{ job.filename or ('Job #' ~ job.id) }}
+                </p>
+                <p class="mono text-muted" style="margin: 0.2rem 0 0 0; font-size: 0.75rem;">
+                    Job #{{ job.id }}
+                    {% if job.created_at %}
+                    &middot; {{ job.created_at[:19] | replace('T', ' ') }}
+                    {% endif %}
+                </p>
+            </div>
+
+            <!-- Status badge -->
+            <div style="flex-shrink: 0;">
+                <span class="status-badge
+                    {%- if job.status == 'completed' %} status-completed
+                    {%- elif job.status == 'failed' %} status-failed
+                    {%- elif job.status == 'running' %} status-running
+                    {%- elif job.status == 'scanned' %} status-scanned
+                    {%- else %} status-cancelled
+                    {%- endif %}">{{ job.status }}</span>
+            </div>
+
+            <!-- Action link -->
+            <div style="flex-shrink: 0; display: flex; gap: 0.5rem;">
+                {% if job.status == 'completed' %}
+                <a href="/results/{{ job.id }}" class="btn-outline btn-small">
+                    Results
+                </a>
+                {% elif job.status == 'running' or job.status == 'pending' %}
+                <a href="/job/{{ job.id }}" class="btn-outline btn-small">
+                    Progress
+                </a>
+                {% else %}
+                <a href="/job/{{ job.id }}" class="btn-secondary btn-small">
+                    Details
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% else %}
+    <div class="empty-state">
+        <p>No jobs found in this group.</p>
+        <a href="/upload" class="btn-primary">NEW UPLOAD</a>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}
+
+{# themed: 2026-02-25 #}

@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- ============================================================
+     PAGE HEADER
+     ============================================================ -->
+<div class="section-header">
+    <h1 class="mb-0 page-title-accent" style="display: flex; align-items: center; gap: 0.6rem;">
+        <span class="material-symbols-outlined text-yellow" style="font-size: 1.6rem; vertical-align: middle;">key</span>
+        API Access Keys
+    </h1>
+    {% if tier_info %}
+    <span class="tier-badge" style="background: {{ tier_info.color }}; color: #000;">
+        {{ tier_info.label }}
+    </span>
+    {% endif %}
+</div>
+
+<!-- ============================================================
+     TIER GATE: Free users see a locked message
+     ============================================================ -->
+{% if tier_info.tier == "free" %}
+<div class="info-card text-center" style="padding: 3rem 2rem;">
+    <span class="material-symbols-outlined text-muted" style="font-size: 3rem; display: block; margin-bottom: 1rem;">lock</span>
+    <h2 class="text-muted mb-2">API Keys Require Pro Tier or Above</h2>
+    <p class="text-muted mb-3" style="max-width: 480px; margin-left: auto; margin-right: auto; font-size: 0.95rem;">
+        Programmatic API access is available on the Pro plan.
+        Upgrade your account to start building integrations with the Snatched API.
+    </p>
+    <button type="button" class="btn-primary"
+            onclick="alert('Plan upgrades coming soon! Follow us for updates.')">
+        UPGRADE TO PRO
+    </button>
+</div>
+
+{% else %}
+<!-- ============================================================
+     STATS BAR
+     ============================================================ -->
+<div class="stats-grid mb-3">
+    <div class="stat-card">
+        <p class="stat-label">Active Keys</p>
+        <p class="stat-value">
+            {{ keys | selectattr('revoked_at', 'none') | list | length }}
+            {% if max_keys is not none %}
+            <span class="text-muted" style="font-size: 1rem; font-weight: 400;">/ {{ max_keys }}</span>
+            {% endif %}
+        </p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Rate Limit</p>
+        <p class="stat-value white">{{ rate_limit_rpm }} <span class="text-muted" style="font-size: 0.85rem; font-weight: 400;">RPM</span></p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Revoked Keys</p>
+        <p class="stat-value white">
+            {{ keys | rejectattr('revoked_at', 'none') | list | length }}
+        </p>
+    </div>
+</div>
+
+<!-- ============================================================
+     CREATE KEY SECTION
+     ============================================================ -->
+<section>
+    <div class="section-header mb-2">
+        <h2 class="mb-0">Create New Key</h2>
+        {% set active_count = keys | selectattr('revoked_at', 'none') | list | length %}
+        {% if max_keys is not none and active_count >= max_keys %}
+        <span class="mono text-danger" style="font-size: 0.8rem;">KEY LIMIT REACHED</span>
+        {% endif %}
+    </div>
+
+    <div class="info-card">
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+            <div style="flex: 1; min-width: 200px;">
+                <label class="mono text-muted uppercase" style="font-size: 0.75rem; letter-spacing: 0.08em; display: block; margin-bottom: 0.4rem;">Key Name</label>
+                <input type="text" id="new-key-name" placeholder="e.g. my-automation"
+                       maxlength="80"
+                       style="width: 100%;"
+                       value="default">
+            </div>
+            <div style="flex: 1; min-width: 200px;">
+                <label class="mono text-muted uppercase" style="font-size: 0.75rem; letter-spacing: 0.08em; display: block; margin-bottom: 0.4rem;">Scopes</label>
+                <select id="new-key-scopes" style="width: 100%;">
+                    <option value="read,write">read,write (full access)</option>
+                    <option value="read">read (read-only)</option>
+                    <option value="write">write (write-only)</option>
+                </select>
+            </div>
+            <div>
+                {% set active_count = keys | selectattr('revoked_at', 'none') | list | length %}
+                <button type="button" class="btn-primary"
+                        id="create-key-btn"
+                        {% if max_keys is not none and active_count >= max_keys %}disabled style="opacity: 0.4; cursor: not-allowed;"{% endif %}
+                        onclick="createApiKey()">
+                    CREATE NEW KEY
+                </button>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================
+     NEW KEY REVEAL (hidden until a key is created)
+     ============================================================ -->
+<div id="new-key-reveal" class="hidden mb-3">
+    <div class="info-card" style="border: 2px solid var(--snap-yellow);">
+        <div style="display: flex; align-items: center; gap: 0.75rem;" class="mb-2">
+            <span class="material-symbols-outlined text-yellow" style="font-size: 1.4rem;">warning</span>
+            <p class="mono text-yellow mb-0" style="font-weight: 700; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.06em;">
+                This key will only be shown once — copy it now!
+            </p>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+            <code id="new-key-token"
+                  class="mono"
+                  style="flex: 1; background: var(--deep-black); border: 1px solid var(--snap-yellow); padding: 0.6rem 1rem; font-size: 0.85rem; color: var(--snap-yellow); word-break: break-all;">
+            </code>
+            <button type="button" class="btn-outline" onclick="copyToken()"
+                    style="flex-shrink: 0;">
+                <span class="material-symbols-outlined icon-sm">content_copy</span>
+                COPY
+            </button>
+        </div>
+        <p class="text-muted mono mt-2 mb-0" style="font-size: 0.75rem;">
+            Store this in a secrets manager or environment variable. It cannot be recovered.
+        </p>
+    </div>
+</div>
+
+<!-- ============================================================
+     KEYS TABLE
+     ============================================================ -->
+<section>
+    <h2 class="mb-2">Your Keys</h2>
+
+    {% if keys %}
+    <div class="info-card" style="padding: 0; overflow: hidden;">
+        <table style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Prefix</th>
+                    <th>Scopes</th>
+                    <th style="text-align: right;">RPM</th>
+                    <th>Created</th>
+                    <th>Last Used</th>
+                    <th style="text-align: center;">Status</th>
+                    <th style="text-align: right;">Action</th>
+                </tr>
+            </thead>
+            <tbody id="keys-table-body">
+                {% for key in keys %}
+                {% set is_revoked = key.revoked_at is not none %}
+                <tr id="key-row-{{ key.id }}"
+                    {% if is_revoked %}style="opacity: 0.45;"{% endif %}>
+                    <!-- Name -->
+                    <td style="font-weight: 700;
+                                {% if is_revoked %}text-decoration: line-through; color: var(--text-muted);{% endif %}">
+                        {{ key.name }}
+                    </td>
+                    <!-- Prefix -->
+                    <td>
+                        <code class="mono" style="font-size: 0.8rem; color: {% if is_revoked %}var(--text-muted){% else %}var(--snap-yellow){% endif %};">
+                            {{ key.key_prefix }}...
+                        </code>
+                    </td>
+                    <!-- Scopes -->
+                    <td>
+                        {% for scope in key.scopes.split(',') %}
+                        <span class="mono badge" style="font-size: 0.7rem; margin-right: 0.3rem;
+                                                   color: {% if is_revoked %}var(--text-muted){% else %}var(--text-primary){% endif %};">
+                            {{ scope.strip() }}
+                        </span>
+                        {% endfor %}
+                    </td>
+                    <!-- RPM -->
+                    <td style="text-align: right;" class="text-muted mono">
+                        {{ key.rate_limit_rpm }}
+                    </td>
+                    <!-- Created -->
+                    <td class="text-muted mono" style="font-size: 0.8rem;">
+                        {{ key.created_at[:10] if key.created_at else "—" }}
+                    </td>
+                    <!-- Last Used -->
+                    <td class="mono" style="font-size: 0.8rem;">
+                        {% if key.last_used_at %}
+                            <span class="text-muted">{{ key.last_used_at[:10] }}</span>
+                        {% else %}
+                            <span class="text-dim">Never</span>
+                        {% endif %}
+                    </td>
+                    <!-- Status -->
+                    <td style="text-align: center;">
+                        {% if is_revoked %}
+                        <span class="mono" style="font-size: 0.7rem; font-weight: 800; color: var(--danger); border: 1px solid var(--danger); padding: 0.15rem 0.5rem; letter-spacing: 0.08em;">
+                            REVOKED
+                        </span>
+                        {% else %}
+                        <span class="mono" style="font-size: 0.7rem; font-weight: 800; color: var(--success); border: 1px solid var(--success); padding: 0.15rem 0.5rem; letter-spacing: 0.08em;">
+                            ACTIVE
+                        </span>
+                        {% endif %}
+                    </td>
+                    <!-- Revoke action -->
+                    <td style="text-align: right;">
+                        {% if not is_revoked %}
+                        <button type="button"
+                                id="revoke-btn-{{ key.id }}"
+                                class="btn-danger-sm"
+                                onclick="revokeKey({{ key.id }}, '{{ key.name | e }}')">
+                            <span class="material-symbols-outlined icon-sm">block</span>
+                            REVOKE
+                        </button>
+                        {% else %}
+                        <span class="mono text-muted" style="font-size: 0.7rem;">
+                            {{ key.revoked_at[:10] if key.revoked_at else "" }}
+                        </span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% else %}
+    <div class="info-card text-center" style="padding: 2.5rem 1rem;">
+        <span class="material-symbols-outlined text-muted" style="font-size: 2.5rem; display: block; margin-bottom: 0.75rem;">key_off</span>
+        <p class="text-muted mb-0" style="font-size: 0.95rem;">No API keys yet. Create your first key above.</p>
+    </div>
+    {% endif %}
+</section>
+
+<!-- ============================================================
+     USAGE NOTES
+     ============================================================ -->
+<section>
+    <h2 class="mb-2">Using the API</h2>
+    <div class="info-card">
+        <p class="mono text-muted uppercase mb-2" style="font-size: 0.75rem; letter-spacing: 0.08em;">Authentication</p>
+        <p class="mb-2" style="font-size: 0.9rem;">Pass your API key in the <code class="mono">Authorization</code> header:</p>
+        <pre class="mb-3"><code class="mono text-yellow" style="font-size: 0.82rem;">Authorization: Bearer sn_&lt;your-key&gt;</code></pre>
+
+        <p class="mono text-muted uppercase mb-2" style="font-size: 0.75rem; letter-spacing: 0.08em;">Rate Limits</p>
+        <p class="mb-0" style="font-size: 0.9rem;">
+            Your plan allows <strong class="mono text-yellow">{{ rate_limit_rpm }} requests per minute</strong>.
+            Exceeding this limit returns HTTP 429.
+            {% if max_keys is not none %}
+            You can have up to <strong class="mono text-yellow">{{ max_keys }} active keys</strong> on your current plan.
+            {% else %}
+            You have <strong class="mono text-yellow">unlimited active keys</strong> on your current plan.
+            {% endif %}
+        </p>
+    </div>
+</section>
+{% endif %}
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+(function () {
+    "use strict";
+
+    // ── Create API key ─────────────────────────────────────────────────────
+    async function createApiKey() {
+        const name   = document.getElementById("new-key-name").value.trim() || "default";
+        const scopes = document.getElementById("new-key-scopes").value;
+        const btn    = document.getElementById("create-key-btn");
+
+        btn.disabled = true;
+        btn.textContent = "CREATING...";
+
+        // Hide any previous reveal
+        document.getElementById("new-key-reveal").classList.add("hidden");
+
+        try {
+            const resp = await fetch("/api/keys", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, scopes }),
+            });
+
+            const data = await resp.json();
+
+            if (!resp.ok) {
+                alert("Error: " + (data.detail || resp.statusText));
+                btn.disabled = false;
+                btn.textContent = "CREATE NEW KEY";
+                return;
+            }
+
+            // Show the reveal box
+            document.getElementById("new-key-token").textContent = data.token;
+            document.getElementById("new-key-reveal").classList.remove("hidden");
+
+            // Scroll the reveal into view
+            document.getElementById("new-key-reveal").scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+            // Reload the page after a short delay so the table refreshes,
+            // but give the user time to copy the token first.
+            // We set a flag so after reload we don't lose the "copy done" state.
+            // Instead, just reload the table via a soft reload after 5 seconds.
+            setTimeout(() => { location.reload(); }, 8000);
+
+        } catch (err) {
+            alert("Network error: " + err.message);
+            btn.disabled = false;
+            btn.textContent = "CREATE NEW KEY";
+        }
+    }
+
+    // ── Copy token to clipboard ─────────────────────────────────────────────
+    function copyToken() {
+        const token = document.getElementById("new-key-token").textContent.trim();
+        navigator.clipboard.writeText(token).then(() => {
+            const btn = document.querySelector("#new-key-reveal .btn-outline");
+            const original = btn.innerHTML;
+            btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:1.1rem;">check</span> COPIED';
+            btn.style.borderColor = "var(--success)";
+            btn.style.color = "var(--success)";
+            setTimeout(() => {
+                btn.innerHTML = original;
+                btn.style.borderColor = "var(--snap-yellow)";
+                btn.style.color = "var(--snap-yellow)";
+            }, 2500);
+        }).catch(() => {
+            // Fallback: select the text
+            const el = document.getElementById("new-key-token");
+            const range = document.createRange();
+            range.selectNode(el);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+        });
+    }
+
+    // ── Revoke API key ─────────────────────────────────────────────────────
+    async function revokeKey(keyId, keyName) {
+        if (!confirm(`Revoke key "${keyName}"?\n\nThis cannot be undone. Any integrations using this key will stop working immediately.`)) {
+            return;
+        }
+
+        const btn = document.getElementById("revoke-btn-" + keyId);
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = "REVOKING...";
+        }
+
+        try {
+            const resp = await fetch("/api/keys/" + keyId, { method: "DELETE" });
+            const data = await resp.json();
+
+            if (!resp.ok) {
+                alert("Error: " + (data.detail || resp.statusText));
+                if (btn) { btn.disabled = false; btn.textContent = "REVOKE"; }
+                return;
+            }
+
+            // Update the row in-place for instant feedback, then reload
+            const row = document.getElementById("key-row-" + keyId);
+            if (row) {
+                row.style.opacity = "0.45";
+                // Swap status badge
+                const statusCell = row.querySelector("td:nth-child(7)");
+                if (statusCell) {
+                    statusCell.innerHTML = '<span class="mono" style="font-size:0.7rem;font-weight:800;color:var(--danger);border:1px solid var(--danger);padding:0.15rem 0.5rem;letter-spacing:0.08em;">REVOKED</span>';
+                }
+                // Remove revoke button
+                const actionCell = row.querySelector("td:nth-child(8)");
+                if (actionCell) {
+                    actionCell.innerHTML = '<span class="mono text-muted" style="font-size:0.7rem;">' + (data.revoked_at ? data.revoked_at.slice(0, 10) : "now") + '</span>';
+                }
+            }
+
+        } catch (err) {
+            alert("Network error: " + err.message);
+            if (btn) { btn.disabled = false; btn.textContent = "REVOKE"; }
+        }
+    }
+
+    // Expose to inline onclick handlers
+    window.createApiKey = createApiKey;
+    window.copyToken    = copyToken;
+    window.revokeKey    = revokeKey;
+})();
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

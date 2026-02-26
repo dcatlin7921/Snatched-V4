@@ -1,0 +1,660 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page header -->
+<div class="section-header">
+    <h1 class="mb-0" style="border-left: 4px solid var(--snap-yellow); padding-left: 1rem;">Tag Presets</h1>
+</div>
+
+<p class="text-muted mb-3" style="font-size: 0.9rem; max-width: 680px;">
+    Presets are named collections of EXIF/XMP/IPTC tag values you can apply to assets in one click.
+    Built-in presets are read-only. Create your own custom presets below.
+</p>
+
+<!-- ============================================================
+     BUILT-IN PRESETS
+     ============================================================ -->
+<section>
+    <div class="section-header">
+        <h2 class="mb-0">Built-in Presets</h2>
+        <span class="mono text-muted" style="font-size: 0.75rem;">READ-ONLY</span>
+    </div>
+
+    {% if builtin_presets %}
+        <div class="presets-grid">
+            {% for preset in builtin_presets %}
+            <div class="preset-card preset-card--builtin" id="preset-{{ preset.id }}">
+                <div class="preset-card__header">
+                    <div>
+                        <span class="preset-card__name">{{ preset.name }}</span>
+                        <span class="badge badge--builtin">BUILT-IN</span>
+                    </div>
+                    <span class="preset-card__tag-count">{{ preset.tag_count }} tag{{ 's' if preset.tag_count != 1 else '' }}</span>
+                </div>
+
+                {% if preset.description %}
+                <p class="preset-card__desc text-muted">{{ preset.description }}</p>
+                {% endif %}
+
+                <div class="preset-card__tags">
+                    {% for key, val in preset.tags_json.items() %}
+                    <div class="preset-tag-row">
+                        <span class="preset-tag-key mono">{{ key }}</span>
+                        <span class="preset-tag-sep text-muted">:</span>
+                        <span class="preset-tag-val">{{ val }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                {% if jobs %}
+                <div class="preset-card__actions">
+                    <div class="gap-row" style="align-items: center;">
+                        <select class="preset-job-select" id="job-select-{{ preset.id }}"
+                                style="flex: 1; font-size: 0.8rem; padding: 0.3rem 0.5rem;">
+                            <option value="">— pick a job —</option>
+                            {% for job in jobs %}
+                            <option value="{{ job.id }}">
+                                #{{ job.id }} — {{ job.upload_filename or 'unnamed' }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" class="btn-small btn-primary"
+                                onclick="applyPresetToJob({{ preset.id }})">
+                            APPLY TO JOB
+                        </button>
+                    </div>
+                </div>
+                {% else %}
+                <p class="text-muted mt-2" style="font-size: 0.75rem;">
+                    No completed jobs yet. Upload &amp; process a Snapchat export first.
+                </p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p class="text-muted">No built-in presets found. This is unexpected — check the server logs.</p>
+    {% endif %}
+</section>
+
+<!-- ============================================================
+     CUSTOM PRESETS
+     ============================================================ -->
+<section class="mt-3">
+    <div class="section-header">
+        <h2 class="mb-0">My Presets</h2>
+        <button type="button" class="btn-primary" onclick="openCreateModal()">
+            + CREATE PRESET
+        </button>
+    </div>
+
+    <div id="custom-presets-container">
+        {% if custom_presets %}
+            <div class="presets-grid" id="custom-presets-grid">
+                {% for preset in custom_presets %}
+                <div class="preset-card" id="custom-card-{{ preset.id }}">
+                    <div class="preset-card__header">
+                        <div>
+                            <span class="preset-card__name">{{ preset.name }}</span>
+                        </div>
+                        <span class="preset-card__tag-count">{{ preset.tag_count }} tag{{ 's' if preset.tag_count != 1 else '' }}</span>
+                    </div>
+
+                    {% if preset.description %}
+                    <p class="preset-card__desc text-muted">{{ preset.description }}</p>
+                    {% endif %}
+
+                    <div class="preset-card__tags">
+                        {% for key, val in preset.tags_json.items() %}
+                        <div class="preset-tag-row">
+                            <span class="preset-tag-key mono">{{ key }}</span>
+                            <span class="preset-tag-sep text-muted">:</span>
+                            <span class="preset-tag-val">{{ val }}</span>
+                        </div>
+                        {% else %}
+                        <span class="text-muted" style="font-size:0.75rem;">No tags defined.</span>
+                        {% endfor %}
+                    </div>
+
+                    {% if jobs %}
+                    <div class="preset-card__actions">
+                        <div class="gap-row" style="align-items: center;">
+                            <select class="preset-job-select" id="job-select-{{ preset.id }}"
+                                    style="flex: 1; font-size: 0.8rem; padding: 0.3rem 0.5rem;">
+                                <option value="">— pick a job —</option>
+                                {% for job in jobs %}
+                                <option value="{{ job.id }}">
+                                    #{{ job.id }} — {{ job.upload_filename or 'unnamed' }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <button type="button" class="btn-small btn-primary"
+                                    onclick="applyPresetToJob({{ preset.id }})">
+                                APPLY TO JOB
+                            </button>
+                        </div>
+                    </div>
+                    {% else %}
+                    <p class="text-muted mt-2" style="font-size: 0.75rem;">
+                        No completed jobs yet. Upload &amp; process a Snapchat export first.
+                    </p>
+                    {% endif %}
+
+                    <div class="preset-card__edit-row" style="margin-top:0.5rem; padding-top:0.5rem; border-top:1px solid var(--border-dark);">
+                        <button type="button" class="btn-small btn-secondary"
+                                onclick='openEditModal({{ preset.id }}, {{ preset.name | tojson }}, {{ (preset.description or "") | tojson }}, {{ preset.tags_json | tojson }})'>
+                            EDIT
+                        </button>
+                        <button type="button" class="btn-small btn-danger-sm"
+                                onclick="deletePreset({{ preset.id }}, {{ preset.name | tojson }})">
+                            DELETE
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div id="empty-custom-state" class="info-card text-center" style="padding: 2.5rem;">
+                <p class="text-muted mb-2" style="font-size: 1rem;">
+                    No custom presets yet.
+                </p>
+                <button type="button" class="btn-primary" onclick="openCreateModal()">
+                    CREATE YOUR FIRST PRESET
+                </button>
+            </div>
+        {% endif %}
+    </div>
+</section>
+
+<!-- ============================================================
+     PRESET BUILDER MODAL
+     ============================================================ -->
+<div id="preset-modal" class="modal-overlay" style="display:none;" onclick="closeModalOnBackdrop(event)">
+    <div class="modal-box" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="modal-title" class="mb-0">Create Preset</h3>
+            <button type="button" class="modal-close" onclick="closeModal()" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+            <input type="hidden" id="modal-preset-id" value="">
+
+            <label for="preset-name" style="display:block; margin-bottom:0.25rem; font-size:0.85rem; font-weight:600;">
+                Preset Name <span class="text-danger">*</span>
+            </label>
+            <input type="text" id="preset-name" placeholder="e.g. My Archival Defaults"
+                   maxlength="100" class="mb-2"
+                   oninput="clearModalError()">
+
+            <label for="preset-desc" style="display:block; margin-bottom:0.25rem; font-size:0.85rem; font-weight:600;">
+                Description
+            </label>
+            <textarea id="preset-desc" rows="2" placeholder="Optional description of what this preset does"
+                      maxlength="500" style="margin-bottom:1.25rem; resize:vertical;"></textarea>
+
+            <!-- Tag fields -->
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.5rem;">
+                <label style="font-size:0.85rem; font-weight:600; margin:0;">Tags</label>
+                <div class="gap-row" style="gap:0.5rem; align-items:center;">
+                    <select id="tag-suggestions" style="font-size:0.75rem; padding:0.2rem 0.4rem;"
+                            onchange="addSuggestedTag()">
+                        <option value="">+ Quick-add common tag</option>
+                        <option value="EXIF:DateTimeOriginal">EXIF:DateTimeOriginal</option>
+                        <option value="EXIF:Software">EXIF:Software</option>
+                        <option value="EXIF:Make">EXIF:Make</option>
+                        <option value="EXIF:Model">EXIF:Model</option>
+                        <option value="EXIF:Artist">EXIF:Artist</option>
+                        <option value="EXIF:Copyright">EXIF:Copyright</option>
+                        <option value="EXIF:GPSLatitude">EXIF:GPSLatitude</option>
+                        <option value="EXIF:GPSLongitude">EXIF:GPSLongitude</option>
+                        <option value="XMP:Creator">XMP:Creator</option>
+                        <option value="XMP:Description">XMP:Description</option>
+                        <option value="XMP:Rights">XMP:Rights</option>
+                        <option value="XMP:Title">XMP:Title</option>
+                        <option value="XMP:Subject">XMP:Subject</option>
+                        <option value="XMP:DateTimeOriginal">XMP:DateTimeOriginal</option>
+                        <option value="IPTC:By-line">IPTC:By-line</option>
+                        <option value="IPTC:Source">IPTC:Source</option>
+                        <option value="IPTC:Caption-Abstract">IPTC:Caption-Abstract</option>
+                        <option value="IPTC:Keywords">IPTC:Keywords</option>
+                    </select>
+                    <button type="button" class="btn-small btn-secondary"
+                            onclick="addTagRow()">+ Add Tag</button>
+                </div>
+            </div>
+
+            <div id="tag-rows" class="mb-2"></div>
+
+            <p id="modal-error" class="mono"
+               style="font-size:0.8rem; color:var(--danger); display:none; margin-bottom:0.5rem;"></p>
+        </div>
+
+        <div class="modal-footer">
+            <button type="button" class="btn-secondary" onclick="closeModal()">CANCEL</button>
+            <button type="button" id="modal-save-btn" class="btn-primary" onclick="savePreset()">
+                SAVE PRESET
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================
+     APPLY FEEDBACK TOAST
+     ============================================================ -->
+<div id="toast" class="toast" style="display:none;" role="alert"></div>
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+// ---------------------------------------------------------------------------
+// Modal state
+// ---------------------------------------------------------------------------
+let modalMode = 'create'; // 'create' | 'edit'
+let editingPresetId = null;
+
+function openCreateModal() {
+    modalMode = 'create';
+    editingPresetId = null;
+    document.getElementById('modal-title').textContent = 'Create Preset';
+    document.getElementById('modal-preset-id').value = '';
+    document.getElementById('preset-name').value = '';
+    document.getElementById('preset-desc').value = '';
+    document.getElementById('tag-rows').innerHTML = '';
+    clearModalError();
+    // Start with one empty row
+    addTagRow();
+    document.getElementById('preset-modal').style.display = 'flex';
+    document.getElementById('preset-name').focus();
+}
+
+function openEditModal(presetId, name, description, tagsJson) {
+    modalMode = 'edit';
+    editingPresetId = presetId;
+    document.getElementById('modal-title').textContent = 'Edit Preset';
+    document.getElementById('modal-preset-id').value = presetId;
+    document.getElementById('preset-name').value = name;
+    document.getElementById('preset-desc').value = description || '';
+    document.getElementById('tag-rows').innerHTML = '';
+    clearModalError();
+
+    const tags = typeof tagsJson === 'string' ? JSON.parse(tagsJson) : tagsJson;
+    const entries = Object.entries(tags);
+    if (entries.length === 0) {
+        addTagRow();
+    } else {
+        entries.forEach(([k, v]) => addTagRow(k, v));
+    }
+
+    document.getElementById('preset-modal').style.display = 'flex';
+    document.getElementById('preset-name').focus();
+}
+
+function closeModal() {
+    document.getElementById('preset-modal').style.display = 'none';
+}
+
+function closeModalOnBackdrop(evt) {
+    if (evt.target === document.getElementById('preset-modal')) {
+        closeModal();
+    }
+}
+
+// Keyboard: Esc closes modal
+document.addEventListener('keydown', function(evt) {
+    if (evt.key === 'Escape') closeModal();
+});
+
+// ---------------------------------------------------------------------------
+// Tag builder rows
+// ---------------------------------------------------------------------------
+let tagRowCounter = 0;
+
+function addTagRow(tagName = '', tagValue = '') {
+    const id = ++tagRowCounter;
+    const row = document.createElement('div');
+    row.className = 'tag-builder-row';
+    row.id = `tag-row-${id}`;
+    row.innerHTML = `
+        <input type="text" class="tag-name-input" placeholder="e.g. XMP:Creator"
+               value="${escHtml(tagName)}" list="tag-name-datalist">
+        <span class="text-muted" style="font-size:0.9rem; flex-shrink:0;">:</span>
+        <input type="text" class="tag-val-input" placeholder="Value"
+               value="${escHtml(tagValue)}">
+        <button type="button" class="tag-remove-btn" onclick="removeTagRow(${id})"
+                title="Remove tag">&times;</button>
+    `;
+    document.getElementById('tag-rows').appendChild(row);
+    row.querySelector('.tag-name-input').focus();
+}
+
+function removeTagRow(id) {
+    const el = document.getElementById(`tag-row-${id}`);
+    if (el) el.remove();
+}
+
+function addSuggestedTag() {
+    const sel = document.getElementById('tag-suggestions');
+    const val = sel.value;
+    if (!val) return;
+    sel.value = ''; // reset
+    addTagRow(val, '');
+    // Focus the value input of the last row
+    const rows = document.querySelectorAll('.tag-builder-row');
+    if (rows.length > 0) {
+        rows[rows.length - 1].querySelector('.tag-val-input').focus();
+    }
+}
+
+function collectTags() {
+    const rows = document.querySelectorAll('.tag-builder-row');
+    const tags = {};
+    for (const row of rows) {
+        const k = row.querySelector('.tag-name-input').value.trim();
+        const v = row.querySelector('.tag-val-input').value.trim();
+        if (k) tags[k] = v;
+    }
+    return tags;
+}
+
+// ---------------------------------------------------------------------------
+// Modal error helpers
+// ---------------------------------------------------------------------------
+function showModalError(msg) {
+    const el = document.getElementById('modal-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
+function clearModalError() {
+    const el = document.getElementById('modal-error');
+    el.textContent = '';
+    el.style.display = 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Save (create or update)
+// ---------------------------------------------------------------------------
+async function savePreset() {
+    const name = document.getElementById('preset-name').value.trim();
+    if (!name) {
+        showModalError('Preset name is required.');
+        document.getElementById('preset-name').focus();
+        return;
+    }
+
+    const tags = collectTags();
+    if (Object.keys(tags).length === 0) {
+        showModalError('Add at least one tag.');
+        return;
+    }
+
+    const body = {
+        name,
+        description: document.getElementById('preset-desc').value.trim(),
+        tags_json: tags,
+    };
+
+    const btn = document.getElementById('modal-save-btn');
+    btn.disabled = true;
+    btn.textContent = 'SAVING...';
+    clearModalError();
+
+    try {
+        const url = modalMode === 'edit'
+            ? `/api/presets/${editingPresetId}`
+            : '/api/presets';
+        const method = modalMode === 'edit' ? 'PUT' : 'POST';
+
+        const resp = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        closeModal();
+
+        if (modalMode === 'edit') {
+            refreshCustomCard(data);
+            showToast(`Preset "${data.name}" updated.`, 'success');
+        } else {
+            appendCustomCard(data);
+            showToast(`Preset "${data.name}" created.`, 'success');
+        }
+    } catch (err) {
+        showModalError('Error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'SAVE PRESET';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Delete preset
+// ---------------------------------------------------------------------------
+async function deletePreset(presetId, name) {
+    if (!confirm(`Delete preset "${name}"? This cannot be undone.`)) return;
+
+    try {
+        const resp = await fetch(`/api/presets/${presetId}`, { method: 'DELETE' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+        // Remove card from DOM
+        const card = document.getElementById(`custom-card-${presetId}`);
+        if (card) {
+            card.remove();
+        }
+        // Show empty state if no cards remain
+        const grid = document.getElementById('custom-presets-grid');
+        if (grid && grid.querySelectorAll('.preset-card').length === 0) {
+            grid.remove();
+            document.getElementById('custom-presets-container').innerHTML = `
+                <div id="empty-custom-state" class="info-card text-center" style="padding:2.5rem;">
+                    <p class="text-muted mb-2" style="font-size:1rem;">No custom presets yet.</p>
+                    <button type="button" class="btn-primary" onclick="openCreateModal()">
+                        CREATE YOUR FIRST PRESET
+                    </button>
+                </div>`;
+        }
+        showToast(`Preset "${name}" deleted.`, 'danger');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'danger');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Apply preset to all assets in a job (batch)
+// ---------------------------------------------------------------------------
+async function applyPresetToJob(presetId) {
+    const sel = document.getElementById(`job-select-${presetId}`);
+    const jobId = sel ? sel.value : '';
+    if (!jobId) {
+        showToast('Select a job first.', 'warning');
+        return;
+    }
+
+    const jobLabel = sel.options[sel.selectedIndex].text;
+    if (!confirm(`Apply preset to ALL assets in job ${jobLabel}?\n\nThis will overwrite existing tag values.`)) return;
+
+    showToast('Fetching asset list...', 'info');
+
+    try {
+        // 1. Get asset list for job
+        const assetsResp = await fetch(`/api/assets?job_id=${jobId}&page=1`);
+        if (!assetsResp.ok) throw new Error(`Could not load assets (HTTP ${assetsResp.status})`);
+        const assetsData = await assetsResp.json();
+
+        if (!assetsData.items || assetsData.items.length === 0) {
+            showToast('No assets found for this job.', 'warning');
+            return;
+        }
+
+        const assetIds = assetsData.items.map(a => a.id);
+        // If paginated, warn user we only apply to the first page
+        if (assetsData.total_pages > 1) {
+            showToast(
+                `Warning: only applying to first ${assetIds.length} of ${assetsData.total} assets.`,
+                'warning'
+            );
+        }
+
+        // 2. Batch apply
+        const resp = await fetch(`/api/assets/batch-apply-preset?job_id=${jobId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ asset_ids: assetIds, preset_id: presetId }),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const result = await resp.json();
+        const msg = `Applied to ${result.succeeded}/${result.total} assets` +
+            (result.failed > 0 ? ` (${result.failed} failed)` : '') + '.';
+        showToast(msg, result.failed > 0 ? 'warning' : 'success');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'danger');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DOM helpers — append / refresh custom preset cards
+// ---------------------------------------------------------------------------
+function buildCustomCardHTML(preset) {
+    const tags = preset.tags_json || {};
+    const tagCount = preset.tag_count || Object.keys(tags).length;
+    const tagsEscaped = escAttr(JSON.stringify(tags));
+    const nameEsc = escHtml(preset.name);
+    const descEsc = escHtml(preset.description || '');
+
+    let tagRows = '';
+    for (const [k, v] of Object.entries(tags)) {
+        tagRows += `
+            <div class="preset-tag-row">
+                <span class="preset-tag-key mono">${escHtml(k)}</span>
+                <span class="preset-tag-sep text-muted">:</span>
+                <span class="preset-tag-val">${escHtml(v)}</span>
+            </div>`;
+    }
+
+    // Build job options
+    const jobOptions = window._presetsJobs.map(j =>
+        `<option value="${j.id}">#${j.id} — ${escHtml(j.upload_filename || 'unnamed')}</option>`
+    ).join('');
+
+    const applySection = window._presetsJobs.length > 0
+        ? `<div class="preset-card__actions">
+               <div class="gap-row" style="align-items:center;">
+                   <select class="preset-job-select" id="job-select-${preset.id}"
+                           style="flex:1; font-size:0.8rem; padding:0.3rem 0.5rem;">
+                       <option value="">— pick a job —</option>
+                       ${jobOptions}
+                   </select>
+                   <button type="button" class="btn-small btn-primary"
+                           onclick="applyPresetToJob(${preset.id})">APPLY TO JOB</button>
+               </div>
+           </div>`
+        : `<p class="text-muted mt-2" style="font-size:0.75rem;">
+               No completed jobs yet.
+           </p>`;
+
+    return `
+    <div class="preset-card" id="custom-card-${preset.id}">
+        <div class="preset-card__header">
+            <div>
+                <span class="preset-card__name">${nameEsc}</span>
+            </div>
+            <span class="preset-card__tag-count">${tagCount} tag${tagCount !== 1 ? 's' : ''}</span>
+        </div>
+        ${descEsc ? `<p class="preset-card__desc text-muted">${descEsc}</p>` : ''}
+        <div class="preset-card__tags">
+            ${tagRows || '<span class="text-muted" style="font-size:0.75rem;">No tags defined.</span>'}
+        </div>
+        ${applySection}
+        <div class="preset-card__edit-row" style="margin-top:0.5rem; padding-top:0.5rem; border-top:1px solid var(--border-dark);">
+            <button type="button" class="btn-small btn-secondary"
+                    onclick='openEditModal(${preset.id}, ${JSON.stringify(preset.name)}, ${JSON.stringify(preset.description || "")}, ${JSON.stringify(tags)})'>
+                EDIT
+            </button>
+            <button type="button" class="btn-small btn-danger-sm"
+                    onclick="deletePreset(${preset.id}, ${JSON.stringify(preset.name)})">
+                DELETE
+            </button>
+        </div>
+    </div>`;
+}
+
+function appendCustomCard(preset) {
+    let grid = document.getElementById('custom-presets-grid');
+    if (!grid) {
+        // Remove empty state and create grid
+        const container = document.getElementById('custom-presets-container');
+        container.innerHTML = '<div class="presets-grid" id="custom-presets-grid"></div>';
+        grid = document.getElementById('custom-presets-grid');
+    }
+    grid.insertAdjacentHTML('beforeend', buildCustomCardHTML(preset));
+}
+
+function refreshCustomCard(preset) {
+    const oldCard = document.getElementById(`custom-card-${preset.id}`);
+    if (oldCard) {
+        const tmpDiv = document.createElement('div');
+        tmpDiv.innerHTML = buildCustomCardHTML(preset);
+        const newCard = tmpDiv.firstElementChild;
+        oldCard.replaceWith(newCard);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Toast notification
+// ---------------------------------------------------------------------------
+let _toastTimer = null;
+function showToast(msg, type = 'info') {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.display = 'block';
+    const colors = {
+        success: 'var(--success, #43a047)',
+        danger:  'var(--danger, #e53935)',
+        warning: 'var(--snap-yellow, #ffd60a)',
+        info:    'var(--text-muted, #888)',
+    };
+    toast.style.borderColor = colors[type] || colors.info;
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { toast.style.display = 'none'; }, 4000);
+}
+
+// ---------------------------------------------------------------------------
+// HTML escaping helpers
+// ---------------------------------------------------------------------------
+function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escAttr(str) {
+    return escHtml(str);
+}
+
+// ---------------------------------------------------------------------------
+// Pass jobs data to JS (used when dynamically building cards)
+// ---------------------------------------------------------------------------
+window._presetsJobs = {{ jobs | tojson }};
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

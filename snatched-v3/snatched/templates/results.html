@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% if job.phases_requested and 'export' not in job.phases_requested %}
+<div class="dry-run-banner">
+    <span class="mono dry-run-label">DRY RUN &mdash; No files were exported</span>
+    <br>
+    <a href="/dry-run/{{ job_id }}" class="btn-primary dry-run-cta">VIEW DRY RUN ANALYSIS</a>
+</div>
+{% endif %}
+
+<!-- Status badge -->
+<p class="status-line">
+    <span class="status-dot"></span>
+    <span class="mono text-muted status-label">Status: Complete</span>
+</p>
+
+<!-- Sticky header -->
+<div class="sticky-header">
+    <h1 class="mb-0">Mission Complete.</h1>
+    <div class="gap-row">
+        <a href="/download/{{ job_id }}" class="btn-primary">
+            <span class="material-symbols-outlined">download</span> DOWNLOAD RESULTS
+        </a>
+        <button type="button" class="btn-outline" onclick="toggleReports()">
+            <span class="material-symbols-outlined">description</span> REPORTS &#9660;
+        </button>
+        <div class="tools-dropdown">
+            <button type="button" class="btn-outline" onclick="toggleToolsMenu()">
+                <span class="material-symbols-outlined">build</span> TOOLS &#9660;
+            </button>
+            <div class="tools-menu" id="toolsMenu" style="display:none">
+                <div class="tools-group">
+                    <div class="tools-group-label">CORRECTIONS</div>
+                    <a href="/gps/{{ job_id }}" class="tool-link">GPS Correction</a>
+                    <a href="/timestamps/{{ job_id }}" class="tool-link">Timestamps</a>
+                    <a href="/redact/{{ job_id }}" class="tool-link">Redact</a>
+                    <a href="/match-config/{{ job_id }}" class="tool-link">Match Config</a>
+                </div>
+                <div class="tools-group">
+                    <div class="tools-group-label">EXPLORE</div>
+                    <a href="/browse/{{ job_id }}" class="tool-link">Browse Files</a>
+                    <a href="/browse/chats/{{ job_id }}" class="tool-link">Chats</a>
+                    <a href="/timeline/{{ job_id }}" class="tool-link">Timeline</a>
+                    <a href="/map/{{ job_id }}" class="tool-link">Map</a>
+                </div>
+                <div class="tools-group">
+                    <div class="tools-group-label">ORGANIZE</div>
+                    <a href="/duplicates/{{ job_id }}" class="tool-link">Duplicates</a>
+                    <a href="/albums/{{ job_id }}" class="tool-link">Albums</a>
+                </div>
+                <div class="tools-group">
+                    <div class="tools-group-label">ACTIONS</div>
+                    <button type="button" class="tool-link" onclick="document.getElementById('reprocess-modal').classList.remove('hidden')">Reprocess</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Reports Panel -->
+<div id="reports-panel" class="reports-panel hidden">
+    <p class="mono uppercase tracking-wide text-muted reports-panel-label">
+        Download Data Reports
+    </p>
+    <div class="reports-grid">
+        <!-- Job Summary Report -->
+        <div class="report-card">
+            <div class="report-card-header">
+                <span class="material-symbols-outlined report-icon">summarize</span>
+                <h4 class="report-card-title">Job Summary</h4>
+            </div>
+            <p class="report-card-desc">Overall pipeline stats: match rate, GPS coverage, phase durations, export counts.</p>
+            <div class="report-card-actions">
+                <a href="/api/jobs/{{ job_id }}/report?format=json" class="btn-report" download>
+                    <span class="material-symbols-outlined btn-report-icon">data_object</span>JSON
+                </a>
+                <a href="/api/jobs/{{ job_id }}/report?format=csv" class="btn-report" download>
+                    <span class="material-symbols-outlined btn-report-icon">table</span>CSV
+                </a>
+            </div>
+        </div>
+
+        <!-- Match Report -->
+        <div class="report-card">
+            <div class="report-card-header">
+                <span class="material-symbols-outlined report-icon">compare_arrows</span>
+                <h4 class="report-card-title">Match Report</h4>
+            </div>
+            <p class="report-card-desc">Per-file match detail: strategy used, confidence score, linked memory date and GPS coordinates.</p>
+            <div class="report-card-actions">
+                <a href="/api/jobs/{{ job_id }}/match-report?format=json" class="btn-report" download>
+                    <span class="material-symbols-outlined btn-report-icon">data_object</span>JSON
+                </a>
+                <a href="/api/jobs/{{ job_id }}/match-report?format=csv" class="btn-report" download>
+                    <span class="material-symbols-outlined btn-report-icon">table</span>CSV
+                </a>
+            </div>
+        </div>
+
+        <!-- Asset Report -->
+        <div class="report-card">
+            <div class="report-card-header">
+                <span class="material-symbols-outlined report-icon">inventory_2</span>
+                <h4 class="report-card-title">Asset Report</h4>
+            </div>
+            <p class="report-card-desc">Full asset inventory: EXIF status, file size, SHA-256, match count, best confidence per file.</p>
+            <div class="report-card-actions">
+                <a href="/api/jobs/{{ job_id }}/asset-report?format=json" class="btn-report" download>
+                    <span class="material-symbols-outlined btn-report-icon">data_object</span>JSON
+                </a>
+                <a href="/api/jobs/{{ job_id }}/asset-report?format=csv" class="btn-report" download>
+                    <span class="material-symbols-outlined btn-report-icon">table</span>CSV
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Reprocess Modal -->
+<div id="reprocess-modal" class="modal-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-content">
+        <h3>Reprocess Job #{{ job_id }}</h3>
+        <p class="text-muted modal-subtitle">Select which phases and lanes to re-run.</p>
+
+        <fieldset>
+            <legend>Phases</legend>
+            <label><input type="checkbox" id="rp-match" checked> Match (re-link media to metadata)</label>
+            <label><input type="checkbox" id="rp-enrich" checked> Enrich (re-apply GPS, dates, names)</label>
+            <label><input type="checkbox" id="rp-export" checked> Export (re-generate output files)</label>
+        </fieldset>
+
+        <fieldset>
+            <legend>Lanes</legend>
+            <label><input type="checkbox" id="rp-memories" checked> Memories</label>
+            <label><input type="checkbox" id="rp-chats" checked> Chats</label>
+            <label><input type="checkbox" id="rp-stories" checked> Stories</label>
+        </fieldset>
+
+        <div class="modal-actions">
+            <button type="button" class="btn-primary" onclick="submitReprocess()">START REPROCESSING</button>
+            <button type="button" class="btn-outline" onclick="document.getElementById('reprocess-modal').classList.add('hidden')">Cancel</button>
+        </div>
+        <p id="reprocess-status" class="mono text-muted modal-status"></p>
+    </div>
+</div>
+
+<!-- Completed timestamp -->
+{% if job.completed_at %}
+<p class="mono text-muted completed-timestamp">
+    Completed: {{ job.completed_at.strftime('%b %d, %Y at %H:%M') }}
+</p>
+{% endif %}
+
+<!-- Section label -->
+<div class="section-divider">
+    <span class="section-divider-label mono uppercase tracking-wide">After-Action Report</span>
+</div>
+
+<!-- Tab Navigation -->
+<nav class="tab-nav">
+    <button class="tab-button active" onclick="openTab(event, 'summary')">Summary</button>
+    <button class="tab-button" onclick="openTab(event, 'matches')">
+        Matches
+        {% if job.stats_json and job.stats_json.get('total_matches') %}
+        <span class="tab-count">{{ job.stats_json.total_matches }}</span>
+        {% endif %}
+    </button>
+    <button class="tab-button" onclick="openTab(event, 'assets')">
+        Assets
+        {% if job.stats_json and job.stats_json.get('total_assets') %}
+        <span class="tab-count">{{ job.stats_json.total_assets }}</span>
+        {% endif %}
+    </button>
+</nav>
+
+<!-- Summary Tab -->
+<div id="summary" class="tab-content active">
+    {% set s = job.stats_json or {} %}
+    {% if s %}
+    <div class="stats-grid">
+        <div class="stat-card">
+            <p class="stat-label">Assets Found</p>
+            <p class="stat-value">{{ s.total_assets | default(0) }}</p>
+        </div>
+        <div class="stat-card">
+            <p class="stat-label">Successfully Matched</p>
+            <p class="stat-value green">{{ s.total_matches | default(0) }}</p>
+        </div>
+        <div class="stat-card">
+            <p class="stat-label">Match Rate</p>
+            <p class="stat-value white">
+                {{ (s.match_rate * 100) | round(1) if s.match_rate else 0 }}%
+            </p>
+        </div>
+        <div class="stat-card">
+            <p class="stat-label">GPS Coverage</p>
+            <p class="stat-value green">{{ s.gps_coverage | default(0) }}%</p>
+        </div>
+    </div>
+
+    <!-- Match Strategy Breakdown (lazy loaded) -->
+    <div id="match-stats-container"
+         hx-get="/api/jobs/{{ job_id }}/match-stats/html"
+         hx-trigger="intersect once"
+         hx-target="this"
+         hx-swap="innerHTML"
+         class="match-stats-container">
+        <p class="text-muted">Loading match statistics...</p>
+    </div>
+
+    <!-- Pipeline Details table -->
+    <section class="results-section">
+        <h3 class="results-section-title">Pipeline Details</h3>
+        <table>
+            <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+            <tbody>
+                {% if s.total_memories is defined %}
+                <tr><td>Memories ingested</td><td>{{ s.total_memories }}</td></tr>
+                {% endif %}
+                {% if s.total_locations is defined %}
+                <tr><td>GPS breadcrumbs loaded</td><td>{{ s.total_locations }}</td></tr>
+                {% endif %}
+                {% if s.true_orphans is defined %}
+                <tr><td>Unmatched assets</td><td>{{ s.true_orphans }}</td></tr>
+                {% endif %}
+                {% if s.files_exported is defined %}
+                <tr><td>Files exported</td><td>{{ s.files_exported }}</td></tr>
+                {% endif %}
+                {% if s.exif_written is defined %}
+                <tr><td>EXIF tags written</td><td>{{ s.exif_written }}</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </section>
+
+    <!-- Processing timeline -->
+    {% if s.phase_durations %}
+    <section class="results-section">
+        <h3 class="results-section-title">Processing timeline</h3>
+        <table>
+            <thead>
+                <tr><th>Phase</th><th>Duration</th></tr>
+            </thead>
+            <tbody>
+                {% for phase, duration in s.phase_durations.items() %}
+                <tr>
+                    <td>{{ phase | title }}</td>
+                    <td>{{ duration | round(1) }}s</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    {% endif %}
+
+    <!-- Report downloads -->
+    <section class="results-section">
+        <h3 class="results-section-title">Download Reports</h3>
+        <div class="gap-row">
+            <a href="/api/jobs/{{ job_id }}/report?format=json" class="btn-outline btn-sm">JSON Report</a>
+            <a href="/api/jobs/{{ job_id }}/report?format=csv" class="btn-outline btn-sm">CSV Report</a>
+        </div>
+    </section>
+
+    <!-- Footer CTA -->
+    <div class="cta-card">
+        <p class="mb-1">Ready to get your files?</p>
+        <a href="/download/{{ job_id }}" class="btn-primary">GO TO DOWNLOAD</a>
+    </div>
+
+    {% else %}
+    <div class="empty-state">
+        <p>No statistics available for this job. Run a new upload to see results.</p>
+        <a href="/upload" class="btn-primary">UPLOAD NEW EXPORT</a>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Matches Tab -->
+<div id="matches" class="tab-content">
+    <h2>Matches</h2>
+    <div id="matches-table"
+         hx-get="/api/matches/html?job_id={{ job_id }}&page=1"
+         hx-trigger="intersect once"
+         hx-target="this"
+         hx-swap="innerHTML">
+        <p class="text-muted">Loading matches...</p>
+    </div>
+</div>
+
+<!-- Assets Tab -->
+<div id="assets" class="tab-content">
+    <h2>Exported Assets</h2>
+    <div id="assets-list"
+         hx-get="/api/assets/html?job_id={{ job_id }}&page=1"
+         hx-trigger="intersect once"
+         hx-target="this"
+         hx-swap="innerHTML">
+        <p class="text-muted">Loading assets...</p>
+    </div>
+</div>
+
+{% include '_batch_edit_modal.html' %}
+
+<script>
+function toggleReports() {
+    var panel = document.getElementById('reports-panel');
+    panel.classList.toggle('hidden');
+}
+
+function toggleToolsMenu() {
+    var menu = document.getElementById('toolsMenu');
+    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+
+// Close tools menu when clicking outside
+document.addEventListener('click', function(evt) {
+    var dropdown = document.querySelector('.tools-dropdown');
+    if (dropdown && !dropdown.contains(evt.target)) {
+        var menu = document.getElementById('toolsMenu');
+        if (menu) menu.style.display = 'none';
+    }
+});
+
+function openTab(evt, tabName) {
+    document.querySelectorAll('.tab-content').forEach(function(el) { el.classList.remove('active'); });
+    document.querySelectorAll('.tab-button').forEach(function(el) { el.classList.remove('active'); });
+    document.getElementById(tabName).classList.add('active');
+    evt.target.classList.add('active');
+}
+
+async function submitReprocess() {
+    var phases = [];
+    if (document.getElementById('rp-match').checked) phases.push('match');
+    if (document.getElementById('rp-enrich').checked) phases.push('enrich');
+    if (document.getElementById('rp-export').checked) phases.push('export');
+
+    var lanes = [];
+    if (document.getElementById('rp-memories').checked) lanes.push('memories');
+    if (document.getElementById('rp-chats').checked) lanes.push('chats');
+    if (document.getElementById('rp-stories').checked) lanes.push('stories');
+
+    if (phases.length === 0) { alert('Select at least one phase'); return; }
+    if (lanes.length === 0) { alert('Select at least one lane'); return; }
+
+    var status = document.getElementById('reprocess-status');
+    status.textContent = 'Starting reprocessing...';
+    status.style.color = 'var(--snap-yellow)';
+
+    var params = new URLSearchParams();
+    phases.forEach(function(p) { params.append('phases', p); });
+    lanes.forEach(function(l) { params.append('lanes', l); });
+
+    try {
+        var resp = await fetch('/api/jobs/{{ job_id }}/reprocess?' + params.toString(), { method: 'POST' });
+        var data = await resp.json();
+        if (resp.ok && data.new_job_id) {
+            status.textContent = 'Reprocessing started as Job #' + data.new_job_id;
+            status.style.color = 'var(--success)';
+            setTimeout(function() { window.location.href = '/job/' + data.new_job_id; }, 1500);
+        } else {
+            status.textContent = 'Failed: ' + (data.detail || 'Unknown error');
+            status.style.color = 'var(--danger)';
+        }
+    } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+        status.style.color = 'var(--danger)';
+    }
+}
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

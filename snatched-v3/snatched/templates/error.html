@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="error-container">
+    <p class="mono uppercase tracking-wide text-danger error-label">
+        <span class="material-symbols-outlined error-icon-inline">error</span>
+        Error
+    </p>
+    <h1>{{ error.title or "Something Went Wrong" }}</h1>
+    <p>{{ error.message }}</p>
+
+    {% if error.traceback %}
+    <details class="mt-3">
+        <summary class="mono text-muted error-traceback-toggle">Stack Trace (dev mode)</summary>
+        <pre>{{ error.traceback }}</pre>
+    </details>
+    {% endif %}
+
+    <div class="error-actions">
+        <a href="/" class="btn-outline">Home</a>
+        <a href="/dashboard" class="btn-outline">Dashboard</a>
+    </div>
+</div>
+{% endblock %}
+{# themed: 2026-02-25 #}

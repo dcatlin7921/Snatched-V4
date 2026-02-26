@@ -1,0 +1,742 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Leaflet CSS — loaded here, NOT in base.html -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
+
+<!-- Breadcrumb -->
+<nav class="breadcrumb mb-3">
+    <a href="/results/{{ job_id }}" class="text-muted">Results</a>
+    <span class="text-muted separator">/</span>
+    <span class="text-yellow">GPS Correction</span>
+</nav>
+
+<!-- Page header -->
+<div class="sticky-header">
+    <h1 class="mb-0 page-title-accent">
+        GPS Correction
+    </h1>
+    <div class="gap-row">
+        <a href="/results/{{ job_id }}" class="btn-outline btn-sm">BACK TO RESULTS</a>
+    </div>
+</div>
+
+<!-- Stats bar -->
+<div class="stats-grid mb-3">
+    <div class="stat-card">
+        <p class="stat-label">Assets with GPS</p>
+        <p class="stat-value">{{ asset_count }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Breadcrumbs</p>
+        <p class="stat-value white">{{ location_count }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Snap Places</p>
+        <p class="stat-value white">{{ place_count }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Saved Locations</p>
+        <p class="stat-value green" id="saved-count">...</p>
+    </div>
+</div>
+
+<!-- Manual coordinate input bar -->
+<div class="info-card mb-2" style="padding: 0.75rem 1rem;">
+    <div class="gap-row" style="align-items: flex-end; flex-wrap: wrap;">
+        <div>
+            <label class="mono uppercase text-muted" style="font-size: 0.7rem; display: block; margin-bottom: 0.25rem;">Latitude</label>
+            <input type="number" id="manual-lat" step="0.000001" min="-90" max="90"
+                   placeholder="e.g. 41.8781"
+                   class="mono" style="width: 160px; font-size: 0.9rem; padding: 0.4rem 0.6rem;">
+        </div>
+        <div>
+            <label class="mono uppercase text-muted" style="font-size: 0.7rem; display: block; margin-bottom: 0.25rem;">Longitude</label>
+            <input type="number" id="manual-lon" step="0.000001" min="-180" max="180"
+                   placeholder="e.g. -87.6298"
+                   class="mono" style="width: 160px; font-size: 0.9rem; padding: 0.4rem 0.6rem;">
+        </div>
+        <button class="btn-primary btn-sm" onclick="applyManualGps()">
+            APPLY TO SELECTED
+        </button>
+        <button class="btn-outline btn-sm" onclick="selectAllAssets()">
+            SELECT ALL
+        </button>
+        <button class="btn-outline btn-sm" onclick="clearSelection()">
+            CLEAR
+        </button>
+        <span id="selection-count" class="mono text-muted" style="font-size: 0.8rem; align-self: center;">0 selected</span>
+    </div>
+</div>
+
+<!-- Main layout: map + sidebar -->
+<div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; align-items: flex-start;">
+
+    <!-- Map -->
+    <div style="flex: 1; min-width: 0;">
+        <div id="map" style="height: 520px; min-height: 520px; width: 100%;"></div>
+        <p class="mono text-muted" style="font-size: 0.7rem; margin-top: 0.35rem;">
+            Click map to set coordinates &bull; Drag yellow pins to reposition &bull; Yellow = assets &bull; Green line = breadcrumbs &bull; Blue circles = saved locations &bull; Orange = Snap places
+        </p>
+    </div>
+
+    <!-- Saved locations sidebar -->
+    <div style="width: 280px; flex-shrink: 0;">
+        <details open class="info-card" style="padding: 0;">
+            <summary class="text-yellow uppercase" style="padding: 0.75rem 1rem; cursor: pointer; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.05em; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+                <span>Saved Locations</span>
+                <span class="text-muted" style="font-size: 0.7rem;">click to collapse</span>
+            </summary>
+            <div style="padding: 0.75rem 1rem; border-top: 1px solid var(--border-dark);">
+                <!-- Add new location -->
+                <div class="mb-2">
+                    <input type="text" id="new-loc-name" placeholder="Location name"
+                           style="width: 100%; margin-bottom: 0.4rem; font-size: 0.85rem; padding: 0.35rem 0.5rem;">
+                    <div class="gap-row">
+                        <button class="btn-outline btn-xs" onclick="saveMapCenter()" style="flex: 1;">
+                            ADD MAP CENTER
+                        </button>
+                        <button class="btn-outline btn-xs" onclick="saveManualCoords()" style="flex: 1;">
+                            ADD MANUAL
+                        </button>
+                    </div>
+                    <div style="margin-top: 0.4rem; display: flex; gap: 0.4rem; align-items: center;">
+                        <label class="text-muted" style="font-size: 0.65rem; white-space: nowrap;">Radius (m)</label>
+                        <input type="number" id="new-loc-radius" value="50" min="10" max="5000"
+                               style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem;">
+                    </div>
+                </div>
+
+                <!-- Saved location list -->
+                <div id="saved-locations-list" style="max-height: 360px; overflow-y: auto;">
+                    <p class="text-muted" style="font-size: 0.8rem;">Loading...</p>
+                </div>
+            </div>
+        </details>
+    </div>
+</div>
+
+<!-- Asset list panel (collapsible) -->
+<details open>
+    <summary class="text-yellow uppercase mb-2" style="cursor: pointer; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.05em; user-select: none;">
+        Asset List ({{ asset_count }} with GPS)
+    </summary>
+    <div class="info-card" style="padding: 0; overflow-x: auto;">
+        <table id="asset-table" style="width: 100%; margin: 0;">
+            <thead>
+                <tr>
+                    <th style="width: 36px;">
+                        <input type="checkbox" id="check-all" onchange="toggleCheckAll(this)" title="Select all">
+                    </th>
+                    <th>Filename</th>
+                    <th>Latitude</th>
+                    <th>Longitude</th>
+                    <th>Source</th>
+                    <th>Confidence</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="asset-tbody">
+                <tr><td colspan="7" class="text-muted text-center" style="padding: 1rem;">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</details>
+
+<!-- Click-to-set GPS Modal -->
+<div id="map-click-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeMapModal()">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>Set GPS from Map Click</h3>
+            <button class="modal-close" onclick="closeMapModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="mono mb-2" style="font-size: 0.9rem;">
+                Lat: <span id="modal-lat" class="text-yellow"></span> &nbsp;
+                Lon: <span id="modal-lon" class="text-yellow"></span>
+            </p>
+            <p class="text-muted mb-2" style="font-size: 0.85rem;">Apply these coordinates to:</p>
+            <div class="gap-row" style="flex-wrap: wrap;">
+                <button class="btn-primary btn-sm" onclick="applyModalGpsToSelected()">
+                    SELECTED ASSETS (<span id="modal-selected-count">0</span>)
+                </button>
+                <button class="btn-outline btn-sm" onclick="closeMapModal()">Cancel</button>
+            </div>
+            <p id="modal-status" class="mono text-muted mt-2" style="font-size: 0.8rem; min-height: 1.2em;"></p>
+        </div>
+    </div>
+</div>
+
+<!-- Drag-confirm Modal -->
+<div id="drag-confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)cancelDrag()">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>Confirm GPS Move</h3>
+            <button class="modal-close" onclick="cancelDrag()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size: 0.9rem; margin-bottom: 0.5rem;">
+                Move <strong id="drag-asset-name" class="text-yellow"></strong> to:
+            </p>
+            <p class="mono mb-3" style="font-size: 0.9rem;">
+                <span id="drag-lat"></span>, <span id="drag-lon"></span>
+            </p>
+            <div class="gap-row">
+                <button class="btn-primary btn-sm" onclick="confirmDrag()">CONFIRM</button>
+                <button class="btn-outline btn-sm" onclick="cancelDrag()">Cancel</button>
+            </div>
+            <p id="drag-status" class="mono text-muted mt-2" style="font-size: 0.8rem; min-height: 1.2em;"></p>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Saved location item */
+.saved-loc-item {
+    border: 1px solid var(--border-dark);
+    padding: 0.5rem 0.6rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+}
+.saved-loc-item:last-child { margin-bottom: 0; }
+.saved-loc-name {
+    font-weight: 700;
+    color: #5b9bd5;
+    margin-bottom: 0.2rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.saved-loc-coords {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 0.35rem;
+}
+.saved-loc-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+
+/* Asset table rows */
+#asset-tbody tr:hover { background: rgba(255,221,0,0.04); }
+#asset-tbody tr.selected-row { background: rgba(255,221,0,0.08); }
+#asset-tbody td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border-dark); }
+#asset-tbody tr:last-child td { border-bottom: none; }
+
+/* Leaflet dark overrides */
+.leaflet-container { background: #1a1a2e !important; }
+.leaflet-control-zoom a { background: #2a2a3e !important; color: #eee !important; border-color: #444 !important; }
+.leaflet-popup-content-wrapper { background: #2a2a3e !important; color: #eee !important; border: 1px solid #555 !important; }
+.leaflet-popup-tip { background: #2a2a3e !important; }
+</style>
+
+<script>
+// ---------------------------------------------------------------------------
+// Data injected from Python template
+// ---------------------------------------------------------------------------
+const JOB_ID     = {{ job_id }};
+const ASSETS     = {{ assets_json | safe }};
+const LOCATIONS  = {{ locations_json | safe }};
+const PLACES     = {{ places_json | safe }};
+let   SAVED_LOCS = {{ saved_locations_json | safe }};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let selectedAssetIds = new Set();
+let assetMarkers = {};   // asset_id -> L.Marker
+let pendingDrag = null;  // {assetId, marker, oldLatLng, newLatLng}
+let modalClickLatLng = null;
+let savedLocLayers = []; // L.Circle + L.Marker pairs on map
+
+// ---------------------------------------------------------------------------
+// Map init
+// ---------------------------------------------------------------------------
+// Compute initial view: centroid of assets, fallback to Chicago
+let mapCenter = [41.8781, -87.6298];
+let mapZoom   = 11;
+
+if (ASSETS.length > 0) {
+    const lats = ASSETS.map(a => a.matched_lat);
+    const lons = ASSETS.map(a => a.matched_lon);
+    mapCenter = [
+        lats.reduce((a, b) => a + b, 0) / lats.length,
+        lons.reduce((a, b) => a + b, 0) / lons.length,
+    ];
+    mapZoom = ASSETS.length === 1 ? 14 : 11;
+} else if (LOCATIONS.length > 0) {
+    mapCenter = [LOCATIONS[0].lat, LOCATIONS[0].lon];
+    mapZoom = 11;
+}
+
+const map = L.map('map', {
+    center: mapCenter,
+    zoom: mapZoom,
+    preferCanvas: true,
+});
+
+// Dark tile layer (CartoDB dark matter)
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
+    maxZoom: 19,
+}).addTo(map);
+
+// ---------------------------------------------------------------------------
+// Custom marker icons
+// ---------------------------------------------------------------------------
+function makeIcon(color, size) {
+    size = size || 10;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size+10}" height="${size+14}" viewBox="0 0 ${size+10} ${size+14}">
+        <circle cx="${(size+10)/2}" cy="${(size)/2+2}" r="${size/2}" fill="${color}" stroke="#222" stroke-width="1.5"/>
+        <line x1="${(size+10)/2}" y1="${size+2}" x2="${(size+10)/2}" y2="${size+12}" stroke="${color}" stroke-width="1.5"/>
+    </svg>`;
+    return L.divIcon({
+        html: `<img src="data:image/svg+xml;base64,${btoa(svg)}" style="display:block;">`,
+        iconSize: [size+10, size+14],
+        iconAnchor: [(size+10)/2, size+14],
+        popupAnchor: [0, -(size+14)],
+        className: '',
+    });
+}
+
+const yellowIcon = makeIcon('#FFDD00', 12);
+const orangeIcon = makeIcon('#FF8C00', 10);
+
+// ---------------------------------------------------------------------------
+// Breadcrumb polyline (green)
+// ---------------------------------------------------------------------------
+if (LOCATIONS.length > 1) {
+    const latlngs = LOCATIONS.map(l => [l.lat, l.lon]);
+    L.polyline(latlngs, {
+        color: '#4CAF50',
+        weight: 2,
+        opacity: 0.65,
+        smoothFactor: 1,
+    }).addTo(map).bindPopup(`GPS trail: ${LOCATIONS.length} breadcrumbs`);
+}
+
+// ---------------------------------------------------------------------------
+// Snap Map places (orange markers)
+// ---------------------------------------------------------------------------
+PLACES.forEach(function(p) {
+    const m = L.marker([p.lat, p.lon], { icon: orangeIcon })
+        .addTo(map)
+        .bindPopup(
+            `<strong>${escHtml(p.name || 'Place')}</strong><br>` +
+            `${p.address ? escHtml(p.address) + '<br>' : ''}` +
+            `Visits: ${p.visit_count || 0}`
+        );
+});
+
+// ---------------------------------------------------------------------------
+// Asset markers (yellow, draggable)
+// ---------------------------------------------------------------------------
+function buildAssetPopup(a) {
+    const conf = a.match_confidence != null ? (a.match_confidence * 100).toFixed(0) + '%' : 'N/A';
+    return `<strong style="color:#FFDD00;">${escHtml(a.filename || 'Asset #' + a.id)}</strong><br>
+        <span style="font-size:0.8em;color:#aaa;">Source: ${escHtml(a.gps_source || 'unknown')}</span><br>
+        <span style="font-size:0.8em;color:#aaa;">Confidence: ${conf}</span><br>
+        <span style="font-size:0.8em;">Lat: ${a.matched_lat.toFixed(6)}, Lon: ${a.matched_lon.toFixed(6)}</span><br>
+        <button onclick="selectAssetById(${a.id})" style="margin-top:4px;font-size:0.75em;padding:2px 6px;background:#FFDD00;color:#000;border:none;cursor:pointer;">
+            Select
+        </button>`;
+}
+
+ASSETS.forEach(function(a) {
+    const marker = L.marker([a.matched_lat, a.matched_lon], {
+        icon: yellowIcon,
+        draggable: true,
+        title: a.filename || ('Asset #' + a.id),
+    }).addTo(map);
+
+    marker.bindPopup(buildAssetPopup(a));
+
+    marker.on('dragend', function(evt) {
+        const ll = evt.target.getLatLng();
+        pendingDrag = {
+            assetId: a.id,
+            assetName: a.filename || ('Asset #' + a.id),
+            marker: marker,
+            oldLatLng: { lat: a.matched_lat, lng: a.matched_lon },
+            newLatLng: { lat: ll.lat, lng: ll.lng },
+        };
+        document.getElementById('drag-asset-name').textContent = pendingDrag.assetName;
+        document.getElementById('drag-lat').textContent = ll.lat.toFixed(6);
+        document.getElementById('drag-lon').textContent = ll.lng.toFixed(6);
+        document.getElementById('drag-status').textContent = '';
+        document.getElementById('drag-confirm-modal').classList.remove('hidden');
+    });
+
+    assetMarkers[a.id] = marker;
+});
+
+// ---------------------------------------------------------------------------
+// Map click handler → show modal
+// ---------------------------------------------------------------------------
+map.on('click', function(evt) {
+    if (selectedAssetIds.size === 0) return; // only show if something is selected
+    modalClickLatLng = evt.latlng;
+    document.getElementById('modal-lat').textContent = evt.latlng.lat.toFixed(6);
+    document.getElementById('modal-lon').textContent = evt.latlng.lng.toFixed(6);
+    document.getElementById('modal-selected-count').textContent = selectedAssetIds.size;
+    document.getElementById('modal-status').textContent = '';
+    document.getElementById('map-click-modal').classList.remove('hidden');
+});
+
+// ---------------------------------------------------------------------------
+// Saved locations (blue circles)
+// ---------------------------------------------------------------------------
+function renderSavedLocMap() {
+    // Remove old layers
+    savedLocLayers.forEach(function(l) { map.removeLayer(l); });
+    savedLocLayers = [];
+
+    SAVED_LOCS.forEach(function(sl) {
+        const circle = L.circle([sl.lat, sl.lon], {
+            radius: sl.radius_m,
+            color: '#5b9bd5',
+            fillColor: '#5b9bd5',
+            fillOpacity: 0.12,
+            weight: 2,
+        }).addTo(map).bindPopup(
+            `<strong style="color:#5b9bd5;">${escHtml(sl.name)}</strong><br>` +
+            `Lat: ${sl.lat.toFixed(6)}, Lon: ${sl.lon.toFixed(6)}<br>` +
+            `Radius: ${sl.radius_m} m`
+        );
+        savedLocLayers.push(circle);
+    });
+}
+
+function renderSavedLocSidebar() {
+    const container = document.getElementById('saved-locations-list');
+    const countEl   = document.getElementById('saved-count');
+    countEl.textContent = SAVED_LOCS.length;
+
+    if (SAVED_LOCS.length === 0) {
+        container.innerHTML = '<p class="text-muted" style="font-size:0.8rem;">No saved locations yet.</p>';
+        return;
+    }
+
+    container.innerHTML = SAVED_LOCS.map(function(sl) {
+        return `<div class="saved-loc-item" id="slitem-${sl.id}">
+            <div class="saved-loc-name">${escHtml(sl.name)}</div>
+            <div class="saved-loc-coords">${sl.lat.toFixed(5)}, ${sl.lon.toFixed(5)} | r=${sl.radius_m}m</div>
+            <div class="saved-loc-actions">
+                <button class="btn-outline btn-xs"
+                    onclick="flyToSavedLoc(${sl.lat}, ${sl.lon})">FLY TO</button>
+                <button class="btn-outline btn-xs"
+                    onclick="snapToLocation(${sl.id}, '${escHtml(sl.name).replace(/'/g, "\\'")}')">SNAP NEARBY</button>
+                <button class="btn-outline btn-xs text-danger" style="border-color:var(--danger);"
+                    onclick="deleteSavedLoc(${sl.id})">DEL</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderSavedLocs() {
+    renderSavedLocMap();
+    renderSavedLocSidebar();
+}
+
+// Initial render
+renderSavedLocs();
+
+// ---------------------------------------------------------------------------
+// Asset table
+// ---------------------------------------------------------------------------
+function renderAssetTable() {
+    const tbody = document.getElementById('asset-tbody');
+    if (ASSETS.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center" style="padding:1rem;">No assets with GPS coordinates.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = ASSETS.map(function(a) {
+        const conf = a.match_confidence != null ? (a.match_confidence * 100).toFixed(0) + '%' : 'N/A';
+        const checked = selectedAssetIds.has(a.id) ? 'checked' : '';
+        const rowClass = selectedAssetIds.has(a.id) ? 'selected-row' : '';
+        const name = escHtml(a.filename || 'Asset #' + a.id);
+        return `<tr id="row-${a.id}" class="${rowClass}">
+            <td><input type="checkbox" class="asset-check" data-id="${a.id}" ${checked} onchange="toggleAsset(${a.id}, this.checked)"></td>
+            <td class="mono" style="font-size:0.75rem;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${name}">${name}</td>
+            <td class="mono" style="font-size:0.75rem;">${a.matched_lat.toFixed(6)}</td>
+            <td class="mono" style="font-size:0.75rem;">${a.matched_lon.toFixed(6)}</td>
+            <td class="text-muted" style="font-size:0.75rem;">${escHtml(a.gps_source || '')}</td>
+            <td style="font-size:0.75rem;">${conf}</td>
+            <td>
+                <button class="btn-outline btn-xs"
+                    onclick="flyToAsset(${a.id})">FLY TO</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+renderAssetTable();
+
+// ---------------------------------------------------------------------------
+// Selection helpers
+// ---------------------------------------------------------------------------
+function toggleAsset(id, checked) {
+    if (checked) selectedAssetIds.add(id); else selectedAssetIds.delete(id);
+    updateSelectionCount();
+    updateRowHighlight(id, checked);
+}
+
+function updateRowHighlight(id, selected) {
+    const row = document.getElementById('row-' + id);
+    if (row) row.classList.toggle('selected-row', selected);
+}
+
+function updateSelectionCount() {
+    document.getElementById('selection-count').textContent = selectedAssetIds.size + ' selected';
+}
+
+function selectAllAssets() {
+    ASSETS.forEach(function(a) { selectedAssetIds.add(a.id); });
+    document.querySelectorAll('.asset-check').forEach(function(cb) { cb.checked = true; });
+    document.getElementById('check-all').checked = true;
+    ASSETS.forEach(function(a) { updateRowHighlight(a.id, true); });
+    updateSelectionCount();
+}
+
+function clearSelection() {
+    selectedAssetIds.clear();
+    document.querySelectorAll('.asset-check').forEach(function(cb) { cb.checked = false; });
+    document.getElementById('check-all').checked = false;
+    ASSETS.forEach(function(a) { updateRowHighlight(a.id, false); });
+    updateSelectionCount();
+}
+
+function toggleCheckAll(cb) {
+    if (cb.checked) selectAllAssets(); else clearSelection();
+}
+
+function selectAssetById(id) {
+    selectedAssetIds.add(id);
+    const cb = document.querySelector('.asset-check[data-id="' + id + '"]');
+    if (cb) cb.checked = true;
+    updateRowHighlight(id, true);
+    updateSelectionCount();
+}
+
+// ---------------------------------------------------------------------------
+// GPS write helpers
+// ---------------------------------------------------------------------------
+async function writeGpsForAsset(assetId, lat, lon) {
+    const resp = await fetch(`/api/assets/${assetId}/gps?job_id=${JOB_ID}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat: lat, lon: lon }),
+    });
+    return resp;
+}
+
+async function applyManualGps() {
+    const lat = parseFloat(document.getElementById('manual-lat').value);
+    const lon = parseFloat(document.getElementById('manual-lon').value);
+    if (isNaN(lat) || isNaN(lon)) { alert('Enter valid latitude and longitude.'); return; }
+    if (selectedAssetIds.size === 0) { alert('Select at least one asset first.'); return; }
+
+    const ids = Array.from(selectedAssetIds);
+    const statusEl = document.getElementById('selection-count');
+    statusEl.textContent = 'Applying GPS...';
+
+    const resp = await fetch(`/api/assets/batch-gps?job_id=${JOB_ID}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset_ids: ids, lat: lat, lon: lon }),
+    });
+    const data = await resp.json();
+    statusEl.textContent = `Done: ${data.succeeded} ok, ${data.failed} failed`;
+
+    // Update in-memory positions and markers
+    ids.forEach(function(id) {
+        const a = ASSETS.find(function(x) { return x.id === id; });
+        if (a) {
+            a.matched_lat = lat;
+            a.matched_lon = lon;
+            if (assetMarkers[id]) assetMarkers[id].setLatLng([lat, lon]);
+        }
+    });
+    renderAssetTable();
+}
+
+// ---------------------------------------------------------------------------
+// Map click → modal
+// ---------------------------------------------------------------------------
+async function applyModalGpsToSelected() {
+    if (!modalClickLatLng || selectedAssetIds.size === 0) return;
+    const ids = Array.from(selectedAssetIds);
+    const statusEl = document.getElementById('modal-status');
+    statusEl.textContent = 'Writing GPS...';
+
+    const resp = await fetch(`/api/assets/batch-gps?job_id=${JOB_ID}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset_ids: ids, lat: modalClickLatLng.lat, lon: modalClickLatLng.lng }),
+    });
+    const data = await resp.json();
+    statusEl.textContent = `Done: ${data.succeeded} ok, ${data.failed} failed`;
+
+    const lat = modalClickLatLng.lat;
+    const lon = modalClickLatLng.lng;
+    ids.forEach(function(id) {
+        const a = ASSETS.find(function(x) { return x.id === id; });
+        if (a) {
+            a.matched_lat = lat;
+            a.matched_lon = lon;
+            if (assetMarkers[id]) assetMarkers[id].setLatLng([lat, lon]);
+        }
+    });
+    renderAssetTable();
+
+    setTimeout(function() { closeMapModal(); }, 1200);
+}
+
+function closeMapModal() {
+    document.getElementById('map-click-modal').classList.add('hidden');
+    modalClickLatLng = null;
+}
+
+// ---------------------------------------------------------------------------
+// Drag confirm / cancel
+// ---------------------------------------------------------------------------
+async function confirmDrag() {
+    if (!pendingDrag) return;
+    const statusEl = document.getElementById('drag-status');
+    statusEl.textContent = 'Saving...';
+
+    const resp = await writeGpsForAsset(
+        pendingDrag.assetId,
+        pendingDrag.newLatLng.lat,
+        pendingDrag.newLatLng.lng,
+    );
+
+    if (resp.ok) {
+        // Update in-memory
+        const a = ASSETS.find(function(x) { return x.id === pendingDrag.assetId; });
+        if (a) {
+            a.matched_lat = pendingDrag.newLatLng.lat;
+            a.matched_lon = pendingDrag.newLatLng.lng;
+        }
+        renderAssetTable();
+        statusEl.textContent = 'Saved.';
+        setTimeout(function() {
+            document.getElementById('drag-confirm-modal').classList.add('hidden');
+            pendingDrag = null;
+        }, 800);
+    } else {
+        statusEl.textContent = 'Error — GPS not saved.';
+        statusEl.style.color = 'var(--danger)';
+    }
+}
+
+function cancelDrag() {
+    if (pendingDrag) {
+        pendingDrag.marker.setLatLng([pendingDrag.oldLatLng.lat, pendingDrag.oldLatLng.lng]);
+        pendingDrag = null;
+    }
+    document.getElementById('drag-confirm-modal').classList.add('hidden');
+}
+
+// ---------------------------------------------------------------------------
+// Map navigation helpers
+// ---------------------------------------------------------------------------
+function flyToAsset(id) {
+    const a = ASSETS.find(function(x) { return x.id === id; });
+    if (a) {
+        map.flyTo([a.matched_lat, a.matched_lon], 15, { duration: 0.8 });
+        if (assetMarkers[id]) assetMarkers[id].openPopup();
+    }
+}
+
+function flyToSavedLoc(lat, lon) {
+    map.flyTo([lat, lon], 15, { duration: 0.8 });
+}
+
+// ---------------------------------------------------------------------------
+// Saved locations — create
+// ---------------------------------------------------------------------------
+async function saveMapCenter() {
+    const name = document.getElementById('new-loc-name').value.trim();
+    if (!name) { alert('Enter a location name first.'); return; }
+    const center = map.getCenter();
+    const radius = parseInt(document.getElementById('new-loc-radius').value) || 50;
+    await createSavedLocation(name, center.lat, center.lng, radius);
+}
+
+async function saveManualCoords() {
+    const name   = document.getElementById('new-loc-name').value.trim();
+    const lat    = parseFloat(document.getElementById('manual-lat').value);
+    const lon    = parseFloat(document.getElementById('manual-lon').value);
+    const radius = parseInt(document.getElementById('new-loc-radius').value) || 50;
+    if (!name) { alert('Enter a location name first.'); return; }
+    if (isNaN(lat) || isNaN(lon)) { alert('Enter valid coordinates in the Lat/Lon fields above first.'); return; }
+    await createSavedLocation(name, lat, lon, radius);
+}
+
+async function createSavedLocation(name, lat, lon, radius_m) {
+    const resp = await fetch('/api/saved-locations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, lat: lat, lon: lon, radius_m: radius_m }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json();
+        alert('Failed: ' + (err.detail || 'unknown error'));
+        return;
+    }
+    const newLoc = await resp.json();
+    SAVED_LOCS.unshift(newLoc);
+    document.getElementById('new-loc-name').value = '';
+    renderSavedLocs();
+}
+
+// ---------------------------------------------------------------------------
+// Saved locations — delete
+// ---------------------------------------------------------------------------
+async function deleteSavedLoc(id) {
+    if (!confirm('Delete this saved location?')) return;
+    const resp = await fetch('/api/saved-locations/' + id, { method: 'DELETE' });
+    if (resp.ok) {
+        SAVED_LOCS = SAVED_LOCS.filter(function(sl) { return sl.id !== id; });
+        renderSavedLocs();
+    } else {
+        alert('Delete failed.');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Snap to location
+// ---------------------------------------------------------------------------
+async function snapToLocation(locationId, locationName) {
+    if (!confirm(`Snap all assets within radius of "${locationName}" to its exact coordinates?`)) return;
+
+    const resp = await fetch(
+        `/api/assets/snap-to-location?location_id=${locationId}&job_id=${JOB_ID}`,
+        { method: 'POST' }
+    );
+    const data = await resp.json();
+
+    if (resp.ok) {
+        alert(`Snapped ${data.snapped} asset(s) to "${data.location}".`);
+        // Refresh page to pick up new GPS positions
+        if (data.snapped > 0) window.location.reload();
+    } else {
+        alert('Snap failed: ' + (data.detail || 'unknown error'));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

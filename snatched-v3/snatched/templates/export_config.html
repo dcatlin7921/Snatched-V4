@@ -1,0 +1,471 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page header -->
+<div class="section-header">
+    <h1 class="mb-0 page-title-accent">Export Config</h1>
+</div>
+
+<p class="text-muted mb-3" style="font-size: 0.9rem; max-width: 720px;">
+    Control how your processed files are organized and encoded on export.
+    These are global defaults — per-lane overrides can be set below.
+</p>
+
+<!-- ============================================================
+     SECTION 1 — FOLDER PATTERN BUILDER
+     ============================================================ -->
+<section>
+    <h2>Folder Pattern</h2>
+    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1.25rem;">
+        Define the subfolder structure for exported files. Click a variable chip to insert it at your cursor.
+    </p>
+
+    <!-- Pattern input -->
+    <div class="pattern-input-wrap">
+        <label for="folder-pattern-input" class="pattern-input-label">
+            Pattern
+        </label>
+        <input
+            type="text"
+            id="folder-pattern-input"
+            class="pattern-input mono"
+            value="{{ prefs.folder_pattern }}"
+            placeholder="{YYYY}/{MM}"
+            oninput="updateFolderPreview()"
+        >
+    </div>
+
+    <!-- Variable chips -->
+    <div class="gap-row mb-3" style="flex-wrap: wrap;" id="variable-chips">
+        <button type="button" class="var-chip" onclick="insertVariable('{YYYY}')">{YYYY}</button>
+        <button type="button" class="var-chip" onclick="insertVariable('{MM}')">{MM}</button>
+        <button type="button" class="var-chip" onclick="insertVariable('{DD}')">{DD}</button>
+        <button type="button" class="var-chip" onclick="insertVariable('{YYYY-MM-DD}')">{YYYY-MM-DD}</button>
+        <button type="button" class="var-chip" onclick="insertVariable('{lane}')">{lane}</button>
+        <button type="button" class="var-chip" onclick="insertVariable('{type}')">{type}</button>
+        <button type="button" class="var-chip" onclick="insertVariable('{friend_name}')">{friend_name}</button>
+    </div>
+
+    <!-- Live preview card -->
+    <div id="folder-preview-card" class="folder-preview-card">
+        <div class="folder-preview-header">
+            <span class="folder-preview-label">Live Preview</span>
+            <span class="folder-preview-mock">mock data</span>
+        </div>
+        <div id="folder-preview-paths">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+
+    <!-- Variable reference -->
+    <details class="mt-2">
+        <summary class="text-muted" style="font-size: 0.8rem; cursor: pointer; user-select: none;">Variable reference</summary>
+        <div style="margin-top: 0.75rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0.5rem;">
+            <div class="info-card" style="padding: 0.6rem 0.75rem;">
+                <span class="mono text-yellow" style="font-size: 0.85rem;">{YYYY}</span>
+                <span class="text-muted" style="font-size: 0.8rem; margin-left: 0.5rem;">4-digit year (e.g. 2024)</span>
+            </div>
+            <div class="info-card" style="padding: 0.6rem 0.75rem;">
+                <span class="mono text-yellow" style="font-size: 0.85rem;">{MM}</span>
+                <span class="text-muted" style="font-size: 0.8rem; margin-left: 0.5rem;">2-digit month (e.g. 07)</span>
+            </div>
+            <div class="info-card" style="padding: 0.6rem 0.75rem;">
+                <span class="mono text-yellow" style="font-size: 0.85rem;">{DD}</span>
+                <span class="text-muted" style="font-size: 0.8rem; margin-left: 0.5rem;">2-digit day (e.g. 04)</span>
+            </div>
+            <div class="info-card" style="padding: 0.6rem 0.75rem;">
+                <span class="mono text-yellow" style="font-size: 0.85rem;">{YYYY-MM-DD}</span>
+                <span class="text-muted" style="font-size: 0.8rem; margin-left: 0.5rem;">Full date (e.g. 2024-07-04)</span>
+            </div>
+            <div class="info-card" style="padding: 0.6rem 0.75rem;">
+                <span class="mono text-yellow" style="font-size: 0.85rem;">{lane}</span>
+                <span class="text-muted" style="font-size: 0.8rem; margin-left: 0.5rem;">memories / chats / stories</span>
+            </div>
+            <div class="info-card" style="padding: 0.6rem 0.75rem;">
+                <span class="mono text-yellow" style="font-size: 0.85rem;">{type}</span>
+                <span class="text-muted" style="font-size: 0.8rem; margin-left: 0.5rem;">memory_main, chat, story, etc.</span>
+            </div>
+            <div class="info-card" style="padding: 0.6rem 0.75rem;">
+                <span class="mono text-yellow" style="font-size: 0.85rem;">{friend_name}</span>
+                <span class="text-muted" style="font-size: 0.8rem; margin-left: 0.5rem;">Display name or username</span>
+            </div>
+        </div>
+    </details>
+</section>
+
+<!-- ============================================================
+     SECTION 2 — EXPORT FORMAT SETTINGS
+     ============================================================ -->
+<section class="mt-3">
+    <h2>Export Format Settings</h2>
+    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1.5rem;">
+        Controls how files are encoded when exported. These apply globally unless overridden per lane.
+    </p>
+
+    <!-- JPEG Quality -->
+    <div class="info-card mb-2">
+        <label style="display: block; margin-bottom: 0.6rem; font-size: 0.9rem; font-weight: 600;">
+            JPEG Quality &mdash;
+            <span class="mono text-yellow" id="jpeg-quality-label" style="font-size: 1rem;">{{ export_settings.jpeg_quality }}</span>
+        </label>
+        <input
+            type="range"
+            id="jpeg-quality"
+            min="75" max="100" step="5"
+            value="{{ export_settings.jpeg_quality }}"
+            oninput="document.getElementById('jpeg-quality-label').textContent = this.value"
+            style="width: 100%; max-width: 480px;"
+        >
+        <div class="range-hint-row text-muted mono">
+            <span>75 (smaller)</span>
+            <span>90 (balanced)</span>
+            <span>100 (lossless)</span>
+        </div>
+    </div>
+
+    <!-- PNG Compression -->
+    <div class="info-card mb-2">
+        <label style="display: block; margin-bottom: 0.6rem; font-size: 0.9rem; font-weight: 600;">
+            PNG Compression &mdash;
+            <span class="mono text-yellow" id="png-compression-label" style="font-size: 1rem;">{{ export_settings.png_compression }}</span>
+        </label>
+        <input
+            type="range"
+            id="png-compression"
+            min="0" max="9" step="1"
+            value="{{ export_settings.png_compression }}"
+            oninput="document.getElementById('png-compression-label').textContent = this.value"
+            style="width: 100%; max-width: 480px;"
+        >
+        <div class="range-hint-row text-muted mono">
+            <span>0 (fastest)</span>
+            <span>6 (default)</span>
+            <span>9 (smallest)</span>
+        </div>
+    </div>
+
+    <!-- Video Handling -->
+    <div class="info-card mb-2">
+        <label style="display: block; margin-bottom: 0.75rem; font-size: 0.9rem; font-weight: 600;">Video Handling</label>
+        <label style="display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer; margin-bottom: 0.5rem;">
+            <input type="radio" name="video-handling" id="video-copy" value="copy"
+                   {{ 'checked' if export_settings.video_handling == 'copy' else '' }}
+                   style="margin-top: 0.15rem; flex-shrink: 0;">
+            <span>
+                <strong>Copy original (fastest)</strong>
+                <br><span class="text-muted" style="font-size: 0.8rem;">Stream-copy without re-encoding. Preserves quality, no CPU cost.</span>
+            </span>
+        </label>
+        <label style="display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer; margin-bottom: 0.5rem;">
+            <input type="radio" name="video-handling" id="video-h264" value="h264"
+                   {{ 'checked' if export_settings.video_handling == 'h264' else '' }}
+                   style="margin-top: 0.15rem; flex-shrink: 0;">
+            <span>
+                <strong>Re-encode H.264</strong>
+                <br><span class="text-muted" style="font-size: 0.8rem;">Widely compatible. Good for sharing and Apple devices.</span>
+            </span>
+        </label>
+        <label style="display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer;">
+            <input type="radio" name="video-handling" id="video-h265" value="h265"
+                   {{ 'checked' if export_settings.video_handling == 'h265' else '' }}
+                   style="margin-top: 0.15rem; flex-shrink: 0;">
+            <span>
+                <strong>Re-encode H.265</strong>
+                <br><span class="text-muted" style="font-size: 0.8rem;">Better compression than H.264. Requires modern hardware to play.</span>
+            </span>
+        </label>
+    </div>
+
+    <!-- Thumbnails -->
+    <div class="info-card mb-2">
+        <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; margin-bottom: 0.5rem;">
+            <input
+                type="checkbox"
+                id="generate-thumbnails"
+                {{ 'checked' if export_settings.generate_thumbnails else '' }}
+                onchange="toggleThumbnailSize()"
+            >
+            <span style="font-size: 0.9rem; font-weight: 600;">Generate Thumbnails</span>
+        </label>
+        <p class="text-muted mb-2" style="font-size: 0.8rem;">
+            Creates a small JPEG thumbnail alongside each exported file for quick browsing.
+        </p>
+        <div id="thumbnail-size-row" style="display: {{ 'flex' if export_settings.generate_thumbnails else 'none' }}; align-items: center; gap: 0.75rem;">
+            <label for="thumbnail-size" class="text-muted" style="font-size: 0.85rem;">Size:</label>
+            <input
+                type="number"
+                id="thumbnail-size"
+                min="64" max="1024" step="32"
+                value="{{ export_settings.thumbnail_size }}"
+                class="thumbnail-size-input"
+            >
+            <span class="text-muted" style="font-size: 0.8rem;">px (longest edge)</span>
+        </div>
+    </div>
+
+    <!-- Burn Overlays (mirror from prefs) -->
+    <div class="info-card mb-2">
+        <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
+            <input type="checkbox" id="burn-overlays" {{ 'checked' if prefs.burn_overlays else '' }}>
+            <span>
+                <strong style="font-size: 0.9rem;">Burn Overlays</strong>
+                <br><span class="text-muted" style="font-size: 0.8rem;">Add date &amp; time text directly onto photos. Mirrors the setting from Preferences.</span>
+            </span>
+        </label>
+    </div>
+</section>
+
+<!-- ============================================================
+     SECTION 3 — PER-LANE OVERRIDES (collapsible)
+     ============================================================ -->
+<section class="mt-3">
+    <details id="per-lane-details">
+        <summary style="cursor: pointer; user-select: none;">
+            <h2 style="display: inline; margin: 0;">Per-Lane Overrides</h2>
+            <span class="text-muted" style="font-size: 0.8rem; margin-left: 0.75rem;">optional</span>
+        </summary>
+
+        <p class="text-muted mt-2 mb-3" style="font-size: 0.85rem;">
+            Override the global folder pattern or toggle features for each lane independently.
+            Leave blank to inherit global settings.
+        </p>
+
+        <!-- Memories lane -->
+        <div class="info-card mb-2">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                <h3 style="margin: 0; font-size: 1rem;">
+                    <span class="material-symbols-outlined icon-sm text-yellow">photo_library</span>
+                    Memories
+                </h3>
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer;">
+                    <input type="checkbox" id="lane-memories-enabled" checked>
+                    <span class="text-muted">Enabled</span>
+                </label>
+            </div>
+            <span class="lane-pattern-label">Folder Pattern Override</span>
+            <input
+                type="text"
+                id="lane-memories-pattern"
+                class="lane-pattern-input mono"
+                placeholder="inherits global"
+            >
+        </div>
+
+        <!-- Chats lane -->
+        <div class="info-card mb-2">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                <h3 style="margin: 0; font-size: 1rem;">
+                    <span class="material-symbols-outlined icon-sm text-yellow">chat</span>
+                    Chats
+                </h3>
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer;">
+                    <input type="checkbox" id="lane-chats-enabled" checked>
+                    <span class="text-muted">Enabled</span>
+                </label>
+            </div>
+            <span class="lane-pattern-label">Folder Pattern Override</span>
+            <input
+                type="text"
+                id="lane-chats-pattern"
+                class="lane-pattern-input mono mb-2"
+                placeholder="inherits global"
+            >
+            <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+                <label style="display: flex; align-items: center; gap: 0.6rem; cursor: pointer; font-size: 0.85rem;">
+                    <input type="checkbox" id="chats-export-text" checked>
+                    Export text transcripts
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.6rem; cursor: pointer; font-size: 0.85rem;">
+                    <input type="checkbox" id="chats-export-png" checked>
+                    Export rendered PNGs
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.6rem; cursor: pointer; font-size: 0.85rem;">
+                    <input type="checkbox" id="chats-dark-mode" {{ 'checked' if prefs.dark_mode_pngs else '' }}>
+                    Dark mode PNGs
+                </label>
+            </div>
+        </div>
+
+        <!-- Stories lane -->
+        <div class="info-card mb-2">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                <h3 style="margin: 0; font-size: 1rem;">
+                    <span class="material-symbols-outlined icon-sm text-yellow">auto_stories</span>
+                    Stories
+                </h3>
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer;">
+                    <input type="checkbox" id="lane-stories-enabled" checked>
+                    <span class="text-muted">Enabled</span>
+                </label>
+            </div>
+            <span class="lane-pattern-label">Folder Pattern Override</span>
+            <input
+                type="text"
+                id="lane-stories-pattern"
+                class="lane-pattern-input mono"
+                placeholder="inherits global"
+            >
+        </div>
+    </details>
+</section>
+
+<!-- ============================================================
+     SAVE BUTTON
+     ============================================================ -->
+<div class="gap-row mt-3" style="align-items: center; padding-top: 1.5rem; border-top: 1px solid var(--border-dark);">
+    <button type="button" id="btn-save-export" class="btn-primary" onclick="saveExportConfig()">
+        SAVE EXPORT CONFIG
+    </button>
+    <span id="save-feedback" class="mono text-muted" style="font-size: 0.8rem;"></span>
+</div>
+
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+// Mock data matching the API's _MOCK_PREVIEW_SAMPLES
+const MOCK_SAMPLES = [
+    { filename: "snap_memory_abc123.jpg", matched_date: "2024-07-04", friend_name: "john_doe", type: "memory_main", lane: "memories", YYYY: "2024", MM: "07", DD: "04" },
+    { filename: "chat_msg_def456.jpg",    matched_date: "2023-12-25", friend_name: "jane_smith", type: "chat", lane: "chats", YYYY: "2023", MM: "12", DD: "25" },
+    { filename: "story_ghi789.mp4",       matched_date: "2024-01-15", friend_name: "my_story", type: "story", lane: "stories", YYYY: "2024", MM: "01", DD: "15" },
+    { filename: "snap_memory_jkl012.jpg", matched_date: "2022-06-21", friend_name: "alex_k", type: "memory_main", lane: "memories", YYYY: "2022", MM: "06", DD: "21" },
+];
+
+function resolvePattern(pattern, vars) {
+    let result = pattern;
+    // Handle compound token first
+    if (result.includes('{YYYY-MM-DD}')) {
+        const full = vars['YYYY'] + '-' + vars['MM'] + '-' + vars['DD'];
+        result = result.replaceAll('{YYYY-MM-DD}', full);
+    }
+    result = result.replaceAll('{YYYY}', vars['YYYY'] || '????');
+    result = result.replaceAll('{MM}',   vars['MM']   || '??');
+    result = result.replaceAll('{DD}',   vars['DD']   || '??');
+    result = result.replaceAll('{friend_name}', vars['friend_name'] || 'unknown');
+    result = result.replaceAll('{type}', vars['type'] || 'unknown');
+    result = result.replaceAll('{lane}', vars['lane'] || 'unknown');
+    return result;
+}
+
+function updateFolderPreview() {
+    const pattern = document.getElementById('folder-pattern-input').value || '{YYYY}/{MM}';
+    const container = document.getElementById('folder-preview-paths');
+    container.innerHTML = '';
+
+    MOCK_SAMPLES.forEach(function(s) {
+        const folder = resolvePattern(pattern, s);
+        const fullPath = folder + '/' + s.filename;
+
+        const label = document.createElement('div');
+        label.className = 'preview-label';
+        label.textContent = s.lane + ' \u2022 ' + s.friend_name + ' \u2022 ' + s.matched_date;
+
+        const path = document.createElement('div');
+        path.className = 'preview-path';
+        path.textContent = fullPath;
+        path.title = fullPath;
+
+        container.appendChild(label);
+        container.appendChild(path);
+    });
+}
+
+function insertVariable(varToken) {
+    const input = document.getElementById('folder-pattern-input');
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    const val = input.value;
+    input.value = val.substring(0, start) + varToken + val.substring(end);
+    const newPos = start + varToken.length;
+    input.setSelectionRange(newPos, newPos);
+    input.focus();
+    updateFolderPreview();
+}
+
+function toggleThumbnailSize() {
+    const checked = document.getElementById('generate-thumbnails').checked;
+    document.getElementById('thumbnail-size-row').style.display = checked ? 'flex' : 'none';
+}
+
+async function saveExportConfig() {
+    const btn = document.getElementById('btn-save-export');
+    const feedback = document.getElementById('save-feedback');
+
+    const videoHandlingEl = document.querySelector('input[name="video-handling"]:checked');
+
+    const laneOverrides = {
+        memories: {
+            enabled: document.getElementById('lane-memories-enabled').checked,
+            folder_pattern: document.getElementById('lane-memories-pattern').value.trim() || null,
+        },
+        chats: {
+            enabled: document.getElementById('lane-chats-enabled').checked,
+            folder_pattern: document.getElementById('lane-chats-pattern').value.trim() || null,
+            export_text: document.getElementById('chats-export-text').checked,
+            export_png: document.getElementById('chats-export-png').checked,
+            dark_mode: document.getElementById('chats-dark-mode').checked,
+        },
+        stories: {
+            enabled: document.getElementById('lane-stories-enabled').checked,
+            folder_pattern: document.getElementById('lane-stories-pattern').value.trim() || null,
+        },
+    };
+
+    const exportSettings = {
+        jpeg_quality: parseInt(document.getElementById('jpeg-quality').value, 10),
+        png_compression: parseInt(document.getElementById('png-compression').value, 10),
+        video_handling: videoHandlingEl ? videoHandlingEl.value : 'copy',
+        generate_thumbnails: document.getElementById('generate-thumbnails').checked,
+        thumbnail_size: parseInt(document.getElementById('thumbnail-size').value, 10) || 256,
+        burn_overlays: document.getElementById('burn-overlays').checked,
+        lane_overrides: laneOverrides,
+    };
+
+    const payload = {
+        folder_pattern: document.getElementById('folder-pattern-input').value.trim() || '{YYYY}/{MM}',
+        export_settings_json: exportSettings,
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'SAVING...';
+    feedback.textContent = '';
+    feedback.style.color = '';
+
+    try {
+        const resp = await fetch('/api/export-settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(function() { return {}; });
+            throw new Error(err.detail || 'HTTP ' + resp.status);
+        }
+
+        const data = await resp.json();
+        if (data.saved) {
+            feedback.textContent = 'Saved.';
+            feedback.style.color = 'var(--success)';
+        } else {
+            throw new Error('Unexpected response from server.');
+        }
+    } catch (err) {
+        feedback.textContent = 'Error: ' + err.message;
+        feedback.style.color = 'var(--danger)';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'SAVE EXPORT CONFIG';
+        setTimeout(function() {
+            feedback.textContent = '';
+            feedback.style.color = '';
+        }, 4000);
+    }
+}
+
+// Init preview on page load
+updateFolderPreview();
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

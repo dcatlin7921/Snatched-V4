@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>SNATCHED | Anti-Snapchat Rebellion</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style type="text/tailwindcss">
+        :root {
+            --snap-yellow: #FFFC00;
+            --deep-black: #0a0a0a;
+            --charcoal: #141414;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--deep-black);
+            background-image: repeating-linear-gradient(
+                45deg,
+                transparent,
+                transparent 40px,
+                rgba(255, 252, 0, 0.03) 40px,
+                rgba(255, 252, 0, 0.03) 80px
+            );
+        }
+        .glitch-ghost {
+            position: relative;
+            display: inline-block;
+        }
+        .glitch-ghost::after {
+            content: 'ghost';
+            font-family: 'Material Symbols Outlined';
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0.7;
+            clip-path: polygon(0 0, 100% 0, 100% 45%, 0 45%);
+            transform: translate(-2px, 0);
+            color: var(--snap-yellow);
+        }
+        .yellow-glow {
+            box-shadow: 0 0 15px rgba(255, 252, 0, 0.3);
+        }
+        .card-hover:hover {
+            box-shadow: 0 0 20px rgba(255, 252, 0, 0.15);
+            border-color: rgba(255, 252, 0, 0.5);
+        }
+        .step-line::after {
+            content: '';
+            position: absolute;
+            top: 24px;
+            left: 50%;
+            width: 100%;
+            height: 2px;
+            background-color: var(--snap-yellow);
+            z-index: 0;
+        }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen selection:bg-[#FFFC00] selection:text-black">
+<div class="max-w-[1200px] mx-auto px-6">
+<header class="flex items-center justify-between py-8 border-b border-white/10">
+<div class="flex flex-col">
+<div class="flex items-center gap-1">
+<h1 class="text-white text-3xl font-[900] tracking-tighter italic">SN<span class="relative inline-block"><span class="invisible text-3xl">A</span><span class="material-symbols-outlined absolute left-[-4px] top-[2px] text-4xl text-[var(--snap-yellow)] opacity-80 scale-x-110">mist</span></span>TCHED</h1>
+</div>
+<p class="text-[var(--snap-yellow)] text-[10px] font-bold tracking-[0.2em] uppercase mt-[-4px]">They took your memories. We take them back.</p>
+</div>
+<div class="flex items-center gap-8">
+<a class="text-slate-400 hover:text-[var(--snap-yellow)] text-xs font-bold tracking-widest uppercase transition-colors" href="#">Manifesto</a>
+<button class="border-2 border-[var(--snap-yellow)] text-[var(--snap-yellow)] text-xs font-[900] py-2 px-6 hover:bg-[var(--snap-yellow)] hover:text-black transition-all tracking-widest uppercase">
+                    Breach System
+                </button>
+</div>
+</header>
+<section class="flex flex-col items-center text-center pt-32 pb-40">
+<div class="inline-block px-3 py-1 border border-[var(--snap-yellow)] text-[var(--snap-yellow)] text-[10px] font-black tracking-[0.3em] uppercase mb-8 animate-pulse">
+                Operation: Memory Extraction
+            </div>
+<h1 class="text-white text-6xl md:text-8xl font-[900] leading-[0.95] tracking-tighter mb-8 uppercase max-w-4xl">
+                Snapchat stripped your metadata. <span class="text-[var(--snap-yellow)]">We're putting it back.</span>
+</h1>
+<p class="text-slate-500 text-lg md:text-xl font-medium max-w-[650px] leading-relaxed mb-12 italic">
+                They delete your exports after 30 days... <span class="text-slate-300">Snatched finds everything they tried to hide.</span> No more nameless files. No more lost locations.
+            </p>
+<div class="flex flex-wrap gap-6 justify-center">
+<button class="bg-[var(--snap-yellow)] text-black text-lg font-[900] py-5 px-10 yellow-glow hover:scale-105 transition-all tracking-tighter uppercase">
+                    RESCUE YOUR MEMORIES
+                </button>
+<button class="border-2 border-white/20 hover:border-white/40 text-white text-lg font-[900] py-5 px-10 transition-all tracking-tighter uppercase">
+                    VIEW MISSION LOGS
+                </button>
+</div>
+</section>
+<section class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-40">
+<div class="bg-[var(--charcoal)] border-l-4 border-[var(--snap-yellow)] p-8 card-hover transition-all group">
+<div class="mb-6">
+<span class="material-symbols-outlined text-[var(--snap-yellow)] text-4xl group-hover:scale-110 transition-transform">radar</span>
+</div>
+<h3 class="text-white text-2xl font-[900] mb-3 uppercase tracking-tight">Match</h3>
+<p class="text-slate-400 text-sm leading-relaxed font-medium">
+                    We find what Snapchat buried. Our algorithms rip through raw data to reunite your media with its rightful identity.
+                </p>
+</div>
+<div class="bg-[var(--charcoal)] border-l-4 border-[var(--snap-yellow)] p-8 card-hover transition-all group">
+<div class="mb-6">
+<span class="material-symbols-outlined text-[var(--snap-yellow)] text-4xl group-hover:scale-110 transition-transform">encrypted</span>
+</div>
+<h3 class="text-white text-2xl font-[900] mb-3 uppercase tracking-tight">Enrich</h3>
+<p class="text-slate-400 text-sm leading-relaxed font-medium">
+                    Force-inject original timestamps, GPS coordinates, and captions back into the source. Your history, restored.
+                </p>
+</div>
+<div class="bg-[var(--charcoal)] border-l-4 border-[var(--snap-yellow)] p-8 card-hover transition-all group">
+<div class="mb-6">
+<span class="material-symbols-outlined text-[var(--snap-yellow)] text-4xl group-hover:scale-110 transition-transform">ios_share</span>
+</div>
+<h3 class="text-white text-2xl font-[900] mb-3 uppercase tracking-tight">Export</h3>
+<p class="text-slate-400 text-sm leading-relaxed font-medium">
+                    Liberate your library. Get a battle-ready folder structure primed for any cloud storage you choose.
+                </p>
+</div>
+</section>
+<section class="mb-40">
+<h2 class="text-white text-4xl font-[900] text-center mb-20 uppercase tracking-tighter">The Rescue Plan</h2>
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+<div class="relative flex flex-col items-center text-center px-4">
+<div class="step-line hidden md:block w-full"></div>
+<div class="size-12 bg-[var(--snap-yellow)] flex items-center justify-center text-black font-[900] text-xl mb-6 z-10 yellow-glow">1</div>
+<h4 class="text-white font-black uppercase mb-2 tracking-tight">Export from Snap</h4>
+<p class="text-slate-500 text-xs font-bold uppercase tracking-wider">Breach their settings.</p>
+</div>
+<div class="relative flex flex-col items-center text-center px-4">
+<div class="step-line hidden md:block w-full"></div>
+<div class="size-12 border-2 border-[var(--snap-yellow)] bg-black flex items-center justify-center text-[var(--snap-yellow)] font-[900] text-xl mb-6 z-10">2</div>
+<h4 class="text-white font-black uppercase mb-2 tracking-tight">Upload ZIP</h4>
+<p class="text-slate-500 text-xs font-bold uppercase tracking-wider">Drop the payload.</p>
+</div>
+<div class="relative flex flex-col items-center text-center px-4">
+<div class="step-line hidden md:block w-full"></div>
+<div class="size-12 border-2 border-[var(--snap-yellow)] bg-black flex items-center justify-center text-[var(--snap-yellow)] font-[900] text-xl mb-6 z-10">3</div>
+<h4 class="text-white font-black uppercase mb-2 tracking-tight">We Process</h4>
+<p class="text-slate-500 text-xs font-bold uppercase tracking-wider">Reconstruct reality.</p>
+</div>
+<div class="relative flex flex-col items-center text-center px-4">
+<div class="size-12 border-2 border-[var(--snap-yellow)] bg-black flex items-center justify-center text-[var(--snap-yellow)] font-[900] text-xl mb-6 z-10">4</div>
+<h4 class="text-white font-black uppercase mb-2 tracking-tight">Download Everything</h4>
+<p class="text-slate-500 text-xs font-bold uppercase tracking-wider">Mission accomplished.</p>
+</div>
+</div>
+</section>
+<section class="bg-[var(--charcoal)] border-4 border-dashed border-[var(--snap-yellow)] p-12 md:p-20 text-center mb-40 relative overflow-hidden">
+<div class="absolute top-0 left-0 w-full h-2 bg-[var(--snap-yellow)] animate-pulse"></div>
+<h2 class="text-white text-4xl md:text-5xl font-[900] mb-4 uppercase tracking-tighter">Ready to rescue your memories?</h2>
+<p class="text-[var(--snap-yellow)] text-xl font-black mb-12 uppercase tracking-[0.2em]">Snapchat gives you 30 days. Clock's ticking.</p>
+<button class="bg-[var(--snap-yellow)] text-black text-2xl font-[900] py-6 px-16 yellow-glow hover:scale-105 transition-all uppercase tracking-tighter">
+                INITIATE RECOVERY
+            </button>
+</section>
+<footer class="py-16 border-t border-white/10 text-center">
+<div class="flex flex-col items-center gap-4 mb-8">
+<div class="flex items-center gap-1">
+<h1 class="text-white text-xl font-[900] tracking-tighter italic">SN<span class="relative inline-block"><span class="invisible text-xl">A</span><span class="material-symbols-outlined absolute left-[-2px] top-[1px] text-2xl text-[var(--snap-yellow)] opacity-80">mist</span></span>TCHED</h1>
+</div>
+<p class="text-slate-600 text-[10px] font-bold uppercase tracking-widest">
+                    © 2024 REBELLION HQ. NO AFFILIATION WITH THE DATA HOARDERS.
+                </p>
+</div>
+<div class="flex justify-center gap-6 text-[var(--snap-yellow)] text-[10px] font-black uppercase tracking-[0.3em]">
+<a class="hover:underline" href="#">Terms of Siege</a>
+<a class="hover:underline" href="#">Privacy Breach Policy</a>
+</div>
+</footer>
+</div>
+
+</body></html>

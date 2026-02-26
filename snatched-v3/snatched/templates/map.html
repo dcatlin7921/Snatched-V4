@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<!-- MarkerCluster CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin="">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" crossorigin="">
+
+<!-- Breadcrumb -->
+<nav class="breadcrumb mb-2">
+    <a href="/results/{{ job_id }}" class="text-muted">Results</a>
+    <span class="separator">/</span>
+    <span class="text-yellow">Map</span>
+</nav>
+
+<!-- Page header -->
+<div class="sticky-header">
+    <h1 class="mb-0">GPS Map</h1>
+    <div class="gap-row">
+        <a href="/results/{{ job_id }}" class="btn-outline">BACK TO RESULTS</a>
+        <button class="btn-outline" onclick="toggleSidebar()" id="sidebar-toggle">FILTERS</button>
+    </div>
+</div>
+
+<!-- Summary bar -->
+<div class="stats-grid mb-2">
+    <div class="stat-card">
+        <p class="stat-label">GPS Items</p>
+        <p class="stat-value green" id="stat-gps-total">{{ gps_total }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Coverage</p>
+        <p class="stat-value white" id="stat-coverage">{{ gps_coverage }}%</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Shown</p>
+        <p class="stat-value" id="stat-shown">—</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Bounds</p>
+        <p class="mono text-muted" id="stat-bounds" style="font-size: 0.7rem; margin: 0;">—</p>
+    </div>
+</div>
+
+<!-- Map + sidebar layout -->
+<div style="display: flex; gap: 0; position: relative;">
+
+    <!-- Filter sidebar -->
+    <div id="filter-sidebar" style="
+        width: 260px;
+        min-width: 260px;
+        background: var(--charcoal);
+        border: 1px solid var(--border-dark);
+        border-right: none;
+        padding: 1rem;
+        flex-shrink: 0;
+        overflow-y: auto;
+        max-height: calc(100vh - 250px);
+    ">
+        <p class="mono text-yellow uppercase" style="font-size: 0.65rem; letter-spacing: 0.08em; margin-bottom: 1rem;">Filters</p>
+
+        <!-- Lane filter -->
+        <div class="mb-3">
+            <p class="mono text-muted uppercase" style="font-size: 0.7rem; margin-bottom: 0.5rem;">Lane</p>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; margin-bottom: 0.4rem; cursor: pointer;">
+                <input type="checkbox" id="map-filter-memories" checked onchange="reloadMarkers()">
+                <span style="color: #FFFC00;">Memories</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; margin-bottom: 0.4rem; cursor: pointer;">
+                <input type="checkbox" id="map-filter-chats" checked onchange="reloadMarkers()">
+                <span class="text-success">Chats</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; cursor: pointer;">
+                <input type="checkbox" id="map-filter-stories" checked onchange="reloadMarkers()">
+                <span style="color: #4488ff;">Stories</span>
+            </label>
+        </div>
+
+        <!-- Date range -->
+        <div class="mb-3">
+            <p class="mono text-muted uppercase" style="font-size: 0.7rem; margin-bottom: 0.5rem;">Date Range</p>
+            <label class="text-muted" style="font-size: 0.75rem;">From</label>
+            <input type="date" id="map-date-start" style="width: 100%; margin-bottom: 0.5rem;" onchange="reloadMarkers()">
+            <label class="text-muted" style="font-size: 0.75rem;">To</label>
+            <input type="date" id="map-date-end" style="width: 100%;" onchange="reloadMarkers()">
+        </div>
+
+        <!-- Friend filter -->
+        <div class="mb-3">
+            <p class="mono text-muted uppercase" style="font-size: 0.7rem; margin-bottom: 0.5rem;">Friend</p>
+            <input type="text" id="map-filter-friend" placeholder="display name..." style="width: 100%; font-size: 0.8rem;" oninput="debounceReload()">
+        </div>
+
+        <!-- Confidence -->
+        <div class="mb-3">
+            <p class="mono text-muted uppercase" style="font-size: 0.7rem; margin-bottom: 0.5rem;">
+                Min Confidence: <span id="map-conf-label">0%</span>
+            </p>
+            <input type="range" id="map-filter-confidence" min="0" max="100" value="0" style="width: 100%;"
+                   oninput="document.getElementById('map-conf-label').textContent=this.value+'%'; reloadMarkers()">
+        </div>
+
+        <button class="btn-outline btn-small" style="width: 100%;" onclick="resetFilters()">RESET FILTERS</button>
+    </div>
+
+    <!-- Map container -->
+    <div style="flex: 1; position: relative;">
+        <div id="map" style="width: 100%; height: calc(100vh - 250px); background: #111; border: 1px solid var(--border-dark);"></div>
+        <div id="map-loading" class="hidden" style="
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(20,20,20,0.9);
+            border: 1px solid var(--snap-yellow);
+            padding: 0.4rem 0.75rem;
+            z-index: 1000;
+        ">
+            <span class="mono text-yellow" style="font-size: 0.75rem;">Loading markers...</span>
+        </div>
+    </div>
+</div>
+
+<!-- Empty state -->
+<div id="map-empty" class="hidden" style="margin-top: 1rem;">
+    <div class="empty-state">
+        <p>No GPS-enriched media found for this job with current filters.</p>
+        <p class="text-muted" style="font-size: 0.85rem;">GPS data is attached during the Enrich phase when location breadcrumbs are available.</p>
+    </div>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN2GGBc=" crossorigin=""></script>
+<!-- MarkerCluster JS -->
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
+
+<script>
+(function() {
+    var JOB_ID = {{ job_id }};
+
+    // Lane colors
+    var LANE_COLORS = {
+        memories: '#FFFC00',
+        chats: '#00aa00',
+        stories: '#4488ff',
+    };
+
+    // Initialize Leaflet map
+    var map = L.map('map', {
+        center: [20, 0],
+        zoom: 2,
+        zoomControl: true,
+    });
+
+    // Dark CartoDB basemap
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 19,
+    }).addTo(map);
+
+    // Marker cluster group
+    var clusterGroup = L.markerClusterGroup({
+        chunkedLoading: true,
+        maxClusterRadius: 50,
+        iconCreateFunction: function(cluster) {
+            var count = cluster.getChildCount();
+            var size = count < 10 ? 30 : count < 100 ? 36 : 42;
+            return L.divIcon({
+                html: '<div style="'
+                    + 'width:' + size + 'px;height:' + size + 'px;'
+                    + 'border-radius:50% !important;'
+                    + 'background:rgba(255,252,0,0.85);'
+                    + 'border:2px solid #fff;'
+                    + 'display:flex;align-items:center;justify-content:center;'
+                    + 'color:#000;font-weight:700;font-size:0.75rem;font-family:monospace;'
+                    + '">' + count + '</div>',
+                className: 'snatched-cluster-icon',
+                iconSize: [size, size],
+                iconAnchor: [size/2, size/2],
+            });
+        },
+    });
+    map.addLayer(clusterGroup);
+
+    function makeCircleMarker(lat, lon, lane, filename, matchedDate, confidence, displayName, assetType, assetId) {
+        var color = LANE_COLORS[lane] || '#888';
+        var opacity = Math.max(0.4, 0.3 + 0.7 * (confidence || 0));
+        var confPct = Math.round((confidence || 0) * 100);
+        var dateStr = (matchedDate || '').slice(0, 10) || 'Unknown';
+        var typeLabel = assetType === 'video' ? 'Video' : 'Photo';
+        var laneLabel = lane || 'unknown';
+
+        var marker = L.circleMarker([lat, lon], {
+            radius: 7,
+            fillColor: color,
+            color: '#fff',
+            weight: 1,
+            opacity: 0.9,
+            fillOpacity: opacity,
+        });
+
+        var popupContent = '<div style="'
+            + 'font-family: Inter, sans-serif;'
+            + 'background: #141414;'
+            + 'color: #f0f0f0;'
+            + 'min-width: 200px;'
+            + 'font-size: 0.8rem;'
+            + '">'
+            + '<p style="margin:0 0 0.4rem 0;font-weight:700;color:' + color + ';text-transform:uppercase;font-size:0.7rem;">' + laneLabel + '</p>'
+            + '<p style="margin:0 0 0.25rem 0;font-family:monospace;font-size:0.75rem;color:#888;word-break:break-all;" title="' + filename + '">' + filename + '</p>'
+            + '<p style="margin:0 0 0.25rem 0;">' + dateStr + '</p>'
+            + '<p style="margin:0 0 0.25rem 0;">Type: ' + typeLabel + '</p>'
+            + (displayName ? '<p style="margin:0 0 0.25rem 0;">Friend: ' + displayName + '</p>' : '')
+            + '<p style="margin:0 0 0.5rem 0;color:#888;">Confidence: ' + confPct + '%</p>'
+            + '<a href="/assets/' + JOB_ID + '/' + assetId + '" style="color:' + color + ';font-weight:700;font-size:0.75rem;">VIEW ASSET &rarr;</a>'
+            + '</div>';
+
+        marker.bindPopup(popupContent, {
+            maxWidth: 260,
+            className: 'snatched-popup',
+        });
+
+        return marker;
+    }
+
+    function buildApiUrl() {
+        var params = new URLSearchParams();
+        var lanes = [];
+        if (document.getElementById('map-filter-memories').checked) lanes.push('memories');
+        if (document.getElementById('map-filter-chats').checked) lanes.push('chats');
+        if (document.getElementById('map-filter-stories').checked) lanes.push('stories');
+        lanes.forEach(function(l) { params.append('lane', l); });
+
+        var dateStart = document.getElementById('map-date-start').value;
+        var dateEnd = document.getElementById('map-date-end').value;
+        if (dateStart) params.set('date_start', dateStart);
+        if (dateEnd) params.set('date_end', dateEnd);
+
+        var friend = document.getElementById('map-filter-friend').value.trim();
+        if (friend) params.set('friend', friend);
+
+        var conf = parseInt(document.getElementById('map-filter-confidence').value, 10);
+        if (conf > 0) params.set('confidence_min', (conf / 100).toFixed(2));
+
+        return '/api/jobs/' + JOB_ID + '/map-data?' + params.toString();
+    }
+
+    function updateStats(data) {
+        var shown = data.markers ? data.markers.length : 0;
+        document.getElementById('stat-shown').textContent = shown;
+
+        if (data.bounds && shown > 0) {
+            var b = data.bounds;
+            document.getElementById('stat-bounds').textContent =
+                b.min_lat.toFixed(2) + ',' + b.min_lon.toFixed(2)
+                + ' → ' + b.max_lat.toFixed(2) + ',' + b.max_lon.toFixed(2);
+        } else {
+            document.getElementById('stat-bounds').textContent = '—';
+        }
+    }
+
+    async function loadMarkers() {
+        document.getElementById('map-loading').style.display = 'block';
+        document.getElementById('map-empty').style.display = 'none';
+        clusterGroup.clearLayers();
+
+        try {
+            var resp = await fetch(buildApiUrl());
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            var data = await resp.json();
+
+            updateStats(data);
+
+            if (!data.markers || data.markers.length === 0) {
+                document.getElementById('map-empty').style.display = 'block';
+                return;
+            }
+
+            var markers = [];
+            data.markers.forEach(function(m) {
+                if (m.lat == null || m.lon == null) return;
+                var marker = makeCircleMarker(
+                    m.lat, m.lon,
+                    m.lane, m.filename,
+                    m.matched_date, m.confidence,
+                    m.display_name, m.asset_type, m.asset_id
+                );
+                markers.push(marker);
+            });
+
+            clusterGroup.addLayers(markers);
+
+            // Auto-fit bounds
+            if (markers.length > 0 && data.bounds) {
+                var b = data.bounds;
+                try {
+                    map.fitBounds([
+                        [b.min_lat, b.min_lon],
+                        [b.max_lat, b.max_lon],
+                    ], { padding: [40, 40] });
+                } catch(e) {
+                    // fallback: just invalidate size
+                    map.invalidateSize();
+                }
+            }
+        } catch(e) {
+            console.error('Map data error:', e);
+        } finally {
+            document.getElementById('map-loading').style.display = 'none';
+        }
+    }
+
+    // Debounce for text input
+    var debounceTimer = null;
+    window.debounceReload = function() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(function() { loadMarkers(); }, 400);
+    };
+
+    window.reloadMarkers = loadMarkers;
+
+    window.toggleSidebar = function() {
+        var sidebar = document.getElementById('filter-sidebar');
+        var btn = document.getElementById('sidebar-toggle');
+        if (sidebar.style.display === 'none') {
+            sidebar.style.display = 'block';
+            btn.textContent = 'FILTERS';
+        } else {
+            sidebar.style.display = 'none';
+            btn.textContent = 'FILTERS';
+        }
+        setTimeout(function() { map.invalidateSize(); }, 150);
+    };
+
+    window.resetFilters = function() {
+        document.getElementById('map-filter-memories').checked = true;
+        document.getElementById('map-filter-chats').checked = true;
+        document.getElementById('map-filter-stories').checked = true;
+        document.getElementById('map-date-start').value = '';
+        document.getElementById('map-date-end').value = '';
+        document.getElementById('map-filter-friend').value = '';
+        document.getElementById('map-filter-confidence').value = 0;
+        document.getElementById('map-conf-label').textContent = '0%';
+        loadMarkers();
+    };
+
+    // Initial load
+    loadMarkers();
+})();
+</script>
+
+<style>
+/* Leaflet popup dark theme override */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+    background: #141414 !important;
+    color: #f0f0f0 !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 0 !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.8) !important;
+}
+.leaflet-popup-close-button {
+    color: #888 !important;
+}
+.leaflet-popup-close-button:hover {
+    color: #FFFC00 !important;
+}
+/* Cluster icon border-radius override (global * kills it) */
+.snatched-cluster-icon > div {
+    border-radius: 50% !important;
+}
+/* MarkerCluster dark override */
+.marker-cluster-small,
+.marker-cluster-medium,
+.marker-cluster-large {
+    background-color: rgba(255,252,0,0.3) !important;
+}
+.marker-cluster-small div,
+.marker-cluster-medium div,
+.marker-cluster-large div {
+    background-color: rgba(255,252,0,0.7) !important;
+    color: #000 !important;
+    font-weight: 700 !important;
+    font-family: monospace !important;
+}
+</style>
+
+{% endblock %}
+{# themed: 2026-02-25 #}

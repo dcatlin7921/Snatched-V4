@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Header -->
+<div class="section-header">
+    <h1 class="mb-0">Your Jobs</h1>
+    <a href="/upload" class="btn-primary">
+        <span class="material-symbols-outlined">add_circle</span>
+        New Upload
+    </a>
+</div>
+
+<!-- Stat Cards -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <p class="stat-label">Total Jobs</p>
+        <p class="stat-value">{{ total_jobs }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Completed</p>
+        <p class="stat-value green">{{ completed_jobs }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Storage Usage</p>
+        <p class="stat-value white">{{ total_storage_mb }} MB</p>
+    </div>
+</div>
+
+<!-- Feature #31: Processing Slots indicator -->
+<div class="stats-grid slots-grid">
+    <div class="stat-card slots-card">
+        <div class="slots-header">
+            <p class="stat-label mb-0">Processing Slots</p>
+            {% if tier_info %}
+            <span class="tier-badge" style="color: {{ tier_info.color }}; border-color: {{ tier_info.color }};">
+                {{ tier_info.label | upper }}
+            </span>
+            {% endif %}
+        </div>
+
+        {% if max_slots is none %}
+            {# Unlimited tier #}
+            <p class="stat-value white mb-0">Unlimited</p>
+            <p class="slots-note text-muted">
+                {{ active_jobs_count }} job{{ 's' if active_jobs_count != 1 else '' }} currently active
+            </p>
+        {% else %}
+            {# Finite slot tier #}
+            {% set used = active_jobs_count if active_jobs_count <= max_slots else max_slots %}
+            {% set available = max_slots - used %}
+            <p class="stat-value {% if used >= max_slots %}red{% elif used > 0 %}white{% else %}green{% endif %} mb-0">
+                {{ used }}/{{ max_slots }} slots in use
+            </p>
+            {# Dot indicators #}
+            <div class="slot-dots">
+                {% for i in range(max_slots) %}
+                    <div class="slot-dot {% if i < used %}slot-dot-used{% else %}slot-dot-free{% endif %}"></div>
+                {% endfor %}
+            </div>
+            {% if available == 0 and queued_jobs_count and queued_jobs_count > 0 %}
+            <p class="slots-note text-yellow">
+                {{ queued_jobs_count }} job{{ 's' if queued_jobs_count != 1 else '' }} queued &mdash;
+                your position: #{{ queue_position if queue_position else '?' }}
+            </p>
+            {% elif available == 0 %}
+            <p class="slots-note text-yellow">
+                All slots occupied &mdash; new jobs will queue
+            </p>
+            {% else %}
+            <p class="slots-note text-muted">
+                {{ available }} slot{{ 's' if available != 1 else '' }} available
+            </p>
+            {% endif %}
+        {% endif %}
+    </div>
+</div>
+<!-- end Feature #31 -->
+
+<!-- Section divider: Active Jobs -->
+<div class="section-divider">
+    <span class="section-divider-label mono uppercase tracking-wide">Mission Registry</span>
+</div>
+
+<!-- Active Jobs -->
+<section>
+    <h2>Active Jobs</h2>
+    <div id="active-jobs"
+         hx-get="/api/jobs/html?status=running,pending,scanned"
+         hx-trigger="load, every 2s"
+         hx-target="this"
+         hx-swap="innerHTML">
+        <p class="text-muted">Loading active jobs...</p>
+    </div>
+</section>
+
+<!-- Section divider: History -->
+<div class="section-divider">
+    <span class="section-divider-label mono uppercase tracking-wide">Job History</span>
+</div>
+
+<!-- Job History -->
+<section>
+    <div id="job-history"
+         hx-get="/api/jobs/html?status=completed,failed,cancelled"
+         hx-trigger="load, every 10s"
+         hx-target="this"
+         hx-swap="innerHTML">
+        <p class="text-muted">Loading job history...</p>
+    </div>
+</section>
+
+<!-- Empty state (shown when no jobs, hidden by default) -->
+<div id="empty-state" class="empty-state hidden">
+    <p>No jobs yet. Ready to rescue your memories?</p>
+    <a href="/upload" class="btn-primary">UPLOAD YOUR FIRST EXPORT</a>
+</div>
+
+<script>
+document.addEventListener('htmx:afterSettle', function() {
+    var activeCards = document.querySelectorAll('#active-jobs .job-card');
+    var historyCards = document.querySelectorAll('#job-history .job-card');
+    var emptyState = document.getElementById('empty-state');
+    if (emptyState) {
+        if (activeCards.length === 0 && historyCards.length === 0) {
+            emptyState.classList.remove('hidden');
+        } else {
+            emptyState.classList.add('hidden');
+        }
+    }
+});
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

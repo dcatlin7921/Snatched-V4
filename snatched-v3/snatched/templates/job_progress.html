@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div class="breadcrumb">
+    <a href="/dashboard">Dashboard</a>
+    <span class="separator">&gt;</span>
+    <span>Job #{{ job_id }}</span>
+</div>
+
+<!-- Title -->
+<h1 class="glitch-logo">Rescuing your memories...</h1>
+
+<!-- Progress subtitle -->
+<p id="progress-subtitle" class="mono text-yellow mb-1">
+    Waiting for updates...
+</p>
+
+<!-- SSE container — all htmx attributes preserved exactly -->
+<div class="sse-container" hx-ext="sse" sse-connect="/api/jobs/{{ job_id }}/stream">
+
+    <!-- Overall Progress Bar -->
+    <div class="progress-bar progress-bar-lg">
+        <div class="progress-fill striped" id="overall-progress"></div>
+        <span class="progress-text" id="progress-text">0%</span>
+    </div>
+
+    <!-- Phase Cards -->
+    <div class="phases-grid">
+        {% for phase_name, phase_label, phase_icon in [
+            ('ingest', 'Ingest', 'inventory_2'),
+            ('match',  'Match',  'radar'),
+            ('enrich', 'Enrich', 'encrypted'),
+            ('export', 'Export', 'ios_share')
+        ] %}
+        <div class="phase-card pending" data-phase="{{ phase_name }}">
+            <div class="phase-icon pending">
+                <span class="material-symbols-outlined">{{ phase_icon }}</span>
+            </div>
+            <div class="phase-name">Phase {{ loop.index }}</div>
+            <div class="phase-label">{{ phase_label }}</div>
+            <div class="phase-status-text">Waiting</div>
+            <div class="phase-bar">
+                <div class="phase-progress"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Log Terminal -->
+    <div class="log-terminal">
+        <div class="log-terminal-header">
+            <span><span class="live-dot"></span> LIVE FEED</span>
+            <span id="log-count" class="mono text-muted log-count-label">0 events</span>
+        </div>
+        <div class="log-terminal-body" id="log-output" sse-swap="log" hx-swap="beforeend">
+            <p>Waiting for events...</p>
+        </div>
+        <div class="log-cursor-row"><span class="log-cursor"></span></div>
+    </div>
+
+    <!-- Job status (hidden, used by JS) -->
+    <div id="status-section" class="hidden">
+        <p>Job status: <strong id="job-status">{{ job.status }}</strong></p>
+    </div>
+</div>
+
+<!-- Bottom action bar -->
+<div class="progress-action-bar">
+    <a href="/dashboard" class="btn-outline">
+        <span class="material-symbols-outlined">arrow_back</span>
+        Back to Dashboard
+    </a>
+    <div class="gap-row">
+        <a href="/download/{{ job_id }}" class="btn-primary hidden" id="download-button">
+            <span class="material-symbols-outlined">download</span> DOWNLOAD YOUR FILES
+        </a>
+        <a href="/results/{{ job_id }}" class="btn-outline hidden" id="results-button">VIEW RESULTS</a>
+        <button class="btn-danger" onclick="abortMission(this)">
+            <span class="material-symbols-outlined">dangerous</span>
+            ABORT MISSION
+        </button>
+    </div>
+</div>
+
+<!-- SSE Event Handler — ALL logic preserved from original -->
+<script>
+var logCount = 0;
+
+htmx.on('htmx:sseMessage', function(evt) {
+    let parsed = {};
+    try { parsed = JSON.parse(evt.detail.data); } catch(e) {
+        parsed = { message: evt.detail.data };
+    }
+
+    // Update phase status on phase_start events
+    if (evt.detail.type === 'phase_start') {
+        // Mark previous running phases as completed
+        document.querySelectorAll('.phase-card.active').forEach(function(el) {
+            el.classList.remove('active');
+            el.classList.add('completed');
+            el.querySelector('.phase-status-text').textContent = 'Done';
+            el.querySelector('.phase-icon').classList.remove('active');
+            el.querySelector('.phase-icon').classList.add('completed');
+            el.querySelector('.phase-icon .material-symbols-outlined').textContent = 'check_circle';
+        });
+
+        var phaseEl = document.querySelector('[data-phase="' + (parsed.phase || '') + '"]');
+        if (phaseEl) {
+            phaseEl.classList.remove('pending');
+            phaseEl.classList.add('active');
+            phaseEl.querySelector('.phase-status-text').textContent = 'Active';
+            phaseEl.querySelector('.phase-icon').classList.remove('pending');
+            phaseEl.querySelector('.phase-icon').classList.add('active');
+        }
+    }
+
+    // Update overall progress bar
+    if (parsed.progress_pct !== undefined) {
+        document.getElementById('overall-progress').style.width = parsed.progress_pct + '%';
+        document.getElementById('progress-text').textContent = parsed.progress_pct + '%';
+
+        // Update subtitle
+        var phase = parsed.phase || '';
+        var phaseNum = {ingest:1, match:2, enrich:3, export:4}[phase] || '?';
+        document.getElementById('progress-subtitle').textContent =
+            'Phase ' + phaseNum + ' of 4 | ' + parsed.progress_pct + '% complete';
+
+        // Update active phase progress
+        if (phase) {
+            var activePhase = document.querySelector('[data-phase="' + phase + '"]');
+            if (activePhase) {
+                var phasePct = parsed.phase_pct || parsed.progress_pct;
+                activePhase.querySelector('.phase-progress').style.width = phasePct + '%';
+                activePhase.querySelector('.phase-status-text').textContent = 'Active ' + phasePct + '%';
+            }
+        }
+    }
+
+    // Append message to log output
+    if (parsed.message) {
+        var logEl = document.getElementById('log-output');
+        var p = document.createElement('p');
+        p.textContent = parsed.message;
+        logEl.appendChild(p);
+        logEl.scrollTop = logEl.scrollHeight;
+        logCount++;
+        document.getElementById('log-count').textContent = logCount + ' events';
+    }
+
+    // Redirect to dashboard when job is cancelled
+    if (evt.detail.type === 'cancelled') {
+        document.getElementById('progress-subtitle').textContent = 'Job cancelled. Returning to dashboard...';
+        setTimeout(function() {
+            window.location.href = '/dashboard';
+        }, 1500);
+        return;
+    }
+
+    // Redirect to configure page when scan completes (ingest-only jobs)
+    if (evt.detail.type === 'scanned') {
+        document.getElementById('progress-subtitle').textContent = 'Scan complete! Redirecting to configuration...';
+        document.getElementById('overall-progress').style.width = '100%';
+        document.getElementById('progress-text').textContent = '100%';
+        setTimeout(function() {
+            window.location.href = '/configure/{{ job_id }}';
+        }, 1500);
+        return;
+    }
+
+    // Show download & results buttons and update status when complete
+    if (evt.detail.type === 'complete') {
+        // Mark all remaining active/pending phases as completed
+        document.querySelectorAll('.phase-card.active, .phase-card.pending').forEach(function(el) {
+            el.classList.remove('active', 'pending');
+            el.classList.add('completed');
+            el.querySelector('.phase-status-text').textContent = 'Done';
+            el.querySelector('.phase-icon').classList.remove('active', 'pending');
+            el.querySelector('.phase-icon').classList.add('completed');
+            el.querySelector('.phase-icon .material-symbols-outlined').textContent = 'check_circle';
+        });
+        document.getElementById('download-button').classList.remove('hidden');
+        document.getElementById('results-button').classList.remove('hidden');
+        document.getElementById('job-status').textContent = 'completed';
+        document.getElementById('progress-subtitle').textContent = 'All phases complete!';
+        document.getElementById('overall-progress').style.width = '100%';
+        document.getElementById('progress-text').textContent = '100%';
+    }
+});
+
+function abortMission(btn) {
+    if (!confirm('Cancel this job? This cannot be undone.')) return;
+    btn.disabled = true;
+    btn.textContent = 'CANCELLING...';
+    fetch('/api/jobs/{{ job_id }}/cancel', {method: 'POST'})
+        .then(function(resp) {
+            if (resp.ok) {
+                window.location.href = '/dashboard';
+            } else {
+                btn.disabled = false;
+                btn.querySelector('.material-symbols-outlined') && (btn.innerHTML = '<span class="material-symbols-outlined">dangerous</span> ABORT MISSION');
+                btn.textContent = btn.textContent || 'ABORT MISSION';
+            }
+        })
+        .catch(function() {
+            btn.disabled = false;
+            btn.textContent = 'ABORT MISSION';
+        });
+}
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

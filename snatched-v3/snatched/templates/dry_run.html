@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Breadcrumb + dry-run badge -->
+<div class="gap-row mb-2" style="flex-wrap: wrap; align-items: center;">
+    <a href="/results/{{ job_id }}" class="btn-outline btn-small">
+        <span class="material-symbols-outlined icon-sm">arrow_back</span>
+        Back to Results
+    </a>
+    <span class="badge">DRY RUN &mdash; No files exported</span>
+    <a href="/match-config/{{ job_id }}" class="text-muted mono" style="font-size: 0.75rem;">
+        Job #{{ job_id }}
+    </a>
+</div>
+
+<!-- Sticky header -->
+<div class="sticky-header">
+    <h1 class="mb-0">
+        Export Preview
+    </h1>
+    <div class="gap-row">
+        <a href="/match-config/{{ job_id }}" class="btn-outline">ADJUST SETTINGS</a>
+        <button type="button" class="btn-primary" id="btn-run-export">RUN FULL EXPORT</button>
+    </div>
+</div>
+
+<!-- Section label -->
+<p class="text-center text-muted uppercase tracking-wider mono mt-3" style="font-size: 0.65rem;">
+    &mdash;&mdash; What Would Be Exported &mdash;&mdash;
+</p>
+
+<!-- Summary stats grid -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <span class="stat-label">Total Assets</span>
+        <span class="stat-value">{{ dry_data.total_assets }}</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Assets Matched</span>
+        <span class="stat-value" style="color: var(--success);">{{ dry_data.matched_assets }}</span>
+        <span class="text-muted mono" style="font-size: 0.75rem; margin-top: 0.25rem;">{{ dry_data.match_rate }}%</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">GPS Coverage</span>
+        <span class="stat-value" style="color: {% if dry_data.gps_coverage >= 70 %}var(--success){% elif dry_data.gps_coverage >= 30 %}var(--warning){% else %}var(--danger){% endif %};">
+            {{ dry_data.gps_coverage }}%
+        </span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Est. Output Files</span>
+        <span class="stat-value">{{ dry_data.estimated_files }}</span>
+        <span class="text-muted mono" style="font-size: 0.75rem; margin-top: 0.25rem;">would be generated</span>
+    </div>
+</div>
+
+<!-- Match Quality Analysis -->
+<section class="mt-3">
+    <h2 class="text-yellow mb-3" style="font-size: 1rem;">
+        Match Quality Analysis
+    </h2>
+
+    {% if dry_data.histogram %}
+    <div class="info-card mb-3">
+        <h3 class="text-muted uppercase tracking-wide mono mb-2" style="font-size: 0.8rem; font-style: normal;">
+            Confidence Distribution
+        </h3>
+        <div style="display: flex; align-items: flex-end; gap: 4px; height: 80px; padding-bottom: 0.25rem;">
+            {% for bar in dry_data.histogram %}
+            <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end;">
+                <div style="
+                    width: 100%;
+                    background: var(--snap-yellow);
+                    opacity: {% if bar.bucket >= 8 %}1{% elif bar.bucket >= 5 %}0.7{% else %}0.4{% endif %};
+                    height: {{ [((bar.count / max_hist_count) * 70) | int, 2] | max }}px;
+                    min-height: 2px;
+                " title="{{ bar.count }} matches at {{ bar.bucket }}0–{{ bar.bucket }}9%"></div>
+                <span class="mono text-muted" style="font-size: 0.55rem;">{{ bar.bucket * 10 }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        <p class="text-muted mt-2" style="font-size: 0.7rem;">
+            X-axis: confidence percentile bracket (0–100). Taller = more matches at that confidence.
+            Brighter bars = higher confidence.
+        </p>
+    </div>
+    {% endif %}
+
+    {% if dry_data.strategies %}
+    <div class="info-card mb-3">
+        <h3 class="text-muted uppercase tracking-wide mono mb-2" style="font-size: 0.8rem; font-style: normal;">
+            Strategy Breakdown
+        </h3>
+        <table>
+            <thead>
+                <tr>
+                    <th style="text-align: left;">Strategy</th>
+                    <th style="text-align: right;">Matches</th>
+                    <th style="text-align: right;">Avg Confidence</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in dry_data.strategies %}
+                <tr>
+                    <td class="mono">{{ s.strategy }}</td>
+                    <td class="mono" style="text-align: right;">{{ s.count }}</td>
+                    <td class="mono" style="text-align: right; color: {% if s.avg_confidence >= 0.8 %}var(--success){% elif s.avg_confidence >= 0.5 %}var(--warning){% else %}var(--danger){% endif %};">
+                        {{ (s.avg_confidence * 100) | round(1) }}%
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if dry_data.unmatched_count > 0 %}
+    <div class="info-card mb-3" style="border-left: 3px solid var(--warning);">
+        <div class="gap-row" style="align-items: center;">
+            <span class="material-symbols-outlined text-warning" style="font-size: 1.25rem;">warning</span>
+            <div>
+                <strong class="text-warning">{{ dry_data.unmatched_count }} Unmatched Asset{{ 's' if dry_data.unmatched_count != 1 else '' }}</strong>
+                <p class="text-muted mb-0" style="font-size: 0.8rem; margin-top: 0.25rem;">
+                    {% if dry_data.unmatched_count > dry_data.total_assets * 0.2 %}
+                    High orphan rate — consider adjusting GPS window or match thresholds before exporting.
+                    {% else %}
+                    These assets had no matching metadata and would be skipped during export.
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</section>
+
+<!-- Preview Export Tree -->
+<section class="mt-3">
+    <h2 class="text-yellow mb-3" style="font-size: 1rem;">
+        Preview Export Tree
+    </h2>
+
+    {% if dry_data.export_tree %}
+    <div class="info-card">
+        <div class="gap-row mb-2 text-muted mono" style="align-items: center; font-size: 0.75rem;">
+            <span class="material-symbols-outlined icon-sm">folder</span>
+            output/ &mdash; {{ dry_data.estimated_files }} total files estimated
+        </div>
+        <div id="export-tree" class="mono" style="font-size: 0.82rem; line-height: 1.8;">
+            {% for node in dry_data.export_tree %}
+            <div class="gap-row" style="align-items: center; padding: 0.3rem 0; border-bottom: 1px solid var(--border-dark);">
+                <span class="text-dim" style="user-select: none; padding-left: {{ node.path.count('/') * 1.25 }}rem;">
+                    {% if loop.last %}
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                    {% else %}
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                    {% endif %}
+                </span>
+                <span class="material-symbols-outlined text-yellow icon-sm" style="flex-shrink: 0;">folder</span>
+                <span style="flex: 1;">{{ node.path }}</span>
+                <span class="gap-row text-muted" style="align-items: center; font-size: 0.75rem; flex-shrink: 0;">
+                    <span class="material-symbols-outlined" style="font-size: 0.85rem;">insert_drive_file</span>
+                    {{ node.file_count }}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+        <p class="text-muted mt-2" style="font-size: 0.72rem;">
+            Folders are grouped by output subdirectory from the match engine.
+            Actual filenames are determined at export time.
+        </p>
+    </div>
+    {% else %}
+    <div class="info-card text-center" style="padding: 2.5rem;">
+        <span class="material-symbols-outlined text-dim" style="font-size: 2rem;">folder_off</span>
+        <p class="text-muted mt-2">No export tree data available. Run match + enrich phases first.</p>
+    </div>
+    {% endif %}
+</section>
+
+<!-- Decision buttons -->
+<section class="mt-3" style="padding-top: 2rem; border-top: 2px solid var(--border-dark);">
+    <h2 class="text-muted mb-3" style="font-size: 1rem;">
+        What next?
+    </h2>
+    <div class="gap-row" style="flex-wrap: wrap; align-items: center;">
+        <button type="button" class="btn-primary" id="btn-run-export-bottom">
+            <span class="material-symbols-outlined icon-sm">check_circle</span>
+            RUN FULL EXPORT
+        </button>
+        <a href="/match-config/{{ job_id }}" class="btn-outline">
+            ADJUST SETTINGS
+        </a>
+        <a href="/upload" class="btn-danger btn-small">
+            DISCARD &amp; START OVER
+        </a>
+    </div>
+    <p class="text-muted mt-2" style="font-size: 0.75rem;">
+        Running a full export will trigger the export phase using the existing ingest/match/enrich data.
+        No re-upload required.
+    </p>
+</section>
+
+<!-- Comparison panel (only shown if other dry runs exist) -->
+{% if other_dry_runs %}
+<section class="mt-3" style="padding-top: 2rem; border-top: 1px solid var(--border-dark);">
+    <h2 class="text-yellow mb-3" style="font-size: 1rem;">
+        Comparison: Other Dry Runs
+    </h2>
+    <div class="info-card">
+        <table>
+            <thead>
+                <tr>
+                    <th style="text-align: left;">Job</th>
+                    <th style="text-align: left;">Run Date</th>
+                    <th style="text-align: right;">Matched</th>
+                    <th style="text-align: right;">vs This Run</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for run in other_dry_runs %}
+                <tr>
+                    <td class="mono text-muted">#{{ run.id }}</td>
+                    <td class="mono text-muted" style="font-size: 0.78rem;">{{ run.created_at[:10] }}</td>
+                    <td class="mono" style="text-align: right;">{{ run.matched }}</td>
+                    <td class="mono" style="text-align: right;">
+                        {% set diff = dry_data.matched_assets - run.matched %}
+                        {% if diff > 0 %}
+                        <span class="text-success">+{{ diff }}</span>
+                        {% elif diff < 0 %}
+                        <span class="text-danger">{{ diff }}</span>
+                        {% else %}
+                        <span class="text-dim">0</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: right;">
+                        <a href="/dry-run/{{ run.id }}" class="mono text-muted" style="font-size: 0.72rem;">View</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
+<!-- Export confirmation modal -->
+<div id="export-confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-content">
+        <h3>Run Full Export — Job #{{ job_id }}</h3>
+        <p class="text-muted mb-3" style="font-size: 0.85rem;">
+            This will trigger the export phase using your existing matched data.
+            A new job will be created and you will be redirected to its progress page.
+        </p>
+        <div class="gap-row">
+            <button type="button" class="btn-primary" id="btn-confirm-export">YES, EXPORT NOW</button>
+            <button type="button" class="btn-outline" onclick="document.getElementById('export-confirm-modal').classList.add('hidden')">Cancel</button>
+        </div>
+        <p id="export-status" class="mono text-muted mt-2" style="font-size: 0.8rem;"></p>
+    </div>
+</div>
+
+<script>
+var JOB_ID = {{ job_id }};
+
+function openExportModal() {
+    document.getElementById('export-confirm-modal').classList.remove('hidden');
+}
+
+document.getElementById('btn-run-export').addEventListener('click', openExportModal);
+document.getElementById('btn-run-export-bottom').addEventListener('click', openExportModal);
+
+document.getElementById('btn-confirm-export').addEventListener('click', function() {
+    var btn = this;
+    var status = document.getElementById('export-status');
+    btn.disabled = true;
+    btn.textContent = 'SUBMITTING...';
+    status.textContent = '';
+
+    fetch('/api/jobs/' + JOB_ID + '/promote', { method: 'POST' })
+        .then(function(resp) {
+            if (!resp.ok) {
+                return resp.json().then(function(d) {
+                    throw new Error(d.detail || ('HTTP ' + resp.status));
+                });
+            }
+            return resp.json();
+        })
+        .then(function(data) {
+            status.textContent = 'Export job #' + data.new_job_id + ' created. Redirecting...';
+            status.style.color = 'var(--success)';
+            setTimeout(function() {
+                window.location.href = '/job/' + data.new_job_id;
+            }, 800);
+        })
+        .catch(function(err) {
+            status.textContent = 'Error: ' + err.message;
+            status.style.color = 'var(--danger)';
+            btn.disabled = false;
+            btn.textContent = 'YES, EXPORT NOW';
+        });
+});
+</script>
+
+{% endblock %}
+
+{# themed: 2026-02-25 #}

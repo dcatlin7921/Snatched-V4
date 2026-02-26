@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page header -->
+<div class="section-header">
+    <h1 class="mb-0 settings-title">Account &amp; Settings</h1>
+</div>
+
+<!-- ============================================================
+     ACCOUNT INFO
+     ============================================================ -->
+<section>
+    <h2>Account</h2>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <p class="stat-label">Username</p>
+            <p class="stat-value mono white">{{ user.username }}</p>
+        </div>
+
+        <div class="stat-card">
+            <p class="stat-label">Member Since</p>
+            <p class="stat-value white">
+                {{ user.created_at.strftime('%b %Y') if user.created_at else '&mdash;' }}
+            </p>
+        </div>
+
+        <div class="stat-card">
+            <p class="stat-label">Total Jobs</p>
+            <p class="stat-value">{{ job_count }}</p>
+        </div>
+    </div>
+
+    <!-- Storage usage card -->
+    <div class="info-card">
+        <h3>Storage Usage</h3>
+        <div class="storage-usage-row">
+            <span class="mono text-muted storage-used-label">USED</span>
+            <span class="mono storage-used-value">
+                {{ storage_used_gb }} GB
+                {% if quota_gb %}
+                    <span class="text-muted storage-quota-suffix">/ {{ quota_gb }} GB</span>
+                {% endif %}
+            </span>
+        </div>
+        {% if quota_gb %}
+            <div class="progress-bar">
+                <div class="progress-fill {% if storage_pct >= 90 %}danger{% endif %}"
+                     style="width: {{ storage_pct }}%;">
+                </div>
+                <div class="progress-text">{{ storage_pct }}%</div>
+            </div>
+        {% else %}
+            <div class="progress-bar">
+                <div class="progress-fill"></div>
+                <div class="progress-text">No quota set</div>
+            </div>
+        {% endif %}
+    </div>
+</section>
+
+<!-- ============================================================
+     PROCESSING PREFERENCES
+     ============================================================ -->
+<section>
+    <h2>Processing Preferences</h2>
+    <p class="text-muted settings-prefs-note">
+        These defaults pre-fill the upload form. You can override them per-job at upload time.
+    </p>
+
+    <fieldset id="prefs-fieldset">
+        <legend>Output Options</legend>
+
+        <label>
+            <input type="checkbox" id="pref-burn-overlays" {{ 'checked' if prefs.burn_overlays else '' }}>
+            Add date &amp; time text to photos (burn overlays)
+        </label>
+
+        <label>
+            <input type="checkbox" id="pref-dark-mode" {{ 'checked' if prefs.dark_mode_pngs else '' }}>
+            Export chats in dark mode (dark mode PNGs)
+        </label>
+
+        <label>
+            <input type="checkbox" id="pref-exif" {{ 'checked' if prefs.exif_enabled else '' }}>
+            Embed dates, locations &amp; camera info in files (EXIF)
+        </label>
+
+        <label>
+            <input type="checkbox" id="pref-xmp" {{ 'checked' if prefs.xmp_enabled else '' }}>
+            Generate XMP sidecar files (Lightroom / Darktable)
+        </label>
+    </fieldset>
+
+    <fieldset>
+        <legend>Advanced</legend>
+
+        <label for="pref-gps-window" class="gps-window-label">
+            GPS matching window: <strong id="gps-window-label" class="text-yellow">{{ prefs.gps_window_seconds }}s</strong>
+            <span class="text-muted gps-window-hint">
+                (how far from a photo's timestamp to search for GPS data)
+            </span>
+        </label>
+        <input type="range" id="pref-gps-window"
+               min="30" max="1800" step="30" value="{{ prefs.gps_window_seconds }}"
+               oninput="document.getElementById('gps-window-label').textContent = this.value + 's'">
+        <div class="gps-window-scale text-muted mono">
+            <span>30s (precise)</span>
+            <span>300s (default)</span>
+            <span>1800s (wide)</span>
+        </div>
+    </fieldset>
+
+    <!-- Save button + feedback -->
+    <div class="gap-row settings-save-row">
+        <button type="button" id="btn-save-prefs" class="btn-primary" onclick="savePreferences()">
+            SAVE PREFERENCES
+        </button>
+        <span id="prefs-feedback" class="mono text-muted settings-feedback"></span>
+    </div>
+</section>
+
+
+<!-- ============================================================
+     PLAN & TIER
+     ============================================================ -->
+<section>
+    <h2>Plan &amp; Tier</h2>
+
+    {% if tier_info %}
+    <!-- Current tier card -->
+    <div class="info-card tier-current-card" style="border-left: 4px solid {{ tier_info.color }};">
+        <div class="tier-current-header">
+            <span class="tier-current-name" style="color: {{ tier_info.color }};">{{ tier_info.label }}</span>
+            <span class="tier-badge" style="color: {{ tier_info.color }}; border-color: {{ tier_info.color }};">Current Plan</span>
+        </div>
+        <div class="stats-grid tier-limits-grid">
+            <div class="stat-card tier-limit-card">
+                <p class="stat-label">Storage</p>
+                <p class="stat-value" style="color: {{ tier_info.color }};">
+                    {% if tier_info.limits.storage_gb %}{{ tier_info.limits.storage_gb }} GB{% else %}Unlimited{% endif %}
+                </p>
+            </div>
+            <div class="stat-card tier-limit-card">
+                <p class="stat-label">Max Upload</p>
+                <p class="stat-value" style="color: {{ tier_info.color }};">{{ tier_info.limits.max_upload_label }}</p>
+            </div>
+            <div class="stat-card tier-limit-card">
+                <p class="stat-label">Retention</p>
+                <p class="stat-value" style="color: {{ tier_info.color }};">
+                    {% if tier_info.limits.retention_days %}{{ tier_info.limits.retention_days }}d{% else %}Forever{% endif %}
+                </p>
+            </div>
+            <div class="stat-card tier-limit-card">
+                <p class="stat-label">Concurrent Jobs</p>
+                <p class="stat-value" style="color: {{ tier_info.color }};">
+                    {% if tier_info.limits.concurrent_jobs %}{{ tier_info.limits.concurrent_jobs }}{% else %}Unlimited{% endif %}
+                </p>
+            </div>
+            <div class="stat-card tier-limit-card">
+                <p class="stat-label">Bulk Upload</p>
+                <p class="stat-value {% if tier_info.limits.bulk_upload %}green{% else %}white{% endif %}">
+                    {% if tier_info.limits.bulk_upload %}Yes{% else %}No{% endif %}
+                </p>
+            </div>
+        </div>
+        <div class="tier-quota-action">
+            <a href="/quota" class="btn-primary" style="background: {{ tier_info.color }}; border-color: {{ tier_info.color }}; color: var(--deep-black);">
+                VIEW QUOTA DASHBOARD
+            </a>
+        </div>
+    </div>
+
+    <!-- Tier comparison table -->
+    <div class="info-card">
+        <h3 class="settings-section-subtitle">All Plans</h3>
+        <div class="tier-table-scroll">
+            <table class="tier-table">
+                <thead>
+                    <tr class="tier-table-head">
+                        <th class="tier-th">PLAN</th>
+                        <th class="tier-th tier-th-right">STORAGE</th>
+                        <th class="tier-th tier-th-right">MAX UPLOAD</th>
+                        <th class="tier-th tier-th-right">RETENTION</th>
+                        <th class="tier-th tier-th-right">JOBS</th>
+                        <th class="tier-th tier-th-center">BULK</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in all_tiers %}
+                    <tr class="tier-row {% if t.tier == tier_info.tier %}tier-row-current{% endif %}">
+                        <td class="tier-td">
+                            <span class="tier-plan-name" style="color: {{ t.color }};">
+                                {{ t.label }}
+                            </span>
+                            {% if t.tier == tier_info.tier %}
+                            <span class="tier-current-tag text-muted">(current)</span>
+                            {% endif %}
+                        </td>
+                        <td class="tier-td tier-td-right mono">
+                            {% if t.storage_gb %}{{ t.storage_gb }} GB{% else %}Unlimited{% endif %}
+                        </td>
+                        <td class="tier-td tier-td-right mono">{{ t.max_upload_label }}</td>
+                        <td class="tier-td tier-td-right mono">
+                            {% if t.retention_days %}{{ t.retention_days }}d{% else %}Forever{% endif %}
+                        </td>
+                        <td class="tier-td tier-td-right mono">
+                            {% if t.concurrent_jobs %}{{ t.concurrent_jobs }}{% else %}Unlimited{% endif %}
+                        </td>
+                        <td class="tier-td tier-td-center">
+                            {% if t.bulk_upload %}
+                                <span class="text-green">Yes</span>
+                            {% else %}
+                                <span class="text-muted">No</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="info-card">
+        <p class="text-muted">Tier information unavailable.</p>
+        <a href="/quota" class="btn-outline settings-quota-fallback">VIEW QUOTA DASHBOARD</a>
+    </div>
+    {% endif %}
+</section>
+
+
+<!-- ============================================================
+     DANGER ZONE
+     ============================================================ -->
+<section class="danger-zone-section">
+    <div class="danger-zone-card">
+        <h2 class="text-danger danger-zone-title">Danger Zone</h2>
+        <p class="text-muted danger-zone-note">
+            These actions are permanent and cannot be undone.
+        </p>
+        <button type="button" class="btn-danger"
+                onclick="alert('To delete all your data, please contact support.')">
+            DELETE ALL MY DATA
+        </button>
+    </div>
+</section>
+
+
+<script>
+async function savePreferences() {
+    const btn = document.getElementById('btn-save-prefs');
+    const feedback = document.getElementById('prefs-feedback');
+
+    const payload = {
+        burn_overlays: document.getElementById('pref-burn-overlays').checked,
+        dark_mode_pngs: document.getElementById('pref-dark-mode').checked,
+        exif_enabled: document.getElementById('pref-exif').checked,
+        xmp_enabled: document.getElementById('pref-xmp').checked,
+        gps_window_seconds: parseInt(document.getElementById('pref-gps-window').value, 10),
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'SAVING...';
+    feedback.textContent = '';
+    feedback.style.color = '';
+
+    try {
+        const resp = await fetch('/api/preferences', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        if (data.saved) {
+            feedback.textContent = 'Preferences saved.';
+            feedback.style.color = 'var(--success)';
+        } else {
+            throw new Error('Unexpected response from server.');
+        }
+    } catch (err) {
+        feedback.textContent = 'Error: ' + err.message;
+        feedback.style.color = 'var(--danger)';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'SAVE PREFERENCES';
+        // Clear feedback after 4s
+        setTimeout(() => { feedback.textContent = ''; feedback.style.color = ''; }, 4000);
+    }
+}
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

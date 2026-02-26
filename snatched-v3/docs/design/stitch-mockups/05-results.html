@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Rebellion Mission Debrief Summary</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "snap-yellow": "#FFFC00",
+                        "mission-black": "#0a0a0a",
+                        "row-dark": "#141414",
+                        "row-alt": "#1a1a1a",
+                        "border-dark": "#2d2d2d"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"]
+                    }
+                },
+            },
+        }
+    </script>
+<style type="text/tailwindcss">
+        :root {
+            --yellow: #FFFC00;
+        }
+        body {
+            background-color: #0a0a0a;
+            background-image: 
+                linear-gradient(45deg, rgba(255, 252, 0, 0.03) 25%, transparent 25%, transparent 50%, rgba(255, 252, 0, 0.03) 50%, rgba(255, 252, 0, 0.03) 75%, transparent 75%, transparent);
+            background-size: 100px 100px;
+        }
+        .caution-tape {
+            background: repeating-linear-gradient(
+                -45deg,
+                var(--yellow),
+                var(--yellow) 10px,
+                #000 10px,
+                #000 20px
+            );
+        }
+        .glitch-text {
+            position: relative;
+            text-shadow: 0.05em 0 0 rgba(255, 0, 0, 0.75),
+                         -0.025em -0.05em 0 rgba(0, 255, 0, 0.75),
+                         0.025em 0.05em 0 rgba(0, 0, 255, 0.75);
+            animation: glitch 500ms infinite;
+        }
+        @keyframes glitch {
+            0% { text-shadow: 0.05em 0 0 rgba(255, 0, 0, 0.75), -0.05em -0.025em 0 rgba(0, 255, 0, 0.75), -0.025em 0.05em 0 rgba(0, 0, 255, 0.75); }
+            14% { text-shadow: 0.05em 0 0 rgba(255, 0, 0, 0.75), -0.05em -0.025em 0 rgba(0, 255, 0, 0.75), -0.025em 0.05em 0 rgba(0, 0, 255, 0.75); }
+            15% { text-shadow: -0.05em -0.025em 0 rgba(255, 0, 0, 0.75), 0.025em 0.025em 0 rgba(0, 255, 0, 0.75), -0.05em -0.05em 0 rgba(0, 0, 255, 0.75); }
+            49% { text-shadow: -0.05em -0.025em 0 rgba(255, 0, 0, 0.75), 0.025em 0.025em 0 rgba(0, 255, 0, 0.75), -0.05em -0.05em 0 rgba(0, 0, 255, 0.75); }
+            50% { text-shadow: 0.025em 0.05em 0 rgba(255, 0, 0, 0.75), 0.05em 0 0 rgba(0, 255, 0, 0.75), 0 -0.05em 0 rgba(0, 0, 255, 0.75); }
+            99% { text-shadow: 0.025em 0.05em 0 rgba(255, 0, 0, 0.75), 0.05em 0 0 rgba(0, 255, 0, 0.75), 0 -0.05em 0 rgba(0, 0, 255, 0.75); }
+            100% { text-shadow: -0.025em 0 0 rgba(255, 0, 0, 0.75), -0.025em -0.025em 0 rgba(0, 255, 0, 0.75), -0.025em -0.05em 0 rgba(0, 0, 255, 0.75); }
+        }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen font-display selection:bg-snap-yellow selection:text-black">
+<div class="relative flex min-h-screen w-full flex-col overflow-x-hidden">
+<nav class="w-full bg-mission-black/90 backdrop-blur-sm relative border-b border-border-dark">
+<div class="mx-auto max-w-[1200px] px-6 py-6 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-snap-yellow text-3xl font-bold">radar</span>
+<h2 class="text-2xl font-black tracking-tighter italic glitch-text uppercase">Snatched</h2>
+</div>
+<div class="flex items-center gap-6 font-mono text-xs text-slate-500 uppercase tracking-widest">
+<span>Status: Triumphant</span>
+<span class="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse"></span>
+</div>
+</div>
+<div class="absolute bottom-0 left-0 w-full h-1 caution-tape opacity-80"></div>
+</nav>
+<header class="sticky top-0 z-40 w-full bg-mission-black/80 backdrop-blur-md border-b border-white/5">
+<div class="mx-auto max-w-[1200px] px-6 py-5 flex items-center justify-between">
+<div>
+<h1 class="text-2xl font-black tracking-tight text-white uppercase italic">Mission Complete.</h1>
+<p class="text-xs font-mono text-slate-500">INTEL RETRIEVED: FEB 24, 2026 // 14:47:00</p>
+</div>
+<button class="inline-flex items-center justify-center gap-2 rounded-none bg-snap-yellow px-8 py-3 text-sm font-black text-black transition-transform active:scale-95 hover:bg-[#E6E300]">
+<span class="material-symbols-outlined font-bold">folder_zip</span>
+<span>DOWNLOAD RESULTS</span>
+</button>
+</div>
+</header>
+<main class="mx-auto w-full max-w-[1200px] px-6 py-8 flex-1">
+<div class="mb-10 flex items-center gap-4">
+<div class="h-[1px] flex-1 bg-border-dark"></div>
+<span class="font-mono text-xs font-bold tracking-[0.3em] text-slate-600 uppercase">After-Action Report</span>
+<div class="h-[1px] flex-1 bg-border-dark"></div>
+</div>
+<div class="mb-10 border-b border-border-dark">
+<nav class="flex gap-10">
+<a class="relative border-b-4 border-snap-yellow pb-4 text-sm font-black text-white flex items-center gap-3 uppercase tracking-wider" href="#">
+                        Summary
+                    </a>
+<a class="group border-b-4 border-transparent pb-4 text-sm font-bold text-slate-500 hover:text-white transition-colors flex items-center gap-3 uppercase tracking-wider" href="#">
+                        Matches 
+                        <span class="flex h-6 min-w-[24px] items-center justify-center rounded-full bg-snap-yellow px-1.5 text-[10px] font-black text-black">1,243</span>
+</a>
+<a class="group border-b-4 border-transparent pb-4 text-sm font-bold text-slate-500 hover:text-white transition-colors flex items-center gap-3 uppercase tracking-wider" href="#">
+                        Assets 
+                        <span class="flex h-6 min-w-[24px] items-center justify-center rounded-full bg-snap-yellow px-1.5 text-[10px] font-black text-black">2,100</span>
+</a>
+</nav>
+</div>
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-10">
+<div class="bg-mission-black border-t-4 border-snap-yellow border-x border-b border-border-dark p-6 shadow-xl">
+<p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 font-mono">Snapchats Found</p>
+<p class="text-4xl font-black text-snap-yellow tracking-tighter">2,100</p>
+</div>
+<div class="bg-mission-black border-t-4 border-snap-yellow border-x border-b border-border-dark p-6 shadow-xl">
+<p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 font-mono">Successfully Matched</p>
+<p class="text-4xl font-black text-green-500 tracking-tighter">1,943</p>
+</div>
+<div class="bg-mission-black border-t-4 border-snap-yellow border-x border-b border-border-dark p-6 shadow-xl">
+<p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 font-mono">Match Confidence</p>
+<p class="text-4xl font-black text-snap-yellow tracking-tighter">92%</p>
+</div>
+<div class="bg-mission-black border-t-4 border-snap-yellow border-x border-b border-border-dark p-6 shadow-xl">
+<p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 font-mono">Locations Recovered</p>
+<p class="text-4xl font-black text-snap-yellow tracking-tighter">78%</p>
+</div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+<div class="lg:col-span-2">
+<div class="mb-6 flex items-center gap-3">
+<span class="material-symbols-outlined text-snap-yellow">bar_chart_4_bars</span>
+<h3 class="text-lg font-black text-white uppercase tracking-tight italic">Organized by type</h3>
+</div>
+<div class="overflow-hidden border border-border-dark shadow-2xl">
+<table class="w-full text-left border-collapse font-mono text-sm">
+<thead>
+<tr class="bg-mission-black">
+<th class="px-6 py-4 text-xs font-black uppercase tracking-widest text-snap-yellow border-b border-border-dark">Data Class</th>
+<th class="px-6 py-4 text-xs font-black uppercase tracking-widest text-snap-yellow border-b border-border-dark text-right">Extracted</th>
+<th class="px-6 py-4 text-xs font-black uppercase tracking-widest text-snap-yellow border-b border-border-dark text-right">Verified</th>
+<th class="px-6 py-4 text-xs font-black uppercase tracking-widest text-snap-yellow border-b border-border-dark text-right">GPS Signal</th>
+</tr>
+</thead>
+<tbody>
+<tr class="bg-row-dark hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 font-bold text-white">MEMORIES</td>
+<td class="px-6 py-4 text-slate-400 text-right">1,420</td>
+<td class="px-6 py-4 text-slate-400 text-right">1,380</td>
+<td class="px-6 py-4 text-green-500 font-bold text-right">88%</td>
+</tr>
+<tr class="bg-row-alt hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 font-bold text-white">CHATS</td>
+<td class="px-6 py-4 text-slate-400 text-right">450</td>
+<td class="px-6 py-4 text-slate-400 text-right">320</td>
+<td class="px-6 py-4 text-orange-500 font-bold text-right">42%</td>
+</tr>
+<tr class="bg-row-dark hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 font-bold text-white">STORIES</td>
+<td class="px-6 py-4 text-slate-400 text-right">230</td>
+<td class="px-6 py-4 text-slate-400 text-right">243</td>
+<td class="px-6 py-4 text-green-400 font-bold text-right">95%</td>
+</tr>
+<tr class="bg-row-alt hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 font-bold text-white">METADATA</td>
+<td class="px-6 py-4 text-slate-400 text-right">512</td>
+<td class="px-6 py-4 text-slate-400 text-right">512</td>
+<td class="px-6 py-4 text-yellow-500 font-bold text-right">64%</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="lg:col-span-1">
+<div class="mb-6 flex items-center gap-3">
+<span class="material-symbols-outlined text-snap-yellow">history</span>
+<h3 class="text-lg font-black text-white uppercase tracking-tight italic">Mission timeline</h3>
+</div>
+<div class="border border-border-dark overflow-hidden shadow-2xl">
+<table class="w-full text-left border-collapse font-mono text-sm">
+<tbody class="divide-y divide-border-dark">
+<tr class="bg-row-dark">
+<td class="px-6 py-4 text-xs font-bold text-slate-500 uppercase italic">Ingest Phase</td>
+<td class="px-6 py-4 text-sm font-bold text-white text-right">0:42s</td>
+</tr>
+<tr class="bg-row-alt">
+<td class="px-6 py-4 text-xs font-bold text-slate-500 uppercase italic">Matching Ops</td>
+<td class="px-6 py-4 text-sm font-bold text-white text-right">2:15m</td>
+</tr>
+<tr class="bg-row-dark">
+<td class="px-6 py-4 text-xs font-bold text-slate-500 uppercase italic">Enrichment</td>
+<td class="px-6 py-4 text-sm font-bold text-white text-right">1:10m</td>
+</tr>
+<tr class="bg-row-alt">
+<td class="px-6 py-4 text-xs font-bold text-slate-500 uppercase italic">Exporting Intel</td>
+<td class="px-6 py-4 text-sm font-bold text-white text-right">0:58s</td>
+</tr>
+<tr class="caution-tape h-1">
+<td colspan="2"></td>
+</tr>
+<tr class="bg-mission-black">
+<td class="px-6 py-5 text-sm font-black text-white uppercase tracking-widest">Total Ops Time</td>
+<td class="px-6 py-5 text-2xl font-black text-snap-yellow text-right italic">5:05m</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<footer class="mt-16 py-12 border-t-2 border-border-dark flex flex-col items-center gap-8 bg-mission-black/40">
+<div class="text-center space-y-4">
+<h4 class="text-xl font-black text-white uppercase italic tracking-wider">Ready to get your files?</h4>
+<button class="group inline-flex items-center gap-3 bg-snap-yellow px-10 py-4 text-lg font-black text-black uppercase transition-all hover:pr-12">
+                        GO TO DOWNLOAD
+                        <span class="material-symbols-outlined transition-transform group-hover:translate-x-2">arrow_forward_ios</span>
+</button>
+</div>
+<div class="flex flex-col items-center gap-2">
+<p class="font-mono text-[10px] text-slate-600 tracking-[0.4em] uppercase">Security Clearance: Level 4 // Encryption: Active</p>
+<p class="text-slate-700 text-[10px] font-mono">© 2026 SNATCHED REBELLION HQ. ALL MEMORIES LIBERATED.</p>
+</div>
+</footer>
+</main>
+</div>
+
+</body></html>

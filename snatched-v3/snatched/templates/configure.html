@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div class="breadcrumb">
+    <a href="/dashboard">Dashboard</a>
+    <span class="separator">&gt;</span>
+    <span>Job #{{ job_id }}</span>
+</div>
+
+<!-- SECTION 1: HEADER -->
+<section class="configure-header">
+    <h1>Your export has been scanned</h1>
+    <p class="configure-subtitle">
+        {{ "{:,}".format(scan_results.total_assets) }} files found across {{ scan_results.total_size_bytes | format_size }}
+    </p>
+</section>
+
+<!-- SECTION 2: PICK YOUR LANES -->
+<section class="configure-lanes">
+    <h2>Pick Your Lanes</h2>
+    <div class="lanes-grid">
+        <!-- Memories Lane -->
+        <div class="lane-card selected" data-lane="memories" onclick="toggleLane(this)">
+            <div class="lane-icon">
+                <span class="material-symbols-outlined">photo_library</span>
+            </div>
+            <div class="lane-content">
+                <div class="lane-name">Memories</div>
+                <div class="lane-count">{{ "{:,}".format(scan_results.memories) }}</div>
+                <div class="lane-size">{{ scan_results.memories_size | format_size }}</div>
+            </div>
+            <input type="hidden" class="lane-checkbox" name="memories" value="1" checked>
+        </div>
+
+        <!-- Stories Lane -->
+        <div class="lane-card selected" data-lane="stories" onclick="toggleLane(this)">
+            <div class="lane-icon">
+                <span class="material-symbols-outlined">auto_stories</span>
+            </div>
+            <div class="lane-content">
+                <div class="lane-name">Stories</div>
+                <div class="lane-count">{{ "{:,}".format(scan_results.stories) }}</div>
+                <div class="lane-size">{{ scan_results.stories_size | format_size }}</div>
+            </div>
+            <input type="hidden" class="lane-checkbox" name="stories" value="1" checked>
+        </div>
+
+        <!-- Chats Lane -->
+        <div class="lane-card selected" data-lane="chats" onclick="toggleLane(this)">
+            <div class="lane-icon">
+                <span class="material-symbols-outlined">chat_bubble</span>
+            </div>
+            <div class="lane-content">
+                <div class="lane-name">Chats</div>
+                <div class="lane-count">{{ "{:,}".format(scan_results.chats) }}</div>
+                <div class="lane-size">{{ scan_results.chats_size | format_size }}</div>
+            </div>
+            <input type="hidden" class="lane-checkbox" name="chats" value="1" checked>
+        </div>
+    </div>
+</section>
+
+<!-- SECTION 3: PROCESSING OPTIONS -->
+<section class="configure-options">
+    <h2>Processing Options</h2>
+
+    <!-- EMBED EXIF METADATA -->
+    <div class="option-card">
+        <div class="option-left">
+            <div class="option-icon">
+                <span class="material-symbols-outlined">sell</span>
+            </div>
+            <div class="option-text">
+                <div class="option-title">Embed EXIF Metadata</div>
+                <div class="option-description">GPS, dates, camera info written into files</div>
+            </div>
+        </div>
+        <div class="option-right">
+            <label class="toggle-switch">
+                <input type="checkbox" id="exif_enabled" name="exif_enabled" {% if prefs.exif_enabled %}checked{% endif %}>
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+    </div>
+
+    <!-- BURN DATE OVERLAYS -->
+    <div class="option-card">
+        <div class="option-left">
+            <div class="option-icon">
+                <span class="material-symbols-outlined">schedule</span>
+            </div>
+            <div class="option-text">
+                <div class="option-title">Burn Date Overlays</div>
+                <div class="option-description">Add date & time text onto photos</div>
+            </div>
+        </div>
+        <div class="option-right">
+            <label class="toggle-switch">
+                <input type="checkbox" id="burn_overlays" name="burn_overlays" {% if prefs.burn_overlays %}checked{% endif %}>
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+    </div>
+
+    <!-- DARK MODE CHATS (conditional visibility) -->
+    <div class="option-card hidden" id="dark_mode_option">
+        <div class="option-left">
+            <div class="option-icon">
+                <span class="material-symbols-outlined">dark_mode</span>
+            </div>
+            <div class="option-text">
+                <div class="option-title">Dark Mode Chats</div>
+                <div class="option-description">Render chat PNGs with dark background</div>
+            </div>
+        </div>
+        <div class="option-right">
+            <label class="toggle-switch">
+                <input type="checkbox" id="dark_mode_pngs" name="dark_mode_pngs" {% if prefs.dark_mode_pngs %}checked{% endif %}>
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+    </div>
+
+    <!-- XMP SIDECAR FILES -->
+    <div class="option-card">
+        <div class="option-left">
+            <div class="option-icon">
+                <span class="material-symbols-outlined">description</span>
+            </div>
+            <div class="option-text">
+                <div class="option-title">XMP Sidecar Files</div>
+                <div class="option-description">For Lightroom / Darktable workflows</div>
+            </div>
+        </div>
+        <div class="option-right">
+            <label class="toggle-switch">
+                <input type="checkbox" id="xmp_enabled" name="xmp_enabled" {% if prefs.xmp_enabled %}checked{% endif %}>
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+    </div>
+</section>
+
+<!-- SECTION 4: ADVANCED SETTINGS -->
+<section class="configure-advanced">
+    <details class="advanced-details">
+        <summary class="advanced-summary">
+            <span class="material-symbols-outlined">settings</span>
+            Advanced Settings
+        </summary>
+        <div class="advanced-content">
+            <!-- GPS Matching Window Slider -->
+            <div class="advanced-control">
+                <label for="gps_window">GPS Matching Window</label>
+                <input type="range" id="gps_window" name="gps_window" min="30" max="1800" value="{{ prefs.gps_window_seconds | default(300) }}" step="30">
+                <div class="slider-value">
+                    <span id="gps_window_display">{{ prefs.gps_window_seconds | default(300) }}</span>s
+                </div>
+            </div>
+
+            <!-- Phase Selection -->
+            <div class="advanced-control">
+                <label>Processing Phases</label>
+                <div class="phase-checkboxes">
+                    <label class="phase-check">
+                        <input type="checkbox" name="phase_ingest" checked>
+                        <span>Ingest</span>
+                    </label>
+                    <label class="phase-check">
+                        <input type="checkbox" name="phase_match" checked>
+                        <span>Match</span>
+                    </label>
+                    <label class="phase-check">
+                        <input type="checkbox" name="phase_enrich" checked>
+                        <span>Enrich</span>
+                    </label>
+                    <label class="phase-check">
+                        <input type="checkbox" name="phase_export" checked>
+                        <span>Export</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Dry Run Toggle -->
+            <div class="advanced-control">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="dry_run" name="dry_run">
+                    <span class="toggle-slider"></span>
+                    <span>Dry Run (don't write files)</span>
+                </label>
+            </div>
+        </div>
+    </details>
+</section>
+
+<!-- SECTION 5: SUBMIT -->
+<section class="configure-submit">
+    <button class="btn-primary btn-submit" onclick="submitConfigure()">Start Processing</button>
+</section>
+
+<script>
+// Helper: format bytes to human readable
+function formatSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+}
+
+// Toggle lane selection
+function toggleLane(element) {
+    element.classList.toggle('selected');
+    const checkbox = element.querySelector('.lane-checkbox');
+    if (checkbox) {
+        checkbox.checked = element.classList.contains('selected');
+    }
+    updateDarkModeVisibility();
+}
+
+// Update dark mode option visibility based on chats selection
+function updateDarkModeVisibility() {
+    const chatsCard = document.querySelector('[data-lane="chats"]');
+    const darkModeOption = document.getElementById('dark_mode_option');
+    if (chatsCard && darkModeOption) {
+        if (chatsCard.classList.contains('selected')) {
+            darkModeOption.style.display = 'flex';
+        } else {
+            darkModeOption.style.display = 'none';
+        }
+    }
+}
+
+// Update slider display value
+document.getElementById('gps_window').addEventListener('input', function() {
+    document.getElementById('gps_window_display').textContent = this.value;
+});
+
+// Validate and submit
+function submitConfigure() {
+    // Validate: at least one lane selected
+    const selectedLanes = document.querySelectorAll('.lane-card.selected');
+    if (selectedLanes.length === 0) {
+        alert('Please select at least one lane to process.');
+        return;
+    }
+
+    // Disable button to prevent double-submit
+    const submitBtn = document.querySelector('.btn-submit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Processing...';
+
+    // Collect form data
+    const lanes = Array.from(selectedLanes).map(card => card.dataset.lane);
+
+    const payload = {
+        lanes: lanes,
+        options: {
+            exif_enabled: document.getElementById('exif_enabled').checked,
+            burn_overlays: document.getElementById('burn_overlays').checked,
+            dark_mode_pngs: document.getElementById('dark_mode_pngs').checked,
+            xmp_enabled: document.getElementById('xmp_enabled').checked,
+            gps_window_seconds: parseInt(document.getElementById('gps_window').value),
+        }
+    };
+
+    // POST to API
+    const jobId = '{{ job_id }}';
+    fetch(`/api/jobs/${jobId}/configure`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        // Redirect to job progress page
+        window.location.href = `/job/${jobId}`;
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Failed to start processing. Please try again.');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Start Processing';
+    });
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    updateDarkModeVisibility();
+});
+</script>
+
+{% endblock %}
+
+{# themed: 2026-02-25 #}

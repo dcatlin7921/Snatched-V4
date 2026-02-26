@@ -1,0 +1,44 @@
+{% if items %}
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th class="col-asset">Asset</th>
+                <th class="col-strategy">Strategy</th>
+                <th class="col-confidence">Confidence</th>
+                <th class="col-date">Date</th>
+                <th class="col-type">Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in items %}
+            <tr>
+                <td class="mono">{{ m.file_path | default('N/A') }}</td>
+                <td class="mono uppercase">{{ m.strategy | default('') }}</td>
+                <td>
+                    {% set conf = (m.confidence * 100) | round(1) if m.confidence else 0 %}
+                    <span class="confidence-badge {% if conf >= 80 %}confidence-high{% elif conf >= 50 %}confidence-mid{% else %}confidence-low{% endif %}">
+                        {{ conf }}%
+                    </span>
+                </td>
+                <td class="text-muted">{{ m.matched_date | default('') }}</td>
+                <td class="text-muted uppercase">{{ m.asset_type | default('') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<div class="pagination">
+    <span class="pagination-info text-muted">Page {{ page }} of {{ total_pages }} ({{ total }} matches)</span>
+    {% if page < total_pages %}
+    <button hx-get="/api/matches/html?job_id={{ job_id }}&page={{ page + 1 }}"
+            hx-target="#matches-table" hx-swap="innerHTML"
+            class="btn-outline btn-sm">Next Page</button>
+    {% endif %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No matches found.</p>
+</div>
+{% endif %}
+{# themed: 2026-02-25 #}

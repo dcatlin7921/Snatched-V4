@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Rebellion Theme Jobs Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "snap-yellow": "#FFFC00",
+                        "deep-black": "#0a0a0a",
+                        "charcoal": "#141414",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    }
+                },
+            },
+        }
+    </script>
+<style type="text/tailwindcss">
+        body {
+            background-color: #0a0a0a;
+            background-image: repeating-linear-gradient(45deg, #FFFC00 0, #FFFC00 1px, transparent 0, transparent 50%);
+            background-size: 20px 20px;
+            background-attachment: fixed;}
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #0a0a0a;
+            opacity: 0.97;
+            z-index: -1;
+        }
+        .caution-line {
+            background: repeating-linear-gradient(
+                -45deg,
+                #FFFC00,
+                #FFFC00 10px,
+                #000 10px,
+                #000 20px
+            );
+        }
+        .pulsing-glow {
+            box-shadow: 0 0 15px rgba(255, 252, 0, 0.3);
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .7; }
+        }
+    </style>
+</head>
+<body class="text-white min-h-screen font-display">
+<div class="layout-container flex h-full grow flex-col">
+<header class="relative bg-deep-black/80 backdrop-blur-md">
+<div class="flex items-center justify-between px-6 py-5 max-w-[1200px] mx-auto w-full">
+<div class="flex items-center gap-3">
+<div class="text-snap-yellow flex items-center">
+<span class="material-symbols-outlined text-3xl font-bold">heart_broken</span>
+</div>
+<h2 class="text-2xl font-black tracking-tighter uppercase italic">Snatched</h2>
+</div>
+<div class="flex items-center gap-10">
+<nav class="flex items-center gap-8">
+<a class="text-snap-yellow text-sm font-black uppercase tracking-widest border-b-2 border-snap-yellow pb-1" href="#">Dashboard</a>
+<a class="text-neutral-500 hover:text-white text-sm font-bold uppercase tracking-widest transition-colors" href="#">Upload</a>
+</nav>
+<div class="h-10 w-10 rounded-none border-2 border-snap-yellow/30 overflow-hidden transform rotate-3">
+<img class="w-full h-full object-cover" data-alt="User profile avatar" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAr04F_PUTuoDQb8EKIAHEH8lVSOSCo2heuy81E_wGb36J5AI64g3TqCtBtlAsDbq6PSYe5qb4HcKLUTUEgAVnH3N5IKgLo67b1uEOretm6TUYpdr7Tl1Hs20lSvHZooj66ybb83mvTagqI7mpJVCdElJ9GBG4pdmQYGRAYWKNLvgAOUKj6P1g2fbWrYnarxa2LPX_-WS-VmBtsX8bgKYnq7tSYx5b-rS-eVud487w4sDRheNaqO-GzOjW341H5PHmbPBVCZVF7vw"/>
+</div>
+</div>
+</div>
+<div class="absolute bottom-0 left-0 w-full h-[2px] caution-line"></div>
+</header>
+<main class="max-w-[1200px] mx-auto w-full p-8 space-y-10">
+<div class="flex flex-wrap items-center justify-between gap-4">
+<h1 class="text-4xl font-black tracking-tighter uppercase italic">Your Jobs</h1>
+<button class="bg-snap-yellow hover:bg-[#e6e300] text-black px-6 py-3 rounded-none text-sm font-black uppercase tracking-widest flex items-center gap-2 transition-all transform hover:-translate-y-1 active:translate-y-0">
+<span class="material-symbols-outlined text-lg">add_circle</span>
+                    New Upload
+                </button>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<div class="bg-charcoal border-t-[3px] border-snap-yellow p-6 flex flex-col gap-2 shadow-2xl">
+<p class="text-neutral-500 text-xs font-black uppercase tracking-widest">Total Memories</p>
+<p class="text-4xl font-black tracking-tight text-snap-yellow">4,312</p>
+</div>
+<div class="bg-charcoal border-t-[3px] border-snap-yellow p-6 flex flex-col gap-2 shadow-2xl">
+<p class="text-neutral-500 text-xs font-black uppercase tracking-widest">Avg Match Rate</p>
+<p class="text-4xl font-black tracking-tight text-emerald-500">91%</p>
+</div>
+<div class="bg-charcoal border-t-[3px] border-snap-yellow p-6 flex flex-col gap-4 shadow-2xl">
+<div>
+<p class="text-neutral-500 text-xs font-black uppercase tracking-widest mb-1">Storage Usage</p>
+<p class="text-4xl font-black tracking-tight text-white">2.3 GB</p>
+</div>
+<div class="w-full h-1.5 bg-neutral-800">
+<div class="h-full bg-snap-yellow w-[45%]"></div>
+</div>
+</div>
+</div>
+<div class="space-y-6">
+<div class="flex items-center gap-4">
+<h2 class="text-xs font-black uppercase tracking-[0.3em] text-neutral-600">Mission Registry</h2>
+<div class="flex-grow h-px bg-neutral-800"></div>
+</div>
+<div class="bg-charcoal border-l-4 border-snap-yellow pulsing-glow p-6 flex flex-col md:flex-row gap-6 items-center">
+<div class="flex-1 w-full space-y-4">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="bg-snap-yellow text-black text-[10px] font-black px-2 py-1 uppercase tracking-tighter flex items-center gap-1">
+<span class="material-symbols-outlined text-xs animate-spin">sync</span>
+                                    Processing...
+                                </span>
+<h3 class="text-xl font-black uppercase italic tracking-tight text-white">Job #234</h3>
+</div>
+<span class="text-snap-yellow font-black tabular-nums">67%</span>
+</div>
+<div class="w-full h-1 bg-neutral-800">
+<div class="h-full bg-snap-yellow shadow-[0_0_10px_rgba(255,252,0,0.5)] transition-all duration-1000" style="width: 67%"></div>
+</div>
+</div>
+<div class="flex gap-3 w-full md:w-auto">
+<button class="flex-1 md:flex-none px-6 py-2 border-2 border-snap-yellow text-snap-yellow hover:bg-snap-yellow hover:text-black text-xs font-black uppercase tracking-widest transition-all">
+                            Cancel
+                        </button>
+</div>
+</div>
+<div class="bg-charcoal border-l-4 border-emerald-500 p-6 flex flex-col md:flex-row gap-6 items-center">
+<div class="flex-1 w-full">
+<div class="flex items-center gap-3 mb-2">
+<span class="bg-emerald-500 text-black text-[10px] font-black px-2 py-1 uppercase tracking-tighter">
+                                Done
+                            </span>
+<h3 class="text-xl font-black uppercase italic tracking-tight text-white">Job #231</h3>
+</div>
+<p class="text-neutral-500 text-sm font-bold uppercase tracking-tight">94% matched — 1,102 memories retrieved</p>
+</div>
+<div class="flex gap-3 w-full md:w-auto">
+<button class="flex-1 md:flex-none px-6 py-2 bg-snap-yellow text-black hover:bg-white text-xs font-black uppercase tracking-widest transition-all">
+                            View Results
+                        </button>
+<button class="flex-1 md:flex-none px-6 py-2 border-2 border-snap-yellow text-snap-yellow hover:bg-snap-yellow hover:text-black text-xs font-black uppercase tracking-widest transition-all">
+                            Download
+                        </button>
+</div>
+</div>
+<div class="bg-charcoal border-l-4 border-red-600 p-6 flex flex-col md:flex-row gap-6 items-center">
+<div class="flex-1 w-full">
+<div class="flex items-center gap-3 mb-2">
+<span class="bg-red-600 text-white text-[10px] font-black px-2 py-1 uppercase tracking-tighter">
+                                Failed
+                            </span>
+<h3 class="text-xl font-black uppercase italic tracking-tight text-white">Job #228</h3>
+</div>
+<p class="text-red-500/80 text-sm font-bold uppercase tracking-tight flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">report_problem</span>
+                            Phase 2 failed — invalid export structure
+                        </p>
+</div>
+<div class="flex gap-3 w-full md:w-auto">
+<button class="flex-1 md:flex-none px-6 py-2 bg-snap-yellow text-black hover:bg-white text-xs font-black uppercase tracking-widest transition-all">
+                            Retry
+                        </button>
+<button class="flex-1 md:flex-none px-6 py-2 border-2 border-red-600 text-red-600 hover:bg-red-600 hover:text-white text-xs font-black uppercase tracking-widest transition-all">
+                            Delete
+                        </button>
+</div>
+</div>
+</div>
+<div class="flex justify-center pt-8">
+<button class="px-12 py-3 border-2 border-snap-yellow bg-transparent text-snap-yellow hover:bg-snap-yellow hover:text-black text-sm font-black uppercase tracking-[0.2em] transition-all transform hover:scale-105 active:scale-95">
+                    Load More
+                </button>
+</div>
+</main>
+<footer class="p-8 text-center">
+<p class="text-[10px] text-neutral-600 font-black uppercase tracking-[0.4em]">Proprietary Rebel Protocol • Terminal 0.2.3</p>
+</footer>
+</div>
+
+</body></html>

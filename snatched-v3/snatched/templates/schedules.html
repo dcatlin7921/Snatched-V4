@@ -1,0 +1,517 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page header -->
+<div class="section-header">
+    <h1 class="mb-0 page-title-accent">
+        <span class="material-symbols-outlined icon-sm" style="vertical-align: middle; margin-right: 0.5rem;">schedule</span>
+        Scheduled Exports
+    </h1>
+    {% if tier_info %}
+    <span class="tier-badge" style="background: {{ tier_info.color }}; color: #000;">
+        {{ tier_info.label }}
+    </span>
+    {% endif %}
+</div>
+
+<!-- ============================================================
+     TIER GATE: Free tier blocked
+     ============================================================ -->
+{% if tier_info and tier_info.tier == "free" %}
+<section>
+    <div class="info-card text-center" style="padding: 3rem 2rem;">
+        <span class="material-symbols-outlined" style="font-size: 3rem; display: block; margin-bottom: 1rem;" class="text-muted">lock</span>
+        <h2 class="mb-1">Scheduled Exports Require Pro</h2>
+        <p class="text-muted mb-3" style="max-width: 460px; margin-left: auto; margin-right: auto;">
+            Set up recurring export reminders on Pro tier or above.
+            Snatched will notify you when it's time and detect overlap with previous exports.
+        </p>
+        <button type="button" class="btn-primary"
+                onclick="alert('Plan upgrades coming soon — stay tuned!')">
+            UPGRADE TO PRO
+        </button>
+    </div>
+</section>
+{% else %}
+
+<!-- ============================================================
+     INFO CARD — Feature explanation
+     ============================================================ -->
+<section>
+    <div class="info-card" style="display: flex; gap: 1rem; align-items: flex-start;">
+        <span class="material-symbols-outlined text-yellow" style="font-size: 1.8rem; flex-shrink: 0; margin-top: 0.1rem;">notifications</span>
+        <div>
+            <p class="mb-1" style="font-weight: 700; color: var(--text-primary);">How Scheduled Exports Work</p>
+            <p class="text-muted mb-0" style="font-size: 0.875rem;">
+                Set reminders to export from Snapchat regularly.
+                Snatched will notify you when it's time and detect overlap with previous exports —
+                so you never miss a window or double-process the same memories.
+                {% if max_schedules is not none %}
+                Your <strong style="color: var(--text-primary);">{{ tier_info.label }}</strong> plan supports
+                up to <strong class="text-yellow">{{ max_schedules }}</strong>
+                active schedule{{ 's' if max_schedules != 1 else '' }}.
+                {% else %}
+                Your <strong style="color: var(--text-primary);">{{ tier_info.label }}</strong> plan supports
+                <strong class="text-yellow">unlimited</strong> schedules.
+                {% endif %}
+            </p>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================
+     CREATE SCHEDULE
+     ============================================================ -->
+<section>
+    <div class="section-header mb-2">
+        <h2 class="mb-0">Your Schedules</h2>
+        {% set at_limit = (max_schedules is not none and schedules|length >= max_schedules) %}
+        <button type="button" class="btn-primary"
+                id="btn-show-create"
+                {% if at_limit %}
+                    disabled
+                    title="Schedule limit reached ({{ max_schedules }}). Delete one to create another."
+                    style="opacity: 0.45; cursor: not-allowed;"
+                {% else %}
+                    onclick="document.getElementById('create-form-wrapper').style.display='block'; this.style.display='none';"
+                {% endif %}>
+            <span class="material-symbols-outlined icon-sm" style="vertical-align: middle; margin-right: 0.3rem;">add</span>
+            CREATE SCHEDULE
+        </button>
+    </div>
+
+    <!-- Inline create form (hidden by default) -->
+    <div id="create-form-wrapper" style="display: none;" class="mb-3">
+        <div class="info-card" style="border: 2px solid var(--snap-yellow);">
+            <div style="display: flex; justify-content: space-between; align-items: center;" class="mb-3">
+                <h3 class="mb-0 text-yellow" style="font-size: 1rem; text-transform: uppercase; letter-spacing: 0.08em;">New Schedule</h3>
+                <button type="button" class="btn-outline btn-sm"
+                        onclick="document.getElementById('create-form-wrapper').style.display='none'; document.getElementById('btn-show-create').style.display='';">
+                    CANCEL
+                </button>
+            </div>
+
+            <div id="create-error" class="mono hidden text-danger" style="font-size: 0.85rem; margin-bottom: 0.75rem;"></div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="mb-2">
+                <div>
+                    <label for="c-name" class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem; letter-spacing: 0.06em;">
+                        Schedule Name
+                    </label>
+                    <input type="text" id="c-name" placeholder="Monthly Snapchat Export"
+                           style="width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">
+                </div>
+
+                <div>
+                    <label for="c-frequency" class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem; letter-spacing: 0.06em;">
+                        <span class="material-symbols-outlined icon-sm" style="vertical-align: middle;">event_repeat</span>
+                        Frequency
+                    </label>
+                    <select id="c-frequency" onchange="onFrequencyChange('c-frequency', 'c-dom-row', 'c-dow-row')"
+                            style="width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="biweekly">Biweekly (every 2 weeks)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Day of month (shown for monthly) -->
+            <div id="c-dom-row" class="mb-2">
+                <label for="c-day-of-month" class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem; letter-spacing: 0.06em;">Day of Month</label>
+                <select id="c-day-of-month" style="width: 200px; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">
+                    {% for d in range(1, 29) %}
+                    <option value="{{ d }}" {% if d == 1 %}selected{% endif %}>{{ d }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Day of week (shown for weekly) -->
+            <div id="c-dow-row" class="hidden mb-2">
+                <label for="c-day-of-week" class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem; letter-spacing: 0.06em;">Day of Week</label>
+                <select id="c-day-of-week" style="width: 200px; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">
+                    <option value="0">Monday</option>
+                    <option value="1">Tuesday</option>
+                    <option value="2">Wednesday</option>
+                    <option value="3">Thursday</option>
+                    <option value="4">Friday</option>
+                    <option value="5">Saturday</option>
+                    <option value="6">Sunday</option>
+                </select>
+            </div>
+
+            <!-- Notifications -->
+            <div class="mb-3">
+                <p class="mono text-muted uppercase mb-1" style="font-size: 0.75rem; letter-spacing: 0.06em;">
+                    <span class="material-symbols-outlined icon-sm" style="vertical-align: middle;">notifications</span>
+                    Notifications
+                </p>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; margin-bottom: 0.4rem;">
+                    <input type="checkbox" id="c-notify-email">
+                    <span style="font-size: 0.875rem;">Email notification when it's time to export</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="c-notify-webhook">
+                    <span style="font-size: 0.875rem;">Webhook ping when it's time to export</span>
+                </label>
+            </div>
+
+            <button type="button" class="btn-primary" id="btn-create-submit" onclick="submitCreateSchedule()">
+                SAVE SCHEDULE
+            </button>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         SCHEDULES TABLE
+         ============================================================ -->
+    {% if schedules %}
+    <div class="info-card" style="padding: 0; overflow: hidden;">
+        <table style="width: 100%;" id="schedules-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>
+                        <span class="material-symbols-outlined icon-sm" style="vertical-align: middle;">event_repeat</span>
+                        Frequency
+                    </th>
+                    <th>Next Run</th>
+                    <th>Last Run</th>
+                    <th style="text-align: center;">Active</th>
+                    <th style="text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in schedules %}
+                <tr id="schedule-row-{{ s.id }}">
+                    <!-- Name -->
+                    <td style="font-weight: 600; color: var(--text-primary);">
+                        {{ s.name }}
+                    </td>
+
+                    <!-- Frequency badge -->
+                    <td>
+                        {% if s.frequency == "monthly" %}
+                        <span class="mono status-badge" style="background: var(--snap-yellow); color: #000;">
+                            Monthly
+                        </span>
+                        {% elif s.frequency == "weekly" %}
+                        <span class="mono status-badge" style="background: #00e5ff; color: #000;">
+                            Weekly
+                        </span>
+                        {% else %}
+                        <span class="mono status-badge" style="background: #69ff47; color: #000;">
+                            Biweekly
+                        </span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Next Run (relative) -->
+                    <td>
+                        {% if s.next_run_at %}
+                        <span class="mono text-yellow"
+                              title="{{ s.next_run_at }}"
+                              style="font-size: 0.8rem;">
+                            {{ s.next_run_at[:10] }}
+                        </span>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Last Run -->
+                    <td>
+                        {% if s.last_run_at %}
+                        <span class="mono text-muted"
+                              title="{{ s.last_run_at }}"
+                              style="font-size: 0.8rem;">
+                            {{ s.last_run_at[:10] }}
+                        </span>
+                        {% else %}
+                        <span class="text-muted" style="font-size: 0.8rem;">Never</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Active toggle -->
+                    <td style="text-align: center;">
+                        <label style="display: inline-flex; align-items: center; cursor: pointer; gap: 0.5rem;">
+                            <input type="checkbox"
+                                   id="toggle-active-{{ s.id }}"
+                                   {% if s.active %}checked{% endif %}
+                                   onchange="toggleScheduleActive({{ s.id }}, this.checked)">
+                        </label>
+                    </td>
+
+                    <!-- Edit / Delete -->
+                    <td style="text-align: right;">
+                        <div class="gap-row" style="justify-content: flex-end;">
+                            <button type="button" class="btn-outline btn-sm"
+                                    onclick="openEditSchedule({{ s.id }}, {{ s | tojson }})">
+                                EDIT
+                            </button>
+                            <button type="button" class="btn-danger btn-sm"
+                                    onclick="deleteSchedule({{ s.id }})">
+                                DELETE
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="info-card text-center" style="padding: 2.5rem 1rem;">
+        <span class="material-symbols-outlined text-muted" style="font-size: 2.5rem; display: block; margin-bottom: 0.75rem;">schedule</span>
+        <p class="text-muted mb-0">No schedules yet. Click "CREATE SCHEDULE" to add one.</p>
+    </div>
+    {% endif %}
+</section>
+
+<!-- ============================================================
+     EDIT MODAL (hidden until openEditSchedule() is called)
+     ============================================================ -->
+<div id="edit-modal-backdrop"
+     class="modal-overlay hidden">
+    <div class="modal-box" style="max-width: 520px;">
+        <div class="modal-header">
+            <h3>Edit Schedule</h3>
+            <button type="button" class="modal-close" onclick="closeEditModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="e-id">
+            <div id="edit-error" class="mono hidden text-danger mb-2" style="font-size: 0.85rem;"></div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="mb-2">
+                <div>
+                    <label for="e-name" class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem; letter-spacing: 0.06em;">Name</label>
+                    <input type="text" id="e-name" style="width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">
+                </div>
+                <div>
+                    <label for="e-frequency" class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem; letter-spacing: 0.06em;">Frequency</label>
+                    <select id="e-frequency" onchange="onFrequencyChange('e-frequency', 'e-dom-row', 'e-dow-row')"
+                            style="width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="biweekly">Biweekly</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="e-dom-row" class="mb-2">
+                <label for="e-day-of-month" class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem; letter-spacing: 0.06em;">Day of Month</label>
+                <select id="e-day-of-month" style="width: 200px; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">
+                    {% for d in range(1, 29) %}
+                    <option value="{{ d }}">{{ d }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div id="e-dow-row" class="hidden mb-2">
+                <label for="e-day-of-week" class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem; letter-spacing: 0.06em;">Day of Week</label>
+                <select id="e-day-of-week" style="width: 200px; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">
+                    <option value="0">Monday</option>
+                    <option value="1">Tuesday</option>
+                    <option value="2">Wednesday</option>
+                    <option value="3">Thursday</option>
+                    <option value="4">Friday</option>
+                    <option value="5">Saturday</option>
+                    <option value="6">Sunday</option>
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <p class="mono text-muted uppercase mb-1" style="font-size: 0.75rem; letter-spacing: 0.06em;">Notifications</p>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; margin-bottom: 0.4rem;">
+                    <input type="checkbox" id="e-notify-email">
+                    <span style="font-size: 0.875rem;">Email</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="e-notify-webhook">
+                    <span style="font-size: 0.875rem;">Webhook</span>
+                </label>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-secondary btn-sm" onclick="closeEditModal()">CANCEL</button>
+            <button type="button" class="btn-primary" onclick="submitEditSchedule()">SAVE CHANGES</button>
+        </div>
+    </div>
+</div>
+
+{% endif %}{# end tier gate #}
+
+<!-- ============================================================
+     JavaScript
+     ============================================================ -->
+<script>
+/* ---- Frequency visibility toggle ---- */
+function onFrequencyChange(freqId, domRowId, dowRowId) {
+    const freq = document.getElementById(freqId).value;
+    document.getElementById(domRowId).style.display = freq === 'monthly' ? '' : 'none';
+    document.getElementById(dowRowId).style.display = freq === 'weekly'  ? '' : 'none';
+}
+
+/* ---- Relative date helper ---- */
+function relativeDate(isoString) {
+    if (!isoString) return '—';
+    const diff = Math.round((new Date(isoString) - Date.now()) / 86400000);
+    if (diff === 0) return 'today';
+    if (diff === 1) return 'tomorrow';
+    if (diff > 0) return 'in ' + diff + ' days';
+    if (diff === -1) return 'yesterday';
+    return Math.abs(diff) + ' days ago';
+}
+
+/* On load: update Next Run cells with relative labels */
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-next-run]').forEach(function (el) {
+        el.textContent = relativeDate(el.dataset.nextRun);
+    });
+});
+
+/* ---- Create schedule ---- */
+async function submitCreateSchedule() {
+    const btn = document.getElementById('btn-create-submit');
+    const errEl = document.getElementById('create-error');
+    errEl.classList.add('hidden');
+
+    const name = document.getElementById('c-name').value.trim();
+    const frequency = document.getElementById('c-frequency').value;
+    const domVal = parseInt(document.getElementById('c-day-of-month').value, 10);
+    const dowVal = parseInt(document.getElementById('c-day-of-week').value, 10);
+    const notifyEmail = document.getElementById('c-notify-email').checked;
+    const notifyWebhook = document.getElementById('c-notify-webhook').checked;
+
+    if (!name) { showError(errEl, 'Schedule name is required.'); return; }
+
+    const body = {
+        name,
+        frequency,
+        day_of_month: frequency === 'monthly' ? domVal : null,
+        day_of_week:  frequency === 'weekly'  ? dowVal : null,
+        notify_email: notifyEmail,
+        notify_webhook: notifyWebhook,
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'SAVING…';
+    try {
+        const res = await fetch('/api/schedules', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            showError(errEl, data.detail || 'Failed to create schedule.');
+            return;
+        }
+        window.location.reload();
+    } catch (e) {
+        showError(errEl, 'Network error: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'SAVE SCHEDULE';
+    }
+}
+
+/* ---- Active toggle ---- */
+async function toggleScheduleActive(scheduleId, active) {
+    try {
+        const res = await fetch('/api/schedules/' + scheduleId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({active}),
+        });
+        if (!res.ok) {
+            // Revert checkbox state on failure
+            const cb = document.getElementById('toggle-active-' + scheduleId);
+            if (cb) cb.checked = !active;
+            alert('Failed to update schedule.');
+        }
+    } catch (e) {
+        const cb = document.getElementById('toggle-active-' + scheduleId);
+        if (cb) cb.checked = !active;
+        alert('Network error: ' + e.message);
+    }
+}
+
+/* ---- Delete schedule ---- */
+async function deleteSchedule(scheduleId) {
+    if (!confirm('Permanently delete this schedule?')) return;
+    try {
+        const res = await fetch('/api/schedules/' + scheduleId, {method: 'DELETE'});
+        if (res.ok) {
+            const row = document.getElementById('schedule-row-' + scheduleId);
+            if (row) row.remove();
+        } else {
+            alert('Failed to delete schedule.');
+        }
+    } catch (e) {
+        alert('Network error: ' + e.message);
+    }
+}
+
+/* ---- Edit modal ---- */
+function openEditSchedule(scheduleId, data) {
+    document.getElementById('e-id').value = scheduleId;
+    document.getElementById('e-name').value = data.name || '';
+    document.getElementById('e-frequency').value = data.frequency || 'monthly';
+    document.getElementById('e-day-of-month').value = data.day_of_month || 1;
+    document.getElementById('e-day-of-week').value = data.day_of_week !== null ? data.day_of_week : 0;
+    document.getElementById('e-notify-email').checked = !!data.notify_email;
+    document.getElementById('e-notify-webhook').checked = !!data.notify_webhook;
+    onFrequencyChange('e-frequency', 'e-dom-row', 'e-dow-row');
+    document.getElementById('edit-error').classList.add('hidden');
+    document.getElementById('edit-modal-backdrop').classList.remove('hidden');
+}
+
+function closeEditModal() {
+    document.getElementById('edit-modal-backdrop').classList.add('hidden');
+}
+
+async function submitEditSchedule() {
+    const scheduleId = parseInt(document.getElementById('e-id').value, 10);
+    const errEl = document.getElementById('edit-error');
+    errEl.classList.add('hidden');
+
+    const frequency = document.getElementById('e-frequency').value;
+    const domVal = parseInt(document.getElementById('e-day-of-month').value, 10);
+    const dowVal = parseInt(document.getElementById('e-day-of-week').value, 10);
+
+    const body = {
+        name:           document.getElementById('e-name').value.trim(),
+        frequency,
+        day_of_month:   frequency === 'monthly' ? domVal : null,
+        day_of_week:    frequency === 'weekly'  ? dowVal : null,
+        notify_email:   document.getElementById('e-notify-email').checked,
+        notify_webhook: document.getElementById('e-notify-webhook').checked,
+    };
+
+    if (!body.name) { showError(errEl, 'Schedule name is required.'); return; }
+
+    try {
+        const res = await fetch('/api/schedules/' + scheduleId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            showError(errEl, data.detail || 'Failed to update schedule.');
+            return;
+        }
+        window.location.reload();
+    } catch (e) {
+        showError(errEl, 'Network error: ' + e.message);
+    }
+}
+
+function showError(el, msg) {
+    el.textContent = msg;
+    el.classList.remove('hidden');
+}
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

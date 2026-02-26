@@ -1,0 +1,146 @@
+{% if items %}
+<!-- Batch action bar — floats above table when items are selected -->
+<div id="batch-bar" class="batch-action-bar" style="display: none;">
+    <span id="batch-count" class="text-yellow">0 selected</span>
+    <button class="btn-primary btn-sm" onclick="openBatchEdit()">EDIT TAGS</button>
+    <button class="btn-outline btn-xs" onclick="deselectAllAssets()">Clear</button>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th class="col-checkbox">
+                    <input type="checkbox" id="select-all-assets" title="Select all"
+                           onchange="toggleSelectAllAssets(this)">
+                </th>
+                <th class="col-id">ID</th>
+                <th class="col-filename">Filename</th>
+                <th class="col-type">Type</th>
+                <th class="col-size">Size</th>
+                <th class="col-exif">EXIF</th>
+                <th class="col-actions"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in items %}
+            <tr>
+                <td class="col-checkbox">
+                    <input type="checkbox" class="asset-select" value="{{ a.id }}"
+                           onchange="onAssetCheckboxChange()">
+                </td>
+                <td class="mono text-muted">{{ a.id }}</td>
+                <td class="mono">{{ a.file_path | default(a.filename | default('N/A')) }}</td>
+                <td class="text-muted uppercase">{{ a.asset_type | default('') }}</td>
+                <td class="text-muted">{{ ((a.file_size | default(0)) / 1024 / 1024) | round(2) }} MB</td>
+                <td>
+                    {% if a.exif_written %}
+                    <span class="exif-yes">Yes</span>
+                    {% else %}
+                    <span class="exif-no">No</span>
+                    {% endif %}
+                </td>
+                <td class="col-actions">
+                    <a href="/assets/{{ job_id }}/{{ a.id }}"
+                       class="btn-outline btn-xs">
+                        Inspect Tags
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<div class="pagination">
+    <span class="pagination-info text-muted">Page {{ page }} of {{ total_pages }} ({{ total }} assets)</span>
+    {% if page < total_pages %}
+    <button hx-get="/api/assets/html?job_id={{ job_id }}&page={{ page + 1 }}"
+            hx-target="#assets-list" hx-swap="innerHTML"
+            class="btn-outline btn-sm">Next Page</button>
+    {% endif %}
+</div>
+
+<script>
+(function () {
+    // Restore batch bar visibility in case this fragment was swapped in after
+    // a previous selection state existed — always start fresh on load.
+    var batchBar = document.getElementById('batch-bar');
+    var batchCount = document.getElementById('batch-count');
+    var selectAll = document.getElementById('select-all-assets');
+
+    function getChecked() {
+        return Array.from(document.querySelectorAll('.asset-select:checked'));
+    }
+
+    function updateBatchBar() {
+        var checked = getChecked();
+        if (batchBar) {
+            batchBar.style.display = checked.length > 0 ? 'flex' : 'none';
+        }
+        if (batchCount) {
+            batchCount.textContent = checked.length + ' selected';
+        }
+    }
+
+    window.onAssetCheckboxChange = function () {
+        var all = document.querySelectorAll('.asset-select');
+        var checked = getChecked();
+        if (selectAll) {
+            selectAll.indeterminate = checked.length > 0 && checked.length < all.length;
+            selectAll.checked = checked.length === all.length && all.length > 0;
+        }
+        updateBatchBar();
+    };
+
+    window.toggleSelectAllAssets = function (cb) {
+        document.querySelectorAll('.asset-select').forEach(function (el) {
+            el.checked = cb.checked;
+        });
+        updateBatchBar();
+    };
+
+    window.deselectAllAssets = function () {
+        document.querySelectorAll('.asset-select').forEach(function (el) {
+            el.checked = false;
+        });
+        if (selectAll) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+        }
+        updateBatchBar();
+    };
+
+    window.openBatchEdit = function () {
+        var selectedIds = getChecked().map(function (el) { return parseInt(el.value, 10); });
+        if (selectedIds.length === 0) return;
+
+        // Store selected IDs globally so the modal can pick them up
+        window._batchSelectedIds = selectedIds;
+
+        var modal = document.getElementById('batch-edit-modal');
+        if (modal) {
+            // Update title count
+            var titleCount = modal.querySelector('.batch-modal-count');
+            if (titleCount) titleCount.textContent = selectedIds.length;
+
+            // Reset form state
+            var statusEl = modal.querySelector('#batch-status');
+            if (statusEl) { statusEl.textContent = ''; statusEl.style.color = ''; }
+            var previewEl = modal.querySelector('#batch-preview-result');
+            if (previewEl) { previewEl.style.display = 'none'; previewEl.textContent = ''; }
+
+            modal.classList.remove('hidden');
+        }
+    };
+
+    // Initial state — reset on htmx swap
+    updateBatchBar();
+})();
+</script>
+{% else %}
+<div class="empty-state">
+    <p>No assets found.</p>
+</div>
+{% endif %}
+{# themed: 2026-02-25 #}
+

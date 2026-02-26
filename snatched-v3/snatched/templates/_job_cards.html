@@ -1,0 +1,195 @@
+{% if jobs %}
+{% for job in jobs %}
+<div class="job-card {% if job.status == 'running' %}active pulsing-glow{% elif job.status == 'scanned' %}scanned{% elif job.status == 'matched' %}matched{% elif job.status == 'enriched' %}enriched{% elif job.status == 'completed' %}completed{% elif job.status == 'failed' %}failed{% endif %}">
+    <div class="job-card-header">
+        <h3 class="job-id uppercase italic tracking-tight">Job #{{ job.id }}</h3>
+        <span class="status-badge status-{{ job.status }}">{{ job.status | title }}</span>
+    </div>
+
+    {# --- Feature #30: Retention countdown --- #}
+    <div class="retention-info">
+        {% if job.retention_expires_at is none %}
+            <span class="text-muted">No expiration</span>
+        {% else %}
+            {% set days_left = job.retention_days_remaining %}
+            {% if days_left is none or days_left < 0 %}
+                <span class="text-danger uppercase tracking-wide job-expired-label">EXPIRED</span>
+            {% elif days_left < 3 %}
+                <span class="retention-pulse text-danger">
+                    Expires {{ job.retention_expires_at }} &mdash; {{ days_left }}d left
+                </span>
+            {% elif days_left < 7 %}
+                <span class="text-danger">
+                    Expires {{ job.retention_expires_at }} &mdash; {{ days_left }}d left
+                </span>
+            {% elif days_left <= 14 %}
+                <span class="text-warning">
+                    Expires {{ job.retention_expires_at }} &mdash; {{ days_left }}d left
+                </span>
+            {% else %}
+                <span class="text-green">
+                    Expires {{ job.retention_expires_at }} &mdash; {{ days_left }}d left
+                </span>
+            {% endif %}
+            {% if job.tier != 'free' %}
+            <button
+                hx-post="/api/jobs/{{ job.id }}/extend-retention"
+                hx-swap="none"
+                hx-on::after-request="htmx.trigger('#active-jobs', 'load'); htmx.trigger('#job-history', 'load');"
+                class="btn-outline btn-xs btn-yellow">
+                EXTEND
+            </button>
+            {% endif %}
+        {% endif %}
+    </div>
+    {# --- end Feature #30 --- #}
+
+    <div class="job-meta">
+        <div><span class="label">File:</span> {{ job.upload_filename }}</div>
+        {% if job.upload_size_bytes %}
+        <div><span class="label">Size:</span> {{ (job.upload_size_bytes / 1024 / 1024) | round(1) }} MB</div>
+        {% endif %}
+        <div><span class="label">Created:</span> {{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else 'N/A' }}</div>
+        {% if job.current_phase %}
+        <div><span class="label">Phase:</span> {{ job.current_phase | title }}</div>
+        {% endif %}
+        {% if job.completed_at %}
+        <div><span class="label">Completed:</span> {{ job.completed_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        {% endif %}
+    </div>
+
+    {% if job.status == 'failed' and job.error_message %}
+    <div class="job-error mono text-danger">
+        {{ job.error_message[:100] }}{% if job.error_message|length > 100 %}...{% endif %}
+    </div>
+    {% endif %}
+
+    {% if job.status == 'completed' and job.stats_json %}
+    <div class="job-stats text-green">
+        {{ job.stats_json.total_assets | default(0) }} assets,
+        {{ job.stats_json.total_matches | default(0) }} matched
+        {% if job.stats_json.match_rate %}({{ (job.stats_json.match_rate * 100) | round(1) }}%){% endif %}
+    </div>
+    {% endif %}
+
+    {% if job.status == 'running' %}
+    <div class="progress-bar">
+        <div class="progress-fill striped" style="width: {{ job.progress_pct }}%"></div>
+    </div>
+    {% endif %}
+
+    <div class="job-actions">
+        {% if job.status == 'scanned' %}
+        <a href="/job/{{ job.id }}" class="btn-primary btn-sm">
+            <span class="material-symbols-outlined icon-sm">tune</span> Configure &amp; Process
+        </a>
+        <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Discard</button>
+        {% endif %}
+        {% if job.status == 'matched' %}
+        <a href="/job/{{ job.id }}" class="btn-primary btn-sm">Review Matches</a>
+        <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Discard</button>
+        {% endif %}
+        {% if job.status == 'enriched' %}
+        <a href="/job/{{ job.id }}" class="btn-primary btn-sm">Review &amp; Export</a>
+        <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Discard</button>
+        {% endif %}
+        {% if job.status == 'running' %}
+        <button class="btn-outline btn-sm" onclick="cancelJob({{ job.id }}, this)">Cancel</button>
+        <a href="/job/{{ job.id }}" class="btn-primary btn-sm">Live Progress</a>
+        {% endif %}
+        {% if job.status == 'pending' %}
+        <button class="btn-outline btn-sm" onclick="cancelJob({{ job.id }}, this)">Cancel</button>
+        {% endif %}
+        {% if job.status == 'completed' %}
+        <a href="/job/{{ job.id }}" class="btn-outline btn-sm">View Results</a>
+        <a href="/download/{{ job.id }}" class="btn-primary btn-sm">
+            <span class="material-symbols-outlined icon-sm">download</span> Download
+        </a>
+        <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Delete</button>
+        {% endif %}
+        {% if job.status == 'failed' %}
+        <a href="/job/{{ job.id }}" class="btn-outline btn-sm">Details</a>
+        <button class="btn-primary btn-sm" onclick="retryJob({{ job.id }})">RETRY</button>
+        <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Delete</button>
+        {% endif %}
+        {% if job.status == 'cancelled' %}
+        <a href="/job/{{ job.id }}" class="btn-outline btn-sm">View Details</a>
+        <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Delete</button>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+<script>
+async function retryJob(jobId) {
+    try {
+        var resp = await fetch('/api/jobs/' + jobId + '/retry', { method: 'POST' });
+        var data = await resp.json();
+        if (resp.ok && data.new_job_id) {
+            window.location.href = '/job/' + data.new_job_id;
+        } else {
+            alert('Retry failed: ' + (data.detail || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function deleteJob(jobId, btn) {
+    if (!confirm('Delete this job? This cannot be undone.')) return;
+    btn.disabled = true;
+    btn.textContent = 'Deleting...';
+    try {
+        const resp = await fetch('/api/jobs/' + jobId, {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (resp.ok) {
+            const card = btn.closest('.job-card');
+            if (card) {
+                card.style.transition = 'opacity 0.3s';
+                card.style.opacity = '0';
+                setTimeout(function() { card.remove(); }, 300);
+            }
+        } else {
+            const data = await resp.json();
+            alert(data.detail || 'Failed to delete job');
+            btn.disabled = false;
+            btn.textContent = 'Delete';
+        }
+    } catch(e) {
+        alert('Network error');
+        btn.disabled = false;
+        btn.textContent = 'Delete';
+    }
+}
+
+async function cancelJob(jobId, btn) {
+    if (!confirm('Cancel this job?')) return;
+    btn.disabled = true;
+    btn.textContent = 'Cancelling...';
+    try {
+        const resp = await fetch('/api/jobs/' + jobId + '/cancel', {method: 'POST'});
+        if (resp.ok) {
+            const card = btn.closest('.job-card');
+            if (card) {
+                card.style.transition = 'opacity 0.3s';
+                card.style.opacity = '0';
+                setTimeout(function() { card.remove(); }, 300);
+            }
+        } else {
+            btn.disabled = false;
+            btn.textContent = 'Cancel';
+        }
+    } catch(e) {
+        btn.disabled = false;
+        btn.textContent = 'Cancel';
+    }
+}
+</script>
+{% else %}
+<div class="empty-state">
+    <p>No jobs found.</p>
+</div>
+{% endif %}
+{# themed: 2026-02-25 #}

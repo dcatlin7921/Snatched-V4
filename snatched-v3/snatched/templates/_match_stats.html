@@ -1,0 +1,61 @@
+{% if strategies %}
+<!-- Strategy Breakdown Table -->
+<h3 class="stats-section-title uppercase tracking-wide">Match Strategy Breakdown</h3>
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Strategy</th>
+                <th>Matches</th>
+                <th>Avg Confidence</th>
+                <th>Share</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in strategies %}
+            <tr>
+                <td class="mono">{{ s.strategy | replace('_', ' ') | title }}</td>
+                <td class="mono">{{ s.count }}</td>
+                <td>
+                    {% set conf_pct = (s.avg_confidence * 100) | round(1) %}
+                    <span class="confidence-badge {% if conf_pct >= 80 %}confidence-high{% elif conf_pct >= 50 %}confidence-mid{% else %}confidence-low{% endif %}">
+                        {{ conf_pct }}%
+                    </span>
+                </td>
+                <td class="strategy-share-cell">
+                    <div class="strategy-share-bar">
+                        <div class="progress-bar strategy-progress">
+                            <div class="progress-fill" style="width: {{ (s.count / total_matched * 100) | round(1) }}%;"></div>
+                        </div>
+                        <span class="mono text-muted strategy-share-pct">{{ (s.count / total_matched * 100) | round(1) }}%</span>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Confidence Distribution -->
+<h3 class="stats-section-title uppercase tracking-wide">Confidence Distribution</h3>
+<div class="confidence-histogram">
+    {% set max_count = histogram | map(attribute='count') | max %}
+    {% for h in histogram %}
+    <div class="histogram-col">
+        <div class="histogram-bar" style="height: {{ (h.count / max_count * 100) if max_count else 0 }}%;"></div>
+    </div>
+    {% endfor %}
+</div>
+<div class="histogram-labels">
+    {% for h in histogram %}
+    <div class="histogram-label mono text-muted">{{ h.bucket * 10 }}%</div>
+    {% endfor %}
+</div>
+<p class="stats-summary mono text-muted">
+    {{ total_matched }} / {{ total_assets }} assets matched ({{ ((total_matched / total_assets) * 100) | round(1) if total_assets else 0 }}%)
+</p>
+
+{% else %}
+<div class="empty-state"><p>No match data available.</p></div>
+{% endif %}
+{# themed: 2026-02-25 #}

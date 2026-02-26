@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav class="breadcrumb mb-2">
+    <a href="/results/{{ job_id }}" class="text-muted">Results</a>
+    <span class="separator">/</span>
+    <span class="text-yellow">Timeline</span>
+</nav>
+
+<!-- Page header -->
+<div class="sticky-header">
+    <h1 class="mb-0">Timeline</h1>
+    <div class="gap-row">
+        <a href="/results/{{ job_id }}" class="btn-outline">BACK TO RESULTS</a>
+    </div>
+</div>
+
+<!-- Summary bar -->
+<div class="stats-grid mb-3">
+    <div class="stat-card">
+        <p class="stat-label">Total Items</p>
+        <p class="stat-value" id="stat-total">{{ total_items }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Date Range</p>
+        <p class="stat-value white" style="font-size: 0.9rem;" id="stat-range">{{ date_range }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Memories</p>
+        <p class="stat-value" style="color: #FFFC00;" id="stat-memories">{{ lane_counts.get('memories', 0) }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Chats</p>
+        <p class="stat-value green" id="stat-chats">{{ lane_counts.get('chats', 0) }}</p>
+    </div>
+    <div class="stat-card">
+        <p class="stat-label">Stories</p>
+        <p class="stat-value" style="color: #4488ff;" id="stat-stories">{{ lane_counts.get('stories', 0) }}</p>
+    </div>
+</div>
+
+<!-- Filter controls -->
+<div class="info-card mb-3">
+    <div style="display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: center;">
+        <div>
+            <span class="mono text-muted uppercase" style="font-size: 0.7rem; letter-spacing: 0.06em;">Lanes</span>
+            <div style="display: flex; gap: 1rem; margin-top: 0.4rem;">
+                <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
+                    <input type="checkbox" id="filter-memories" checked onchange="applyFilters()">
+                    <span style="color: #FFFC00;">Memories</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
+                    <input type="checkbox" id="filter-chats" checked onchange="applyFilters()">
+                    <span class="text-success">Chats</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
+                    <input type="checkbox" id="filter-stories" checked onchange="applyFilters()">
+                    <span style="color: #4488ff;">Stories</span>
+                </label>
+            </div>
+        </div>
+        <div style="flex: 1; min-width: 200px;">
+            <label class="mono text-muted" style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;">
+                Min Confidence: <span id="conf-label">0%</span>
+            </label>
+            <input type="range" id="filter-confidence" min="0" max="100" value="0"
+                   style="width: 100%; margin-top: 0.4rem;"
+                   oninput="document.getElementById('conf-label').textContent=this.value+'%'; applyFilters()">
+        </div>
+    </div>
+</div>
+
+<!-- Drill-down breadcrumb -->
+<div id="drill-breadcrumb" class="hidden" style="margin-bottom: 1rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+    <button class="btn-outline btn-small" onclick="drillToYears()">All Years</button>
+    <span id="drill-year-crumb" class="hidden text-muted">/ <span id="drill-year-label" class="text-yellow"></span></span>
+    <span id="drill-month-crumb" class="hidden text-muted">/ <span id="drill-month-label" class="text-yellow"></span></span>
+    <button id="drill-back-btn" class="btn-outline btn-small hidden" style="margin-left: 0.5rem;" onclick="drillBack()">BACK</button>
+</div>
+
+<!-- View title -->
+<p id="view-title" class="mono text-muted uppercase" style="font-size: 0.65rem; letter-spacing: 0.08em; margin-bottom: 1rem; text-align: center;">
+    &mdash;&mdash; Year View &mdash;&mdash;
+</p>
+
+<!-- Chart container (year / month views) -->
+<div id="chart-container" class="mb-3"></div>
+
+<!-- Day view cards container -->
+<div id="day-container" class="hidden mb-3"></div>
+
+<!-- Loading indicator -->
+<div id="tl-loading" class="hidden" style="text-align: center; padding: 2rem;">
+    <span class="mono text-muted" style="font-size: 0.85rem;">Loading...</span>
+</div>
+
+<!-- Empty state -->
+<div id="tl-empty" class="hidden">
+    <div class="empty-state">
+        <p>No timeline data found for this job. Make sure matching has been run.</p>
+    </div>
+</div>
+
+<script>
+(function() {
+    var JOB_ID = {{ job_id }};
+    var currentGranularity = 'year';
+    var currentYear = null;
+    var currentMonth = null;
+    var currentData = null;
+
+    // Lane color map
+    var LANE_COLORS = {
+        memories: '#FFFC00',
+        chats: '#00aa00',
+        stories: '#4488ff',
+    };
+
+    function getActiveLanes() {
+        var lanes = [];
+        if (document.getElementById('filter-memories').checked) lanes.push('memories');
+        if (document.getElementById('filter-chats').checked) lanes.push('chats');
+        if (document.getElementById('filter-stories').checked) lanes.push('stories');
+        return lanes;
+    }
+
+    function getMinConfidence() {
+        return parseInt(document.getElementById('filter-confidence').value, 10) / 100;
+    }
+
+    function showLoading(show) {
+        document.getElementById('tl-loading').style.display = show ? 'block' : 'none';
+    }
+
+    function showEmpty(show) {
+        document.getElementById('tl-empty').style.display = show ? 'block' : 'none';
+    }
+
+    function buildUrl(granularity, year, month) {
+        var params = new URLSearchParams();
+        params.set('granularity', granularity);
+        if (year) params.set('year', year);
+        if (month) params.set('month', month);
+        var lanes = getActiveLanes();
+        lanes.forEach(function(l) { params.append('lane', l); });
+        var conf = getMinConfidence();
+        if (conf > 0) params.set('confidence_min', conf.toFixed(2));
+        return '/api/jobs/' + JOB_ID + '/timeline-data?' + params.toString();
+    }
+
+    async function fetchData(granularity, year, month) {
+        showLoading(true);
+        try {
+            var resp = await fetch(buildUrl(granularity, year, month));
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return await resp.json();
+        } catch(e) {
+            console.error('Timeline fetch error:', e);
+            return null;
+        } finally {
+            showLoading(false);
+        }
+    }
+
+    // --- Render bar chart (year or month granularity) ---
+    function renderBarChart(data) {
+        var container = document.getElementById('chart-container');
+        var dayContainer = document.getElementById('day-container');
+        container.style.display = 'block';
+        dayContainer.style.display = 'none';
+
+        if (!data || !data.items || data.items.length === 0) {
+            container.innerHTML = '';
+            showEmpty(true);
+            return;
+        }
+        showEmpty(false);
+
+        var items = data.items;
+        var maxCount = 0;
+        items.forEach(function(item) {
+            if ((item.count || 0) > maxCount) maxCount = item.count;
+        });
+        if (maxCount === 0) maxCount = 1;
+
+        var html = '<div style="display: flex; flex-direction: column; gap: 0.6rem;">';
+        items.forEach(function(item) {
+            var totalCount = item.count || 0;
+            var laneCounts = item.lane_counts || {};
+            var period = item.period || '?';
+            var widthPct = Math.max(2, Math.round((totalCount / maxCount) * 100));
+
+            var isClickable = (data.granularity === 'year' || data.granularity === 'month');
+            var clickAttr = isClickable
+                ? 'onclick="drillDown(\'' + period + '\')" style="cursor:pointer;"'
+                : '';
+
+            // Build stacked segments
+            var segments = '';
+            var lanes = ['memories', 'chats', 'stories'];
+            var segTotal = 0;
+            lanes.forEach(function(lane) {
+                var c = laneCounts[lane] || 0;
+                if (c > 0 && totalCount > 0) {
+                    var pct = Math.round((c / totalCount) * 100);
+                    segments += '<div style="'
+                        + 'height: 100%;'
+                        + 'width: ' + pct + '%;'
+                        + 'background: ' + LANE_COLORS[lane] + ';'
+                        + 'opacity: 0.85;'
+                        + 'display: inline-block;'
+                        + '" title="' + lane + ': ' + c + '"></div>';
+                    segTotal += pct;
+                }
+            });
+            // Fill remainder if rounding left gap
+            if (segTotal < 100 && segTotal > 0) {
+                segments += '<div style="height:100%;width:' + (100-segTotal) + '%;display:inline-block;"></div>';
+            }
+
+            html += '<div ' + clickAttr + ' style="display: flex; align-items: center; gap: 0.75rem;">';
+            // Period label
+            html += '<div class="mono text-muted" style="width: 80px; text-align: right; font-size: 0.8rem; flex-shrink: 0;">' + period + '</div>';
+            // Bar track
+            html += '<div style="flex: 1; background: var(--charcoal-alt); height: 28px; position: relative;">';
+            html += '<div style="'
+                + 'width: ' + widthPct + '%;'
+                + 'height: 100%;'
+                + 'display: flex; overflow: hidden;'
+                + (isClickable ? 'transition: opacity 0.15s;' : '')
+                + '" '
+                + (isClickable ? 'onmouseenter="this.style.opacity=\'0.7\'" onmouseleave="this.style.opacity=\'1\'"' : '')
+                + '>' + segments + '</div>';
+            html += '</div>';
+            // Count label
+            html += '<div class="mono" style="width: 60px; font-size: 0.8rem; color: var(--text-primary);">' + totalCount + '</div>';
+            if (isClickable) {
+                html += '<div class="text-muted" style="width: 16px; font-size: 0.75rem;">&#x276F;</div>';
+            }
+            html += '</div>';
+        });
+        html += '</div>';
+
+        // Lane legend
+        html += '<div style="display: flex; gap: 1.5rem; margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid var(--border-dark);">';
+        Object.keys(LANE_COLORS).forEach(function(lane) {
+            html += '<div style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem;">'
+                + '<div style="width: 12px; height: 12px; background: ' + LANE_COLORS[lane] + '; opacity: 0.85;"></div>'
+                + '<span class="text-muted mono">' + lane + '</span>'
+                + '</div>';
+        });
+        html += '</div>';
+
+        container.innerHTML = html;
+    }
+
+    // --- Render day view (individual items) ---
+    function renderDayView(data) {
+        var container = document.getElementById('chart-container');
+        var dayContainer = document.getElementById('day-container');
+        container.style.display = 'none';
+        dayContainer.style.display = 'block';
+
+        if (!data || !data.items || data.items.length === 0) {
+            dayContainer.innerHTML = '';
+            showEmpty(true);
+            return;
+        }
+        showEmpty(false);
+
+        var items = data.items;
+        var html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.75rem;">';
+
+        items.forEach(function(item) {
+            var confidence = item.confidence || 0;
+            var opacity = Math.max(0.3, 0.3 + 0.7 * confidence);
+            var laneColor = LANE_COLORS[item.lane] || '#888';
+            var typeIcon = item.asset_type === 'video' ? '&#x25B6;' : '&#x1F4F7;';
+            var gpsIcon = item.has_gps ? '<span style="color: var(--hacker-green); font-size: 0.75rem;" title="GPS enriched">&#x25CF; GPS</span>' : '';
+            var dateStr = (item.matched_date || '').slice(0, 10) || 'Unknown date';
+            var filename = item.filename || 'unknown';
+            var confPct = Math.round(confidence * 100);
+
+            html += '<a href="/assets/' + JOB_ID + '/' + item.asset_id + '" style="text-decoration: none;">';
+            html += '<div class="info-card" style="'
+                + 'opacity: ' + opacity + ';'
+                + 'border-color: ' + laneColor + ';'
+                + 'padding: 0.75rem;'
+                + 'transition: opacity 0.15s;'
+                + '" onmouseenter="this.style.opacity=\'1\'" onmouseleave="this.style.opacity=\'' + opacity + '\'">';
+
+            html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">';
+            html += '<span style="font-size: 1rem;">' + typeIcon + '</span>';
+            html += '<span style="font-size: 0.7rem; color: ' + laneColor + '; text-transform: uppercase; font-weight: 700;">' + (item.lane || '') + '</span>';
+            html += '</div>';
+
+            html += '<p class="mono text-muted" style="font-size: 0.7rem; margin: 0 0 0.25rem 0; word-break: break-all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + filename + '">' + filename + '</p>';
+            html += '<p style="font-size: 0.75rem; color: var(--text-primary); margin: 0 0 0.25rem 0;">' + dateStr + '</p>';
+
+            html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.4rem;">';
+            html += '<span class="mono text-muted" style="font-size: 0.7rem;">conf: ' + confPct + '%</span>';
+            html += gpsIcon;
+            html += '</div>';
+
+            html += '</div>';
+            html += '</a>';
+        });
+
+        html += '</div>';
+        html += '<p class="mono text-muted" style="font-size: 0.75rem; margin-top: 1rem; text-align: right;">' + items.length + ' items</p>';
+        dayContainer.innerHTML = html;
+    }
+
+    // --- Drill-down state management ---
+    function updateBreadcrumb() {
+        var bc = document.getElementById('drill-breadcrumb');
+        var yearCrumb = document.getElementById('drill-year-crumb');
+        var monthCrumb = document.getElementById('drill-month-crumb');
+        var backBtn = document.getElementById('drill-back-btn');
+        var yearLabel = document.getElementById('drill-year-label');
+        var monthLabel = document.getElementById('drill-month-label');
+
+        if (currentGranularity === 'year') {
+            bc.style.display = 'none';
+            document.getElementById('view-title').textContent = '— Year View —';
+        } else if (currentGranularity === 'month') {
+            bc.style.display = 'flex';
+            yearCrumb.style.display = 'inline';
+            monthCrumb.style.display = 'none';
+            backBtn.style.display = 'inline-block';
+            yearLabel.textContent = currentYear;
+            document.getElementById('view-title').textContent = '— Month View: ' + currentYear + ' —';
+        } else if (currentGranularity === 'day') {
+            bc.style.display = 'flex';
+            yearCrumb.style.display = 'inline';
+            monthCrumb.style.display = 'inline';
+            backBtn.style.display = 'inline-block';
+            yearLabel.textContent = currentYear;
+            monthLabel.textContent = currentMonth;
+            document.getElementById('view-title').textContent = '— Day View: ' + currentYear + '-' + currentMonth + ' —';
+        }
+    }
+
+    window.drillToYears = async function() {
+        currentGranularity = 'year';
+        currentYear = null;
+        currentMonth = null;
+        updateBreadcrumb();
+        var data = await fetchData('year', null, null);
+        currentData = data;
+        renderBarChart(data);
+    };
+
+    window.drillDown = async function(period) {
+        if (currentGranularity === 'year') {
+            currentYear = period;
+            currentGranularity = 'month';
+            currentMonth = null;
+            updateBreadcrumb();
+            var data = await fetchData('month', period, null);
+            currentData = data;
+            renderBarChart(data);
+        } else if (currentGranularity === 'month') {
+            // period is YYYY-MM
+            currentMonth = period.length >= 7 ? period.slice(5, 7) : period;
+            currentGranularity = 'day';
+            updateBreadcrumb();
+            var data = await fetchData('day', currentYear, currentMonth);
+            currentData = data;
+            renderDayView(data);
+        }
+    };
+
+    window.drillBack = function() {
+        if (currentGranularity === 'day') {
+            currentGranularity = 'month';
+            currentMonth = null;
+            updateBreadcrumb();
+            fetchData('month', currentYear, null).then(function(data) {
+                currentData = data;
+                renderBarChart(data);
+            });
+        } else if (currentGranularity === 'month') {
+            drillToYears();
+        }
+    };
+
+    window.applyFilters = function() {
+        // Re-fetch with current filters
+        fetchData(currentGranularity, currentYear, currentMonth).then(function(data) {
+            currentData = data;
+            if (currentGranularity === 'day') {
+                renderDayView(data);
+            } else {
+                renderBarChart(data);
+            }
+        });
+    };
+
+    // Initial load
+    drillToYears();
+})();
+</script>
+
+{% endblock %}
+{# themed: 2026-02-25 #}

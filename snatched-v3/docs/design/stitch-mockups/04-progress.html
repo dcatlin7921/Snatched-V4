@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Rebellion Mission Progress Detail - Snatched</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;family=Inter:wght@400;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "snap-yellow": "#FFFC00",
+                        "war-black": "#0a0a0a",
+                        "war-charcoal": "#1a1a1a",
+                        "hacker-green": "#00FF41",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"]
+                    },
+                },
+            },
+        }
+    </script>
+<style type="text/tailwindcss">
+        @layer base {
+            body {
+                background-color: #0a0a0a;
+                background-image: 
+                    linear-gradient(45deg, rgba(255, 252, 0, 0.03) 25%, transparent 25%, transparent 50%, rgba(255, 252, 0, 0.03) 50%, rgba(255, 252, 0, 0.03) 75%, transparent 75%, transparent);
+                background-size: 100px 100px;
+            }
+        }
+        .caution-stripes {
+            background: repeating-linear-gradient(
+                -45deg,
+                #FFFC00,
+                #FFFC00 10px,
+                #000 10px,
+                #000 20px
+            );
+            background-size: 200% 100%;
+            animation: move-stripes 20s linear infinite;
+        }
+        @keyframes move-stripes {
+            from { background-position: 0 0; }
+            to { background-position: 100% 0; }
+        }
+        .glitch-logo {
+            position: relative;
+            text-shadow: 0.05em 0 0 rgba(255, 0, 0, 0.75),
+                         -0.025em -0.05em 0 rgba(0, 255, 0, 0.75),
+                         0.025em 0.05em 0 rgba(0, 0, 255, 0.75);
+            animation: glitch 500ms infinite;
+        }
+        @keyframes glitch {
+            0% { text-shadow: 0.05em 0 0 rgba(255, 0, 0, 0.75), -0.05em -0.025em 0 rgba(0, 255, 0, 0.75), -0.025em 0.05em 0 rgba(0, 0, 255, 0.75); }
+            14% { text-shadow: 0.05em 0 0 rgba(255, 0, 0, 0.75), -0.05em -0.025em 0 rgba(0, 255, 0, 0.75), -0.025em 0.05em 0 rgba(0, 0, 255, 0.75); }
+            15% { text-shadow: -0.05em -0.025em 0 rgba(255, 0, 0, 0.75), 0.025em 0.025em 0 rgba(0, 255, 0, 0.75), -0.05em -0.05em 0 rgba(0, 0, 255, 0.75); }
+            49% { text-shadow: -0.05em -0.025em 0 rgba(255, 0, 0, 0.75), 0.025em 0.025em 0 rgba(0, 255, 0, 0.75), -0.05em -0.05em 0 rgba(0, 0, 255, 0.75); }
+            50% { text-shadow: 0.025em 0.05em 0 rgba(255, 0, 0, 0.75), 0.05em 0 0 rgba(0, 255, 0, 0.75), 0 -0.05em 0 rgba(0, 0, 255, 0.75); }
+            99% { text-shadow: 0.025em 0.05em 0 rgba(255, 0, 0, 0.75), 0.05em 0 0 rgba(0, 255, 0, 0.75), 0 -0.05em 0 rgba(0, 0, 255, 0.75); }
+            100% { text-shadow: -0.025em 0 0 rgba(255, 0, 0, 0.75), -0.025em -0.025em 0 rgba(0, 255, 0, 0.75), -0.025em -0.05em 0 rgba(0, 0, 255, 0.75); }
+        }
+        .active-glow {
+            box-shadow: 0 0 15px rgba(255, 252, 0, 0.2);
+        }
+        .dot-blink {
+            animation: blink 1s step-end infinite;
+        }
+        @keyframes blink {
+            from, to { opacity: 1; }
+            50% { opacity: 0; }
+        }
+    </style>
+</head>
+<body class="font-display text-slate-100 min-h-screen selection:bg-snap-yellow selection:text-black">
+<div class="flex flex-col min-h-screen">
+<header class="bg-war-black/80 backdrop-blur-md sticky top-0 z-50">
+<div class="max-w-[1200px] mx-auto px-6 h-16 flex items-center justify-between">
+<div class="flex flex-col">
+<span class="glitch-logo text-2xl font-black tracking-widest text-white uppercase italic">SNATCHED</span>
+<div class="h-1.5 w-full caution-stripes mt-1"></div>
+</div>
+<nav class="flex items-center gap-8">
+<a class="text-xs font-bold uppercase tracking-widest text-snap-yellow/70 hover:text-snap-yellow transition-colors" href="#">Terminal Dashboard</a>
+<div class="h-10 w-10 rounded-none border-2 border-snap-yellow p-0.5 overflow-hidden">
+<img alt="User profile" class="grayscale hover:grayscale-0 transition-all duration-500" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC4XN4NJddXZPzL8wf66T8HWz8nFPmheMIAoj5zTmClZF36HAeFLl0d1th2TZPCrca01XO4kRw3c7BCcqVzYjsj-of3nrr3gmy0luRqvbDIB-CrQxe2WhFydzdmy06Y8E2B1VN9ksnuEKdC-ukeSD-nVgZLlzK8eWs8QNwgGzzRHvfNTmBp3IraUnLfT7wrzaqoYFX8Js-cNwyV6qPtKK3Dc-L9uJSUBOADk3wdTiEUAYKjj6ltGGuS5lYl0ye8Ti7CKl2kwP9zZA"/>
+</div>
+</nav>
+</div>
+</header>
+<main class="flex-grow max-w-[1200px] mx-auto w-full px-6 py-12">
+<nav class="flex items-center gap-2 mb-10 font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">
+<a class="hover:text-snap-yellow" href="#">Operations</a>
+<span class="material-symbols-outlined text-[10px]">chevron_right</span>
+<span class="text-snap-yellow">Mission_ID: #234</span>
+</nav>
+<div class="mb-12">
+<div class="flex flex-col mb-8">
+<h1 class="text-5xl font-black text-white mb-4 tracking-tighter uppercase italic">Rescuing your memories...</h1>
+<div class="flex items-center gap-4 text-snap-yellow font-mono text-sm font-bold uppercase tracking-widest">
+<span>Phase 2 of 4</span>
+<span class="text-white/20">|</span>
+<span>35% complete</span>
+<span class="text-white/20">|</span>
+<span>Started 5 minutes ago</span>
+</div>
+</div>
+<div class="relative w-full h-8 bg-war-charcoal border-2 border-snap-yellow/30 p-1">
+<div class="h-full caution-stripes transition-all duration-1000" style="width: 35%;"></div>
+<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+<span class="text-[10px] font-black uppercase tracking-[0.5em] text-white drop-shadow-md">Extraction in progress</span>
+</div>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
+<div class="bg-war-charcoal p-6 border-l-4 border-hacker-green relative overflow-hidden group">
+<div class="flex items-start justify-between mb-4">
+<span class="material-symbols-outlined text-hacker-green">check_circle</span>
+<span class="font-mono text-[10px] text-slate-500">SECURED</span>
+</div>
+<h3 class="text-sm font-black text-white uppercase tracking-wider mb-1">Phase 1: Ingest</h3>
+<p class="font-mono text-[10px] text-hacker-green font-bold uppercase tracking-widest">Done</p>
+</div>
+<div class="bg-war-charcoal p-6 border-l-4 border-snap-yellow active-glow relative group">
+<div class="flex items-start justify-between mb-4">
+<div class="relative flex h-3 w-3">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-snap-yellow opacity-75"></span>
+<span class="relative inline-flex rounded-full h-3 w-3 bg-snap-yellow"></span>
+</div>
+<span class="font-mono text-[10px] text-snap-yellow animate-pulse">EXTRACTING...</span>
+</div>
+<h3 class="text-sm font-black text-snap-yellow uppercase tracking-wider mb-4 italic">Phase 2: Match</h3>
+<div class="space-y-3">
+<div class="w-full h-1 bg-black overflow-hidden">
+<div class="h-full bg-snap-yellow" style="width: 62%;"></div>
+</div>
+<p class="font-mono text-[10px] text-snap-yellow font-bold uppercase flex justify-between tracking-widest">
+<span>Active</span>
+<span>62%</span>
+</p>
+</div>
+</div>
+<div class="bg-war-charcoal/40 p-6 border-l-4 border-slate-700 opacity-50 grayscale">
+<div class="flex items-start justify-between mb-4">
+<span class="material-symbols-outlined text-slate-500">lock</span>
+</div>
+<h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">Phase 3: Enrich</h3>
+<p class="font-mono text-[10px] text-slate-500 font-bold uppercase tracking-widest">Waiting</p>
+</div>
+<div class="bg-war-charcoal/40 p-6 border-l-4 border-slate-700 opacity-50 grayscale">
+<div class="flex items-start justify-between mb-4">
+<span class="material-symbols-outlined text-slate-500">lock</span>
+</div>
+<h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">Phase 4: Export</h3>
+<p class="font-mono text-[10px] text-slate-500 font-bold uppercase tracking-widest">Waiting</p>
+</div>
+</div>
+<div class="bg-black border-2 border-snap-yellow overflow-hidden shadow-[0_0_30px_rgba(255,252,0,0.1)]">
+<div class="px-5 py-3 border-b border-snap-yellow/30 flex items-center justify-between bg-war-charcoal">
+<div class="flex items-center gap-3">
+<div class="w-2 h-2 rounded-full bg-snap-yellow dot-blink"></div>
+<h2 class="font-mono text-xs font-bold uppercase tracking-[0.3em] text-snap-yellow">LIVE FEED: Extraction_Stream</h2>
+</div>
+<div class="flex gap-2 font-mono text-[10px] text-snap-yellow/40">
+<span>SYS_REL_4.0</span>
+</div>
+</div>
+<div class="p-6 font-mono text-sm leading-relaxed max-h-[400px] overflow-y-auto custom-scrollbar">
+<div class="space-y-1.5">
+<p class="text-hacker-green"><span class="text-snap-yellow/60 font-bold">[14:05:01]</span> <span class="opacity-80">System: Bypassing legacy cloud gateways...</span></p>
+<p class="text-hacker-green"><span class="text-snap-yellow/60 font-bold">[14:05:03]</span> <span class="opacity-80">Infiltrator ID: snap_rebel_alpha-6</span></p>
+<p class="text-hacker-green"><span class="text-snap-yellow/60 font-bold">[14:05:10]</span> <span class="opacity-80">Handshake verified. Decryption keys injected.</span></p>
+<p class="text-hacker-green"><span class="text-snap-yellow/60 font-bold">[14:08:45]</span> <span class="opacity-80">Tunneling through segment_0x442...</span></p>
+<p class="text-white font-bold bg-hacker-green/20 px-1 inline-block"><span class="text-snap-yellow/60">[14:10:12]</span> Phase 1 complete: 2,100 files liberated from servers.</p>
+<p class="text-snap-yellow font-black"><span class="text-snap-yellow/60">[14:10:13]</span> MISSION UPDATE: Starting Phase 2 (Target Matching)</p>
+<p class="text-hacker-green"><span class="text-snap-yellow/60 font-bold">[14:12:45]</span> <span class="opacity-80">Comparing metadata fingerprints...</span></p>
+<p class="text-hacker-green"><span class="text-snap-yellow/60 font-bold">[14:13:22]</span> <span class="opacity-80">1,302 unique identities recovered.</span></p>
+<p class="text-hacker-green"><span class="text-snap-yellow/60 font-bold">[14:15:01]</span> <span class="opacity-80">Reconstructing media architecture...</span></p>
+<p class="text-snap-yellow animate-pulse"><span class="text-snap-yellow/60 font-bold">[14:23:01]</span> &gt; _ <span class="inline-block w-2 h-4 bg-snap-yellow align-middle ml-1"></span></p>
+</div>
+</div>
+</div>
+</main>
+<footer class="bg-war-black py-8 border-t border-white/5">
+<div class="max-w-[1200px] mx-auto px-6 flex items-center justify-between">
+<button class="flex items-center gap-3 px-6 py-3 border-2 border-snap-yellow text-snap-yellow text-xs font-black uppercase tracking-widest hover:bg-snap-yellow hover:text-black transition-all group italic">
+<span class="material-symbols-outlined text-sm group-hover:-translate-x-1 transition-transform">arrow_back</span>
+                    Back to Command Center
+                </button>
+<button class="bg-red-600 hover:bg-red-700 text-white px-8 py-3 text-xs font-black uppercase tracking-widest flex items-center gap-3 transition-all hover:scale-105 shadow-[0_0_20px_rgba(220,38,38,0.4)] italic">
+<span class="material-symbols-outlined text-lg">dangerous</span>
+                    ABORT MISSION
+                </button>
+</div>
+</footer>
+</div>
+
+</body></html>

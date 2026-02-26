@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Rebellion Theme | Snatched Online</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style type="text/tailwindcss">
+        :root {
+            --snap-yellow: #FFFC00;
+            --bg-deep: #0a0a0a;
+            --charcoal: #141414;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-deep);
+            background-image: repeating-linear-gradient(
+                45deg,
+                rgba(255, 252, 0, 0.03) 0px,
+                rgba(255, 252, 0, 0.03) 2px,
+                transparent 2px,
+                transparent 12px
+            );
+        }
+        .caution-tape {
+            background: repeating-linear-gradient(
+                -45deg,
+                #FFFC00,
+                #FFFC00 10px,
+                #000 10px,
+                #000 20px
+            );
+            height: 4px;
+        }
+        .dashed-yellow {
+            background-image: url("data:image/svg+xml,%3csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3e%3crect width='100%25' height='100%25' fill='none' stroke='%23FFFC00' stroke-width='2' stroke-dasharray='12%2c 12' stroke-dashoffset='0' stroke-linecap='square'/%3e%3c/svg%3e");
+        }
+        .stencil-font {
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen">
+<nav class="bg-[#0a0a0a] sticky top-0 z-50">
+<div class="max-w-5xl mx-auto px-6 h-20 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="relative">
+<span class="material-symbols-outlined text-[var(--snap-yellow)] text-3xl font-bold">mist</span>
+<div class="absolute inset-0 flex items-center justify-center">
+<span class="text-black text-xs font-black select-none">/</span>
+</div>
+</div>
+<span class="text-2xl font-black tracking-tighter text-white stencil-font">SNATCHED</span>
+</div>
+<div class="flex items-center gap-8">
+<a class="text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-[var(--snap-yellow)] transition-colors" href="#">Mission Control</a>
+<div class="h-10 w-10 border-2 border-[var(--snap-yellow)] p-0.5">
+<img alt="User Avatar" class="h-full w-full object-cover grayscale contrast-125" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA5jiia_LzjpXTl2xN_igMQ6FoK90zqvGKtHMCY_oLCI6Rmuodx1Mk-lVpg5lyo5r4qPXv2jXjSk0i3cFRJ7Gx4bhg91TqOfi_vYUxfcAKU_LpC33CMhSDZmcpQ0bPznXLgq4qwLzNHjzRV-TSlCJrSh4PIIOZhXl0GMj4mDT0jdblWL2n7qosT8sUdy74X4BRw5ybWzazYza5FcEK2XA7zMrhCaCGsw2f-YbdsytTK_57c3N-0XrBwly3CiFNdLYBTVvDVjrB5EA"/>
+</div>
+</div>
+</div>
+<div class="caution-tape w-full opacity-80"></div>
+</nav>
+<main class="max-w-3xl mx-auto px-6 py-16 lg:py-24">
+<div class="mb-12 border-l-4 border-[var(--snap-yellow)] pl-6">
+<h1 class="text-4xl lg:text-6xl font-black text-[#f0f0f0] tracking-tight mb-3 uppercase italic">
+            Upload your Snapchat export
+        </h1>
+<p class="text-xl text-[#888] font-medium">
+            Drop your ZIP. We'll find what they tried to delete.
+        </p>
+</div>
+<div class="mb-10">
+<div class="dashed-yellow h-[240px] w-full flex flex-col items-center justify-center bg-[var(--charcoal)] hover:bg-[#1a1a1a] transition-all cursor-pointer group relative overflow-hidden">
+<div class="absolute top-2 left-2 text-[10px] text-[var(--snap-yellow)] font-bold uppercase opacity-30">Zone_01_Upload</div>
+<div class="flex flex-col items-center gap-5">
+<div class="text-[var(--snap-yellow)]">
+<span class="material-symbols-outlined text-6xl font-light">upload_file</span>
+</div>
+<div class="text-center">
+<p class="text-lg font-bold text-white uppercase tracking-wide">Drag and drop your ZIP file here</p>
+<p class="text-xs text-slate-500 my-2 font-mono italic">SECURE_CHANNEL_READY</p>
+</div>
+<button class="px-8 py-2 border-2 border-[var(--snap-yellow)] text-[var(--snap-yellow)] text-xs font-black uppercase tracking-widest hover:bg-[var(--snap-yellow)] hover:text-black transition-all">
+                    Choose File
+                </button>
+</div>
+<input accept=".zip" class="hidden" type="file"/>
+</div>
+</div>
+<div class="mb-12 bg-[var(--charcoal)] border-l-4 border-[var(--snap-yellow)] p-8">
+<div class="flex flex-col gap-4">
+<h3 class="text-lg font-black text-[var(--snap-yellow)] uppercase tracking-widest flex items-center gap-2">
+<span class="material-symbols-outlined text-xl">priority_high</span>
+                Before you upload:
+            </h3>
+<ul class="space-y-4">
+<li class="flex items-start gap-3 text-sm text-white font-medium">
+<span class="text-[var(--snap-yellow)] mt-0.5">•</span>
+                    Maximum file capacity: 5 GB
+                </li>
+<li class="flex items-start gap-3 text-sm text-white font-medium">
+<span class="text-[var(--snap-yellow)] mt-0.5">•</span>
+                    Estimated infiltration time: 10–30 minutes
+                </li>
+<li class="flex items-start gap-3 text-sm text-white font-medium">
+<span class="text-[var(--snap-yellow)] mt-0.5">•</span>
+                    Use raw ZIP exports only from Snapchat account settings
+                </li>
+</ul>
+</div>
+</div>
+<div class="flex flex-col items-center gap-8">
+<div class="w-full relative group">
+<div class="absolute -inset-1 bg-[var(--snap-yellow)] opacity-20 blur group-hover:opacity-40 transition"></div>
+<button class="relative w-full bg-[var(--snap-yellow)] text-black font-black py-5 px-12 text-xl uppercase tracking-tighter hover:brightness-110 active:scale-[0.99] transition-all stencil-font">
+                UPLOAD &amp; PROCESS
+            </button>
+</div>
+<div class="text-center">
+<div class="flex items-center justify-center gap-2 text-[#888] text-[10px] uppercase font-bold tracking-[0.2em] mb-2">
+<span class="material-symbols-outlined text-xs">encrypted</span>
+                End-to-end extraction enabled
+            </div>
+<p class="text-[9px] text-slate-600 max-w-sm leading-relaxed uppercase font-mono">
+                Data processed in ephemeral memory. No logs retained. No traces left behind.
+            </p>
+</div>
+</div>
+</main>
+<div class="fixed bottom-0 left-0 right-0 flex justify-between px-4 py-2 pointer-events-none opacity-20">
+<span class="text-[10px] font-mono text-[var(--snap-yellow)]">SNATCHED_OS_V2.0</span>
+<span class="text-[10px] font-mono text-[var(--snap-yellow)]">COORD: 34.0195° N, 118.4912° W</span>
+</div>
+
+</body></html>

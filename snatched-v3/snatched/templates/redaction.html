@@ -1,0 +1,681 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page header -->
+<div class="section-header">
+    <h1 class="mb-0" style="border-left: 4px solid var(--snap-yellow); padding-left: 1rem;">Privacy Redaction</h1>
+</div>
+
+<!-- Info card -->
+<div class="info-card mb-3">
+    <h3 style="margin-top: 0;">What is redaction?</h3>
+    <p class="text-muted" style="font-size: 0.9rem; margin-bottom: 0.5rem;">
+        Redaction <strong>strips sensitive metadata</strong> from your output files before you download or share them.
+        GPS coordinates, creator names, and timestamps can reveal personal information — remove them here.
+    </p>
+    <p class="text-muted mb-0" style="font-size: 0.9rem;">
+        <strong>Non-destructive:</strong> Only the output copies are modified. Your pipeline data (matches, GPS trail, etc.) is untouched.
+        All changes are logged in the audit trail below.
+    </p>
+</div>
+
+<!-- Status feedback banner (hidden by default) -->
+<div id="redact-status" class="hidden mono"
+     style="padding: 1rem; margin-bottom: 1.5rem; font-size: 0.85rem;">
+</div>
+
+<!-- ============================================================
+     QUICK REDACTION BUTTONS
+     ============================================================ -->
+<section>
+    <h2>Quick Redaction</h2>
+    <p class="text-muted mb-3" style="font-size: 0.9rem;">
+        One-click redaction applies to <strong>all {{ assets | length }} file{{ 's' if assets | length != 1 else '' }}</strong> in this job.
+        A confirmation dialog will appear before any changes are made.
+    </p>
+
+    <div class="gap-row" style="flex-wrap: wrap;">
+        <button type="button" class="btn-danger"
+                onclick="quickRedact('strip_gps', 'Strip GPS from All Files',
+                    'Remove GPS coordinates (latitude, longitude, altitude, timestamps) from all {{ assets | length }} files. This cannot be undone on the output files.')">
+            STRIP GPS FROM ALL FILES
+        </button>
+
+        <button type="button" class="btn-outline"
+                onclick="quickRedact('strip_creator', 'Strip Creator from All Files',
+                    'Remove creator / artist / by-line metadata from all {{ assets | length }} files.')">
+            STRIP CREATOR FROM ALL FILES
+        </button>
+
+        <button type="button" class="btn-outline"
+                onclick="quickRedact('strip_dates', 'Strip Dates from All Files',
+                    'Remove EXIF and XMP date/time tags from all {{ assets | length }} files.')">
+            STRIP DATES FROM ALL FILES
+        </button>
+
+        <button type="button" class="btn-danger"
+                onclick="quickRedact('strip_all', 'Strip All Sensitive Metadata',
+                    'Remove GPS, creator, AND date/time metadata from all {{ assets | length }} files. This is the most aggressive option.')">
+            STRIP ALL METADATA
+        </button>
+    </div>
+</section>
+
+<!-- Quick redaction confirmation modal -->
+<div id="quick-confirm-modal" class="modal-overlay hidden"
+     onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3 id="quick-modal-title" class="mb-0">Confirm Redaction</h3>
+        </div>
+        <div class="modal-body">
+            <p class="text-muted" style="font-size: 0.85rem;" id="quick-modal-desc"></p>
+
+            <div id="quick-preview-area" style="margin: 1rem 0; display: none;">
+                <p class="mono text-muted" style="font-size: 0.8rem;" id="quick-preview-text"></p>
+            </div>
+
+            <div class="gap-row mt-3">
+                <button type="button" id="quick-preview-btn" class="btn-outline"
+                        onclick="runQuickPreview()">PREVIEW CHANGES</button>
+                <button type="button" id="quick-apply-btn" class="btn-danger"
+                        onclick="runQuickApply()">APPLY NOW</button>
+                <button type="button" class="btn-outline"
+                        onclick="document.getElementById('quick-confirm-modal').classList.add('hidden')">
+                    Cancel
+                </button>
+            </div>
+            <p id="quick-modal-status" class="mono text-muted mt-2" style="font-size: 0.8rem;"></p>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================
+     PROFILE MANAGER
+     ============================================================ -->
+<section class="mt-3">
+    <div class="section-header mb-3">
+        <h2 class="mb-0">Saved Profiles</h2>
+        <button type="button" class="btn-primary"
+                onclick="openProfileModal(null)">+ CREATE PROFILE</button>
+    </div>
+
+    {% if profiles %}
+    <div id="profiles-list" style="display: grid; gap: 1rem;">
+        {% for p in profiles %}
+        <div class="info-card" id="profile-card-{{ p.id }}" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;">
+            <div style="flex: 1; min-width: 0;">
+                <p class="font-black mb-1" style="margin: 0; color: var(--text-primary);">{{ p.name }}</p>
+                {% if p.description %}
+                <p class="text-muted mb-1" style="font-size: 0.85rem; margin: 0 0 0.5rem 0;">{{ p.description }}</p>
+                {% endif %}
+                <p class="mono text-muted mb-0" style="font-size: 0.75rem; margin: 0;">
+                    {{ p.rule_count }} rule{{ 's' if p.rule_count != 1 else '' }}
+                    &nbsp;&bull;&nbsp; Created {{ p.created_at[:10] if p.created_at else '—' }}
+                </p>
+            </div>
+            <div class="gap-row" style="flex-shrink: 0;">
+                <button type="button" class="btn-outline btn-small"
+                        onclick="applyProfile({{ p.id }}, {{ p.name | tojson }})">
+                    APPLY TO ALL
+                </button>
+                <button type="button" class="btn-outline btn-small"
+                        onclick="openProfileModal({{ p | tojson }})">
+                    EDIT
+                </button>
+                <button type="button" class="btn-danger btn-small"
+                        onclick="deleteProfile({{ p.id }}, {{ p.name | tojson }})">
+                    DELETE
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state" id="profiles-list">
+        <p class="text-muted">No saved profiles yet. Create one to reuse your redaction rules.</p>
+    </div>
+    {% endif %}
+</section>
+
+<!-- Profile modal -->
+<div id="profile-modal" class="modal-overlay hidden"
+     onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-box" style="max-width: 640px; width: 95%;">
+        <div class="modal-header">
+            <h3 id="profile-modal-title" class="mb-0">Create Redaction Profile</h3>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="profile-edit-id" value="">
+
+            <label for="profile-name" style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">
+                Profile Name <span class="text-danger">*</span>
+            </label>
+            <input type="text" id="profile-name" placeholder="e.g. Share to Social Media"
+                   class="mb-2" style="width: 100%;"
+                   maxlength="100">
+
+            <label for="profile-desc" style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">
+                Description
+            </label>
+            <input type="text" id="profile-desc" placeholder="Optional description"
+                   class="mb-3" style="width: 100%;">
+
+            <!-- Rule builder -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                <label style="font-size: 0.9rem; margin: 0;">Rules</label>
+                <div class="gap-row" style="align-items: center;">
+                    <select id="rule-type-picker" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">
+                        <option value="strip_gps">Strip GPS</option>
+                        <option value="strip_creator">Strip Creator</option>
+                        <option value="strip_dates">Strip Dates</option>
+                        <option value="strip_field">Strip Specific Field</option>
+                        <option value="strip_all_custom">Strip All Custom (snatched:*)</option>
+                    </select>
+                    <button type="button" class="btn-outline btn-small"
+                            onclick="addRuleFromPicker()">+ ADD</button>
+                </div>
+            </div>
+
+            <div id="field-name-row" class="hidden mb-2">
+                <input type="text" id="strip-field-name" placeholder="e.g. EXIF:Artist or XMP:Rights"
+                       style="width: 100%; font-size: 0.85rem;">
+            </div>
+
+            <!-- Watch rule-type-picker changes to show/hide field input -->
+            <script>
+            document.getElementById('rule-type-picker').addEventListener('change', function() {
+                const row = document.getElementById('field-name-row');
+                if (this.value === 'strip_field') {
+                    row.classList.remove('hidden');
+                } else {
+                    row.classList.add('hidden');
+                }
+            });
+            </script>
+
+            <div id="rules-list" style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; min-height: 40px;">
+                <p id="rules-empty" class="text-muted mb-0" style="font-size: 0.85rem;">No rules added yet.</p>
+            </div>
+
+            <!-- Preview button -->
+            <div id="profile-preview-area" class="info-card hidden mb-2">
+                <p class="mono text-muted mb-0" style="font-size: 0.8rem;" id="profile-preview-text"></p>
+            </div>
+
+            <div class="gap-row mt-3">
+                <button type="button" class="btn-outline" onclick="previewProfile()">PREVIEW</button>
+                <button type="button" class="btn-primary" onclick="saveProfile()">SAVE PROFILE</button>
+                <button type="button" class="btn-outline"
+                        onclick="document.getElementById('profile-modal').classList.add('hidden')">
+                    Cancel
+                </button>
+            </div>
+            <p id="profile-modal-status" class="mono text-muted mt-2" style="font-size: 0.8rem;"></p>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================
+     ASSET SELECTION TABLE
+     ============================================================ -->
+<section class="mt-3">
+    <div class="section-header mb-2">
+        <h2 class="mb-0">Assets <span class="mono text-muted" style="font-size: 0.9rem;">({{ assets | length }})</span></h2>
+        <div class="gap-row">
+            <label style="font-size: 0.85rem; color: var(--text-muted);">
+                <input type="checkbox" id="select-all-assets" onchange="toggleAllAssets(this.checked)">
+                Select All
+            </label>
+        </div>
+    </div>
+
+    {% if assets %}
+    <div style="overflow-x: auto;">
+        <table id="assets-table">
+            <thead>
+                <tr>
+                    <th style="width: 2rem;"></th>
+                    <th>Filename</th>
+                    <th>Type</th>
+                    <th>Has GPS</th>
+                    <th>Has Creator</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in assets %}
+                <tr>
+                    <td>
+                        <input type="checkbox" class="asset-checkbox"
+                               value="{{ a.id }}" data-asset-id="{{ a.id }}">
+                    </td>
+                    <td class="mono" style="font-size: 0.8rem; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        {{ a.filename or a.output_path or '—' }}
+                    </td>
+                    <td class="mono text-muted" style="font-size: 0.75rem;">
+                        {{ a.asset_type or '—' }}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if a.matched_lat is not none and a.matched_lat != '' %}
+                        <span class="text-yellow" title="{{ a.matched_lat }}, {{ a.matched_lon }}">GPS</span>
+                        {% else %}
+                        <span class="text-muted" style="font-size: 0.75rem;">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if a.creator_str %}
+                        <span style="font-size: 0.8rem;" title="{{ a.creator_str }}">Yes</span>
+                        {% else %}
+                        <span class="text-muted" style="font-size: 0.75rem;">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Apply profile to selected -->
+    <div class="gap-row mt-3" style="flex-wrap: wrap; align-items: center;">
+        <span class="text-muted" style="font-size: 0.85rem;">Apply to selected:</span>
+        <select id="profile-for-selected" style="font-size: 0.85rem; padding: 0.4rem 0.75rem;">
+            <option value="">— choose profile —</option>
+            {% for p in profiles %}
+            <option value="{{ p.id }}">{{ p.name }}</option>
+            {% endfor %}
+        </select>
+        <button type="button" class="btn-primary" onclick="applyProfileToSelected()">
+            APPLY TO SELECTED
+        </button>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p class="text-muted">No assets found for this job.</p>
+    </div>
+    {% endif %}
+</section>
+
+<!-- ============================================================
+     REDACTION LOG
+     ============================================================ -->
+<section class="mt-3">
+    <h2>Redaction Log</h2>
+    <p class="text-muted mb-2" style="font-size: 0.85rem;">
+        All fields stripped from output files in this job. Powered by the tag_edits audit trail.
+    </p>
+
+    {% if redaction_log %}
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Field Stripped</th>
+                    <th>File</th>
+                    <th>Old Value</th>
+                    <th>Type</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in redaction_log %}
+                <tr>
+                    <td class="mono text-muted" style="font-size: 0.75rem; white-space: nowrap;">
+                        {{ entry.created_at[:19].replace('T', ' ') if entry.created_at else '—' }}
+                    </td>
+                    <td class="mono text-yellow" style="font-size: 0.8rem;">
+                        {{ entry.field_name }}
+                    </td>
+                    <td class="mono text-muted" style="font-size: 0.75rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                        title="{{ entry.file_path }}">
+                        {{ entry.filename_display }}
+                    </td>
+                    <td class="mono text-muted" style="font-size: 0.75rem; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                        title="{{ entry.old_value or '' }}">
+                        {{ entry.old_value or '—' }}
+                    </td>
+                    <td class="mono text-muted" style="font-size: 0.75rem;">{{ entry.edit_type }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p class="text-muted">No redactions applied yet for this job.</p>
+    </div>
+    {% endif %}
+</section>
+
+<script>
+// -----------------------------------------------------------------------
+// State
+// -----------------------------------------------------------------------
+const JOB_ID = {{ job_id }};
+const ALL_ASSET_IDS = {{ assets_json | safe }}.map(a => a.id);
+
+// Profiles kept in memory so modal can re-render without page reload
+let _profiles = {{ profiles_json | safe }};
+
+// Current quick-redact rules (set when modal opens)
+let _pendingQuickRules = [];
+
+// Current profile-modal rules
+let _modalRules = [];
+
+// -----------------------------------------------------------------------
+// Utilities
+// -----------------------------------------------------------------------
+function showStatus(msg, ok) {
+    const el = document.getElementById('redact-status');
+    el.textContent = msg;
+    el.style.background = ok ? 'rgba(39,174,96,0.15)' : 'rgba(231,76,60,0.15)';
+    el.style.border = ok ? '1px solid var(--success)' : '1px solid var(--danger)';
+    el.style.color = ok ? 'var(--success)' : 'var(--danger)';
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 6000);
+}
+
+async function apiPost(path, body) {
+    const resp = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    return data;
+}
+
+// -----------------------------------------------------------------------
+// Asset table helpers
+// -----------------------------------------------------------------------
+function toggleAllAssets(checked) {
+    document.querySelectorAll('.asset-checkbox').forEach(cb => cb.checked = checked);
+}
+
+function getSelectedAssetIds() {
+    return Array.from(document.querySelectorAll('.asset-checkbox:checked'))
+        .map(cb => parseInt(cb.value, 10));
+}
+
+// -----------------------------------------------------------------------
+// Quick redaction
+// -----------------------------------------------------------------------
+let _quickAction = '';
+
+function quickRedact(action, title, desc) {
+    _quickAction = action;
+    _pendingQuickRules = action === 'strip_all'
+        ? [{ action: 'strip_gps' }, { action: 'strip_creator' }, { action: 'strip_dates' }]
+        : [{ action }];
+
+    document.getElementById('quick-modal-title').textContent = title;
+    document.getElementById('quick-modal-desc').textContent = desc;
+    document.getElementById('quick-preview-area').style.display = 'none';
+    document.getElementById('quick-modal-status').textContent = '';
+    document.getElementById('quick-confirm-modal').classList.remove('hidden');
+}
+
+async function runQuickPreview() {
+    const btn = document.getElementById('quick-preview-btn');
+    const statusEl = document.getElementById('quick-modal-status');
+    btn.disabled = true;
+    btn.textContent = 'PREVIEWING...';
+    statusEl.textContent = '';
+
+    try {
+        const data = await apiPost(
+            `/api/assets/redact/preview?job_id=${JOB_ID}`,
+            { asset_ids: ALL_ASSET_IDS, rules: _pendingQuickRules },
+        );
+        const previewArea = document.getElementById('quick-preview-area');
+        const previewText = document.getElementById('quick-preview-text');
+        previewText.textContent =
+            `Preview: ${data.total_tags_to_strip} tag(s) would be stripped across ${data.total_assets} file(s).`;
+        previewArea.style.display = 'block';
+    } catch (err) {
+        statusEl.textContent = 'Preview error: ' + err.message;
+        statusEl.style.color = 'var(--danger)';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'PREVIEW CHANGES';
+    }
+}
+
+async function runQuickApply() {
+    const btn = document.getElementById('quick-apply-btn');
+    const statusEl = document.getElementById('quick-modal-status');
+    btn.disabled = true;
+    btn.textContent = 'APPLYING...';
+    statusEl.textContent = '';
+
+    try {
+        const data = await apiPost(
+            `/api/assets/redact/apply?job_id=${JOB_ID}`,
+            { asset_ids: [], rules: _pendingQuickRules },
+        );
+        document.getElementById('quick-confirm-modal').classList.add('hidden');
+        showStatus(
+            `Done. ${data.tags_stripped} tag(s) stripped from ${data.succeeded}/${data.total} file(s). Reload page to see log.`,
+            true,
+        );
+    } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+        statusEl.style.color = 'var(--danger)';
+        btn.disabled = false;
+        btn.textContent = 'APPLY NOW';
+    }
+}
+
+// -----------------------------------------------------------------------
+// Profile manager
+// -----------------------------------------------------------------------
+const RULE_LABELS = {
+    strip_gps: 'Strip GPS',
+    strip_creator: 'Strip Creator',
+    strip_dates: 'Strip Dates',
+    strip_field: 'Strip Field',
+    strip_all_custom: 'Strip All Custom (snatched:*)',
+};
+
+function renderModalRules() {
+    const container = document.getElementById('rules-list');
+    const empty = document.getElementById('rules-empty');
+    if (_modalRules.length === 0) {
+        container.innerHTML = '';
+        container.appendChild(empty);
+        empty.style.display = 'block';
+        return;
+    }
+    empty.style.display = 'none';
+    container.innerHTML = _modalRules.map((r, i) => {
+        const label = r.action === 'strip_field'
+            ? `Strip Field: <code>${r.field || '?'}</code>`
+            : (RULE_LABELS[r.action] || r.action);
+        return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.75rem;background:var(--charcoal);">
+            <span style="flex:1;font-size:0.85rem;">${label}</span>
+            <button type="button" class="btn-xs btn-danger-sm" onclick="removeRule(${i})">&times;</button>
+        </div>`;
+    }).join('');
+}
+
+function removeRule(idx) {
+    _modalRules.splice(idx, 1);
+    renderModalRules();
+}
+
+function addRuleFromPicker() {
+    const type = document.getElementById('rule-type-picker').value;
+    if (type === 'strip_field') {
+        const field = document.getElementById('strip-field-name').value.trim();
+        if (!field) {
+            alert('Enter a field name (e.g. EXIF:Artist)');
+            return;
+        }
+        _modalRules.push({ action: 'strip_field', field });
+        document.getElementById('strip-field-name').value = '';
+    } else {
+        // Prevent duplicates of same action
+        if (_modalRules.some(r => r.action === type)) {
+            alert(`Rule "${RULE_LABELS[type]}" is already added.`);
+            return;
+        }
+        _modalRules.push({ action: type });
+    }
+    renderModalRules();
+}
+
+function openProfileModal(profile) {
+    _modalRules = [];
+    const isEdit = profile && profile.id;
+
+    document.getElementById('profile-modal-title').textContent =
+        isEdit ? 'Edit Redaction Profile' : 'Create Redaction Profile';
+    document.getElementById('profile-edit-id').value = isEdit ? profile.id : '';
+    document.getElementById('profile-name').value = isEdit ? profile.name : '';
+    document.getElementById('profile-desc').value = isEdit ? (profile.description || '') : '';
+    document.getElementById('profile-modal-status').textContent = '';
+    document.getElementById('profile-preview-area').classList.add('hidden');
+    document.getElementById('field-name-row').classList.add('hidden');
+    document.getElementById('rule-type-picker').value = 'strip_gps';
+
+    if (isEdit && Array.isArray(profile.rules_json)) {
+        _modalRules = JSON.parse(JSON.stringify(profile.rules_json));
+    }
+
+    renderModalRules();
+    document.getElementById('profile-modal').classList.remove('hidden');
+}
+
+async function previewProfile() {
+    if (_modalRules.length === 0) {
+        alert('Add at least one rule before previewing.');
+        return;
+    }
+    const statusEl = document.getElementById('profile-modal-status');
+    statusEl.textContent = 'Previewing...';
+    statusEl.style.color = 'var(--snap-yellow)';
+
+    try {
+        const data = await apiPost(
+            `/api/assets/redact/preview?job_id=${JOB_ID}`,
+            { asset_ids: ALL_ASSET_IDS, rules: _modalRules },
+        );
+        const previewArea = document.getElementById('profile-preview-area');
+        document.getElementById('profile-preview-text').textContent =
+            `Preview: ${data.total_tags_to_strip} tag(s) would be stripped across ${data.total_assets} file(s).`;
+        previewArea.classList.remove('hidden');
+        statusEl.textContent = '';
+    } catch (err) {
+        statusEl.textContent = 'Preview error: ' + err.message;
+        statusEl.style.color = 'var(--danger)';
+    }
+}
+
+async function saveProfile() {
+    const name = document.getElementById('profile-name').value.trim();
+    const desc = document.getElementById('profile-desc').value.trim();
+    const editId = document.getElementById('profile-edit-id').value;
+    const statusEl = document.getElementById('profile-modal-status');
+
+    if (!name) { alert('Profile name is required.'); return; }
+    if (_modalRules.length === 0) { alert('Add at least one rule.'); return; }
+
+    const payload = { name, description: desc, rules_json: _modalRules };
+    statusEl.textContent = 'Saving...';
+    statusEl.style.color = 'var(--snap-yellow)';
+
+    try {
+        let data;
+        if (editId) {
+            const resp = await fetch(`/api/redaction-profiles/${editId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+        } else {
+            const resp = await fetch('/api/redaction-profiles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+        }
+
+        document.getElementById('profile-modal').classList.add('hidden');
+        showStatus(`Profile "${name}" ${editId ? 'updated' : 'created'}. Reload to see changes.`, true);
+    } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+        statusEl.style.color = 'var(--danger)';
+    }
+}
+
+async function deleteProfile(profileId, name) {
+    if (!confirm(`Delete profile "${name}"? This cannot be undone.`)) return;
+
+    try {
+        const resp = await fetch(`/api/redaction-profiles/${profileId}`, { method: 'DELETE' });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+
+        // Remove card from DOM
+        const card = document.getElementById(`profile-card-${profileId}`);
+        if (card) card.remove();
+        showStatus(`Profile "${name}" deleted.`, true);
+    } catch (err) {
+        showStatus('Delete error: ' + err.message, false);
+    }
+}
+
+async function applyProfile(profileId, name) {
+    if (!confirm(`Apply profile "${name}" to ALL ${ALL_ASSET_IDS.length} files in this job?`)) return;
+
+    try {
+        const data = await apiPost(
+            `/api/assets/redact/apply?job_id=${JOB_ID}`,
+            { asset_ids: [], profile_id: profileId, rules: null },
+        );
+        showStatus(
+            `Profile "${name}" applied. ${data.tags_stripped} tag(s) stripped from ${data.succeeded}/${data.total} file(s). Reload to see log.`,
+            true,
+        );
+    } catch (err) {
+        showStatus('Apply error: ' + err.message, false);
+    }
+}
+
+async function applyProfileToSelected() {
+    const selectedIds = getSelectedAssetIds();
+    const profileId = parseInt(document.getElementById('profile-for-selected').value, 10);
+
+    if (!selectedIds.length) {
+        alert('Select at least one asset.');
+        return;
+    }
+    if (!profileId) {
+        alert('Choose a profile from the dropdown.');
+        return;
+    }
+
+    const profileName = document.getElementById('profile-for-selected').selectedOptions[0].textContent;
+    if (!confirm(`Apply profile "${profileName}" to ${selectedIds.length} selected file(s)?`)) return;
+
+    try {
+        const data = await apiPost(
+            `/api/assets/redact/apply?job_id=${JOB_ID}`,
+            { asset_ids: selectedIds, profile_id: profileId, rules: null },
+        );
+        showStatus(
+            `Done. ${data.tags_stripped} tag(s) stripped from ${data.succeeded}/${data.total} selected file(s). Reload to see log.`,
+            true,
+        );
+    } catch (err) {
+        showStatus('Apply error: ' + err.message, false);
+    }
+}
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

@@ -1,0 +1,794 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- ============================================================
+     PAGE HEADER
+     ============================================================ -->
+<div class="section-header">
+    <h1 class="mb-0" style="border-left: 4px solid var(--snap-yellow); padding-left: 1rem; display: flex; align-items: center; gap: 0.6rem;">
+        <span class="material-symbols-outlined" style="font-size: 2rem; color: var(--snap-yellow);">webhook</span>
+        Webhook Notifications
+    </h1>
+    {% if tier_info %}
+    <span class="tier-badge tier-badge--{{ tier_info.tier }}">
+        {{ tier_info.label }}
+    </span>
+    {% endif %}
+</div>
+
+<p class="text-muted mb-3" style="font-size: 0.9rem; max-width: 680px;">
+    Webhooks let Snatched POST a JSON payload to your URL when jobs finish, fail, or start.
+    Useful for Slack, Discord, n8n, Make, Zapier, or any custom automation endpoint.
+</p>
+
+{% set tier_key = tier_info.tier if tier_info else "free" %}
+
+<!-- ============================================================
+     TIER GATE — FREE USERS
+     ============================================================ -->
+{% if tier_key == "free" %}
+<div class="info-card text-center" style="border: 2px solid var(--danger); padding: 2.5rem;">
+    <span class="material-symbols-outlined text-danger" style="font-size: 3rem; display: block; margin-bottom: 0.75rem;">lock</span>
+    <p style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;">Webhooks require Pro tier or above</p>
+    <p class="text-muted mb-3" style="font-size: 0.9rem;">
+        Upgrade to Pro to configure up to 3 webhook endpoints.
+    </p>
+    <button type="button" class="btn-primary" onclick="alert('Plan upgrades coming soon! Follow us for updates.')">
+        UPGRADE PLAN
+    </button>
+</div>
+
+{% else %}
+
+<!-- ============================================================
+     USAGE BAR + ADD BUTTON
+     ============================================================ -->
+<div class="section-header mb-3">
+    <div>
+        <span class="mono text-muted" style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;">Webhooks Used</span>
+        <span class="mono text-yellow" style="font-size: 0.9rem; font-weight: 700; margin-left: 0.6rem;">
+            {{ webhooks | length }}
+            /
+            {% if max_webhooks is none %}
+                &infin;
+            {% else %}
+                {{ max_webhooks }}
+            {% endif %}
+        </span>
+    </div>
+
+    {% if max_webhooks is none or webhooks | length < max_webhooks %}
+    <button type="button" class="btn-primary" id="toggle-add-form-btn" onclick="toggleAddForm()">
+        <span class="material-symbols-outlined icon-sm" style="margin-right: 0.3rem;">add</span>
+        ADD WEBHOOK
+    </button>
+    {% else %}
+    <button type="button" class="btn-primary" disabled style="opacity: 0.45; cursor: not-allowed;"
+            title="Webhook limit reached for your plan">
+        <span class="material-symbols-outlined icon-sm" style="margin-right: 0.3rem;">add</span>
+        ADD WEBHOOK
+    </button>
+    {% endif %}
+</div>
+
+<!-- ============================================================
+     INLINE ADD FORM
+     ============================================================ -->
+<div id="add-webhook-form" class="hidden mb-3">
+    <div class="info-card" style="border: 1px solid var(--snap-yellow);">
+        <h3 class="mt-0 mb-3 text-yellow" style="font-size: 1rem; text-transform: uppercase; letter-spacing: 0.06em;">
+            New Webhook
+        </h3>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+            <div>
+                <label for="wh-name" class="mono text-muted uppercase tracking-wide mb-1" style="display: block; font-size: 0.8rem;">
+                    Name
+                </label>
+                <input type="text" id="wh-name" placeholder="e.g. Slack Alerts" maxlength="100"
+                       style="margin: 0; width: 100%;">
+            </div>
+            <div>
+                <label for="wh-url" class="mono text-muted uppercase tracking-wide mb-1" style="display: block; font-size: 0.8rem;">
+                    URL <span class="text-danger">*</span>
+                </label>
+                <input type="url" id="wh-url" placeholder="https://hooks.slack.com/..." maxlength="2048"
+                       style="margin: 0; width: 100%;">
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+            <div>
+                <label class="mono text-muted uppercase tracking-wide" style="display: block; font-size: 0.8rem; margin-bottom: 0.5rem;">
+                    Events
+                </label>
+                <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 400; font-size: 0.85rem; cursor: pointer;">
+                        <input type="checkbox" id="ev-completed" value="job.completed" checked
+                               style="width: auto; margin: 0;">
+                        <span class="mono" style="font-size: 0.8rem;">job.completed</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 400; font-size: 0.85rem; cursor: pointer;">
+                        <input type="checkbox" id="ev-failed" value="job.failed" checked
+                               style="width: auto; margin: 0;">
+                        <span class="mono" style="font-size: 0.8rem;">job.failed</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 400; font-size: 0.85rem; cursor: pointer;">
+                        <input type="checkbox" id="ev-started" value="job.started"
+                               style="width: auto; margin: 0;">
+                        <span class="mono" style="font-size: 0.8rem;">job.started</span>
+                    </label>
+                </div>
+            </div>
+            <div>
+                <label for="wh-secret" class="mono text-muted uppercase tracking-wide mb-1" style="display: block; font-size: 0.8rem;">
+                    HMAC Secret <span class="text-muted" style="font-weight: 400; text-transform: none; letter-spacing: 0;">(optional)</span>
+                </label>
+                <input type="password" id="wh-secret" placeholder="Optional signing secret" maxlength="256"
+                       style="margin: 0; width: 100%;">
+                <p class="text-muted mt-0" style="font-size: 0.73rem; margin: 0.3rem 0 0 0;">
+                    Used for HMAC-SHA256 signature verification.
+                </p>
+            </div>
+        </div>
+
+        <p id="add-form-error" class="mono text-danger" style="font-size: 0.8rem; display: none; margin-bottom: 0.75rem;"></p>
+
+        <div class="gap-row" style="justify-content: flex-end;">
+            <button type="button" class="btn-outline" onclick="toggleAddForm()">CANCEL</button>
+            <button type="button" class="btn-primary" id="save-webhook-btn" onclick="saveNewWebhook()">
+                SAVE WEBHOOK
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================
+     WEBHOOK TABLE
+     ============================================================ -->
+<section>
+    {% if webhooks %}
+    <div class="info-card" style="padding: 0; overflow: hidden;">
+        <table id="webhooks-table">
+            <thead>
+                <tr>
+                    <th>Name / URL</th>
+                    <th>Events</th>
+                    <th style="text-align: center;">Active</th>
+                    <th>Last Triggered</th>
+                    <th style="text-align: center;">Last Status</th>
+                    <th style="text-align: center;">Failures</th>
+                    <th style="text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="webhooks-tbody">
+                {% for wh in webhooks %}
+                <tr id="wh-row-{{ wh.id }}" style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                    <!-- Name + URL -->
+                    <td style="max-width: 260px;">
+                        <p style="margin: 0; font-weight: 700; font-size: 0.9rem;">
+                            {{ wh.name or ('Webhook #' ~ wh.id) }}
+                        </p>
+                        <p class="mono text-muted" style="margin: 0.2rem 0 0 0; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                           title="{{ wh.url }}">
+                            {{ wh.url | truncate(52, true, '...') }}
+                        </p>
+                    </td>
+
+                    <!-- Events -->
+                    <td>
+                        <div id="wh-events-{{ wh.id }}" style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+                            {% for ev in wh.events.split(',') %}
+                            {% set ev = ev.strip() %}
+                            <span class="mono" style="
+                                display: inline-block;
+                                padding: 0.1rem 0.4rem;
+                                font-size: 0.68rem;
+                                font-weight: 700;
+                                text-transform: uppercase;
+                                letter-spacing: 0.05em;
+                                {% if ev == 'job.completed' %}
+                                    color: var(--success); border: 1px solid var(--success);
+                                {% elif ev == 'job.failed' %}
+                                    color: var(--danger); border: 1px solid var(--danger);
+                                {% elif ev == 'job.started' %}
+                                    color: var(--snap-yellow); border: 1px solid var(--snap-yellow);
+                                {% else %}
+                                    color: var(--text-muted); border: 1px solid var(--border-dark);
+                                {% endif %}
+                            ">{{ ev }}</span>
+                            {% endfor %}
+                        </div>
+                    </td>
+
+                    <!-- Active toggle -->
+                    <td style="text-align: center;">
+                        <label class="toggle-switch" title="{{ 'Active — click to disable' if wh.active else 'Inactive — click to enable' }}">
+                            <input type="checkbox" {% if wh.active %}checked{% endif %}
+                                   onchange="toggleActive({{ wh.id }}, this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </td>
+
+                    <!-- Last Triggered -->
+                    <td>
+                        <span id="wh-triggered-{{ wh.id }}" class="mono text-muted" style="font-size: 0.78rem;">
+                            {% if wh.last_triggered_at %}
+                                {{ wh.last_triggered_at[:19] | replace('T', ' ') }}
+                            {% else %}
+                                <span class="text-dim">Never</span>
+                            {% endif %}
+                        </span>
+                    </td>
+
+                    <!-- Last Status -->
+                    <td style="text-align: center;">
+                        <span id="wh-status-{{ wh.id }}" class="mono font-black" style="
+                            font-size: 0.82rem;
+                            {% if wh.last_status_code and wh.last_status_code >= 200 and wh.last_status_code < 300 %}
+                                color: var(--success);
+                            {% elif wh.last_status_code and wh.last_status_code >= 400 %}
+                                color: var(--danger);
+                            {% elif wh.last_status_code %}
+                                color: orange;
+                            {% else %}
+                                color: var(--text-muted);
+                            {% endif %}
+                        ">
+                            {% if wh.last_status_code %}
+                                {{ wh.last_status_code }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </span>
+                    </td>
+
+                    <!-- Failure count -->
+                    <td style="text-align: center;">
+                        <span id="wh-failures-{{ wh.id }}" class="mono font-black" style="
+                            font-size: 0.85rem;
+                            {% if wh.failure_count > 0 %}color: var(--danger);{% else %}color: var(--text-muted);{% endif %}
+                        ">
+                            {{ wh.failure_count }}
+                        </span>
+                    </td>
+
+                    <!-- Actions -->
+                    <td style="text-align: right; white-space: nowrap;">
+                        <!-- Test -->
+                        <button type="button"
+                                onclick="testWebhook({{ wh.id }})"
+                                title="Send test payload"
+                                class="btn-xs btn-secondary"
+                                style="margin-right: 0.25rem; vertical-align: middle;"
+                                id="test-btn-{{ wh.id }}">
+                            <span class="material-symbols-outlined icon-sm">send</span>
+                        </button>
+                        <!-- Edit -->
+                        <button type="button"
+                                onclick="openEditModal({{ wh.id }}, {{ wh.name | tojson }}, {{ wh.url | tojson }}, {{ wh.events | tojson }}, {{ (wh.secret or '') | tojson }})"
+                                title="Edit webhook"
+                                class="btn-xs btn-secondary"
+                                style="margin-right: 0.25rem; vertical-align: middle;">
+                            <span class="material-symbols-outlined icon-sm">edit</span>
+                        </button>
+                        <!-- Delete -->
+                        <button type="button"
+                                onclick="deleteWebhook({{ wh.id }}, {{ (wh.name or ('Webhook #' ~ wh.id)) | tojson }})"
+                                title="Delete webhook"
+                                class="btn-xs btn-danger-sm"
+                                style="vertical-align: middle;">
+                            <span class="material-symbols-outlined icon-sm">delete</span>
+                        </button>
+                        <!-- Inline test result -->
+                        <span id="test-result-{{ wh.id }}" class="mono" style="font-size: 0.75rem; margin-left: 0.4rem; display: none;"></span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% else %}
+    <div id="empty-webhooks-state" class="info-card text-center" style="padding: 2.5rem;">
+        <span class="material-symbols-outlined text-dim" style="font-size: 3rem; display: block; margin-bottom: 0.75rem;">webhook</span>
+        <p class="text-muted mb-3" style="font-size: 1rem;">No webhooks configured yet.</p>
+        <button type="button" class="btn-primary" onclick="toggleAddForm()">ADD YOUR FIRST WEBHOOK</button>
+    </div>
+    {% endif %}
+</section>
+
+<!-- ============================================================
+     EDIT MODAL
+     ============================================================ -->
+<div id="edit-modal" class="modal-overlay" style="display: none;" onclick="closeEditModalOnBackdrop(event)">
+    <div class="modal-box" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="mb-0 uppercase tracking-wide" style="font-size: 1rem;">Edit Webhook</h3>
+            <button type="button" class="modal-close" onclick="closeEditModal()" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-wh-id">
+
+            <label for="edit-wh-name" class="mono text-muted uppercase tracking-wide mb-1" style="display: block; font-size: 0.8rem;">
+                Name
+            </label>
+            <input type="text" id="edit-wh-name" maxlength="100" class="mb-2" style="width: 100%;">
+
+            <label for="edit-wh-url" class="mono text-muted uppercase tracking-wide mb-1" style="display: block; font-size: 0.8rem;">
+                URL <span class="text-danger">*</span>
+            </label>
+            <input type="url" id="edit-wh-url" maxlength="2048" class="mb-2" style="width: 100%;">
+
+            <label class="mono text-muted uppercase tracking-wide" style="display: block; font-size: 0.8rem; margin-bottom: 0.5rem;">
+                Events
+            </label>
+            <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 1rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 400; font-size: 0.85rem; cursor: pointer;">
+                    <input type="checkbox" id="edit-ev-completed" value="job.completed" style="width: auto; margin: 0;">
+                    <span class="mono" style="font-size: 0.8rem;">job.completed</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 400; font-size: 0.85rem; cursor: pointer;">
+                    <input type="checkbox" id="edit-ev-failed" value="job.failed" style="width: auto; margin: 0;">
+                    <span class="mono" style="font-size: 0.8rem;">job.failed</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 400; font-size: 0.85rem; cursor: pointer;">
+                    <input type="checkbox" id="edit-ev-started" value="job.started" style="width: auto; margin: 0;">
+                    <span class="mono" style="font-size: 0.8rem;">job.started</span>
+                </label>
+            </div>
+
+            <label for="edit-wh-secret" class="mono text-muted uppercase tracking-wide mb-1" style="display: block; font-size: 0.8rem;">
+                HMAC Secret <span class="text-muted" style="font-weight: 400; text-transform: none; letter-spacing: 0;">(optional)</span>
+            </label>
+            <input type="password" id="edit-wh-secret" maxlength="256" class="mb-2" style="width: 100%;">
+
+            <p id="edit-form-error" class="mono text-danger" style="font-size: 0.8rem; display: none; margin-bottom: 0.5rem;"></p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-outline" onclick="closeEditModal()">CANCEL</button>
+            <button type="button" class="btn-primary" id="edit-save-btn" onclick="saveEditedWebhook()">SAVE CHANGES</button>
+        </div>
+    </div>
+</div>
+
+{% endif %}{# end tier gate #}
+
+<!-- ============================================================
+     TOAST
+     ============================================================ -->
+<div id="wh-toast" class="toast" style="display: none;" role="alert"></div>
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+// ---------------------------------------------------------------------------
+// Add-form toggle
+// ---------------------------------------------------------------------------
+function toggleAddForm() {
+    const form = document.getElementById('add-webhook-form');
+    const btn = document.getElementById('toggle-add-form-btn');
+    const visible = !form.classList.contains('hidden');
+    form.classList.toggle('hidden', visible);
+    if (btn) btn.textContent = visible ? '+ ADD WEBHOOK' : 'CANCEL';
+    if (!visible) document.getElementById('wh-url') && document.getElementById('wh-url').focus();
+    clearAddError();
+}
+
+function collectEvents(prefix) {
+    const evs = [];
+    ['completed', 'failed', 'started'].forEach(e => {
+        const el = document.getElementById((prefix ? prefix + '-' : '') + 'ev-' + e);
+        if (el && el.checked) evs.push(el.value);
+    });
+    return evs.join(',') || 'job.completed,job.failed';
+}
+
+// ---------------------------------------------------------------------------
+// Save new webhook
+// ---------------------------------------------------------------------------
+async function saveNewWebhook() {
+    const url = (document.getElementById('wh-url').value || '').trim();
+    const name = (document.getElementById('wh-name').value || '').trim();
+    const events = collectEvents('');
+    const secret = (document.getElementById('wh-secret').value || '').trim() || null;
+
+    clearAddError();
+    if (!url) { showAddError('URL is required.'); return; }
+    if (!url.startsWith('https://')) { showAddError('URL must start with https://'); return; }
+
+    const btn = document.getElementById('save-webhook-btn');
+    btn.disabled = true;
+    btn.textContent = 'SAVING...';
+
+    try {
+        const resp = await fetch('/api/webhooks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, name, events, secret }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'HTTP ' + resp.status);
+        }
+        const wh = await resp.json();
+        // Hide form, reset inputs
+        document.getElementById('add-webhook-form').classList.add('hidden');
+        const tbtn = document.getElementById('toggle-add-form-btn');
+        if (tbtn) tbtn.textContent = 'ADD WEBHOOK';
+        document.getElementById('wh-url').value = '';
+        document.getElementById('wh-name').value = '';
+        document.getElementById('wh-secret').value = '';
+        document.getElementById('ev-completed').checked = true;
+        document.getElementById('ev-failed').checked = true;
+        document.getElementById('ev-started').checked = false;
+
+        appendWebhookRow(wh);
+        showToast('Webhook saved.', 'success');
+    } catch (err) {
+        showAddError('Error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'SAVE WEBHOOK';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Active toggle
+// ---------------------------------------------------------------------------
+async function toggleActive(webhookId, active) {
+    try {
+        const resp = await fetch('/api/webhooks/' + webhookId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'HTTP ' + resp.status);
+        }
+        showToast('Webhook ' + (active ? 'enabled' : 'disabled') + '.', 'success');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'danger');
+        // Revert the toggle on failure
+        const row = document.getElementById('wh-row-' + webhookId);
+        if (row) {
+            const cb = row.querySelector('input[type=checkbox]');
+            if (cb) cb.checked = !active;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test webhook
+// ---------------------------------------------------------------------------
+async function testWebhook(webhookId) {
+    const btn = document.getElementById('test-btn-' + webhookId);
+    const resultEl = document.getElementById('test-result-' + webhookId);
+    if (btn) { btn.disabled = true; }
+    if (resultEl) { resultEl.style.display = 'inline'; resultEl.textContent = '...'; resultEl.style.color = 'var(--text-muted)'; }
+
+    try {
+        const resp = await fetch('/api/webhooks/' + webhookId + '/test', { method: 'POST' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'HTTP ' + resp.status);
+        }
+        const data = await resp.json();
+        const code = data.status_code;
+        const success = data.success;
+
+        // Update status cell
+        const statusEl = document.getElementById('wh-status-' + webhookId);
+        if (statusEl) {
+            statusEl.textContent = code || '—';
+            statusEl.style.color = success ? 'var(--success)' : (code >= 400 ? 'var(--danger)' : 'orange');
+        }
+
+        // Update triggered cell
+        const triggeredEl = document.getElementById('wh-triggered-' + webhookId);
+        if (triggeredEl && data.triggered_at) {
+            triggeredEl.textContent = data.triggered_at.substring(0, 19).replace('T', ' ');
+            triggeredEl.style.color = '';
+        }
+
+        // Update failure count
+        if (!success) {
+            const failEl = document.getElementById('wh-failures-' + webhookId);
+            if (failEl) {
+                const cur = parseInt(failEl.textContent, 10) || 0;
+                failEl.textContent = cur + 1;
+                failEl.style.color = 'var(--danger)';
+            }
+        } else {
+            const failEl = document.getElementById('wh-failures-' + webhookId);
+            if (failEl) {
+                failEl.textContent = '0';
+                failEl.style.color = 'var(--text-muted)';
+            }
+        }
+
+        // Inline result
+        if (resultEl) {
+            resultEl.textContent = success ? 'OK ' + code : 'ERR ' + (code || 'timeout');
+            resultEl.style.color = success ? 'var(--success)' : 'var(--danger)';
+            setTimeout(() => { resultEl.style.display = 'none'; }, 4000);
+        }
+
+        showToast('Test sent — status ' + (code || 0) + (success ? ' (success)' : ' (failed)'), success ? 'success' : 'danger');
+    } catch (err) {
+        if (resultEl) {
+            resultEl.textContent = 'ERR';
+            resultEl.style.color = 'var(--danger)';
+            setTimeout(() => { resultEl.style.display = 'none'; }, 4000);
+        }
+        showToast('Test error: ' + err.message, 'danger');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Edit modal
+// ---------------------------------------------------------------------------
+function openEditModal(id, name, url, events, secret) {
+    document.getElementById('edit-wh-id').value = id;
+    document.getElementById('edit-wh-name').value = name || '';
+    document.getElementById('edit-wh-url').value = url || '';
+    document.getElementById('edit-wh-secret').value = secret || '';
+    const evList = (events || '').split(',').map(e => e.trim());
+    document.getElementById('edit-ev-completed').checked = evList.includes('job.completed');
+    document.getElementById('edit-ev-failed').checked = evList.includes('job.failed');
+    document.getElementById('edit-ev-started').checked = evList.includes('job.started');
+    clearEditError();
+    document.getElementById('edit-modal').style.display = 'flex';
+    document.getElementById('edit-wh-name').focus();
+}
+
+function closeEditModal() {
+    document.getElementById('edit-modal').style.display = 'none';
+}
+
+function closeEditModalOnBackdrop(evt) {
+    if (evt.target === document.getElementById('edit-modal')) closeEditModal();
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeEditModal();
+});
+
+async function saveEditedWebhook() {
+    const id = parseInt(document.getElementById('edit-wh-id').value, 10);
+    const url = (document.getElementById('edit-wh-url').value || '').trim();
+    const name = (document.getElementById('edit-wh-name').value || '').trim();
+    const events = collectEvents('edit');
+    const secret = (document.getElementById('edit-wh-secret').value || '').trim() || null;
+
+    clearEditError();
+    if (!url) { showEditError('URL is required.'); return; }
+    if (!url.startsWith('https://')) { showEditError('URL must start with https://'); return; }
+
+    const btn = document.getElementById('edit-save-btn');
+    btn.disabled = true;
+    btn.textContent = 'SAVING...';
+
+    try {
+        const resp = await fetch('/api/webhooks/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, name, events, secret }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'HTTP ' + resp.status);
+        }
+        const wh = await resp.json();
+        // Update the row in-place
+        const row = document.getElementById('wh-row-' + id);
+        if (row) {
+            // Name/URL cell
+            const nameTd = row.querySelector('td:first-child');
+            if (nameTd) {
+                nameTd.querySelector('p:first-child').textContent = wh.name || ('Webhook #' + id);
+                const urlP = nameTd.querySelector('p:last-child');
+                if (urlP) {
+                    urlP.textContent = wh.url.length > 52 ? wh.url.substring(0, 49) + '...' : wh.url;
+                    urlP.title = wh.url;
+                }
+            }
+            // Events
+            const evDiv = document.getElementById('wh-events-' + id);
+            if (evDiv) evDiv.innerHTML = buildEventBadges(wh.events);
+        }
+        closeEditModal();
+        showToast('Webhook updated.', 'success');
+    } catch (err) {
+        showEditError('Error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'SAVE CHANGES';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Delete webhook
+// ---------------------------------------------------------------------------
+async function deleteWebhook(webhookId, name) {
+    if (!confirm('Delete "' + name + '"? This cannot be undone.')) return;
+
+    try {
+        const resp = await fetch('/api/webhooks/' + webhookId, { method: 'DELETE' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'HTTP ' + resp.status);
+        }
+        const row = document.getElementById('wh-row-' + webhookId);
+        if (row) row.remove();
+
+        // Show empty state if no rows remain
+        const tbody = document.getElementById('webhooks-tbody');
+        if (tbody && tbody.querySelectorAll('tr').length === 0) {
+            const table = tbody.closest('.info-card');
+            if (table) {
+                table.outerHTML = `
+                    <div id="empty-webhooks-state" class="info-card text-center" style="padding:2.5rem;">
+                        <span class="material-symbols-outlined text-dim" style="font-size:3rem;display:block;margin-bottom:0.75rem;">webhook</span>
+                        <p class="text-muted mb-3" style="font-size:1rem;">No webhooks configured yet.</p>
+                        <button type="button" class="btn-primary" onclick="toggleAddForm()">ADD YOUR FIRST WEBHOOK</button>
+                    </div>`;
+            }
+        }
+
+        showToast('"' + name + '" deleted.', 'danger');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'danger');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DOM helpers
+// ---------------------------------------------------------------------------
+function buildEventBadges(eventsStr) {
+    const colorMap = {
+        'job.completed': 'var(--success)',
+        'job.failed': 'var(--danger)',
+        'job.started': 'var(--snap-yellow)',
+    };
+    return (eventsStr || '').split(',').map(e => {
+        e = e.trim();
+        const c = colorMap[e] || 'var(--text-muted)';
+        return `<span style="display:inline-block;padding:0.1rem 0.4rem;font-size:0.68rem;font-weight:700;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.05em;color:${c};border:1px solid ${c};">${escHtml(e)}</span>`;
+    }).join(' ');
+}
+
+function appendWebhookRow(wh) {
+    // Remove empty state if present
+    const emptyState = document.getElementById('empty-webhooks-state');
+    if (emptyState) {
+        emptyState.outerHTML = `
+            <div class="info-card" style="padding:0;overflow:hidden;">
+                <table id="webhooks-table">
+                    <thead>
+                        <tr>
+                            <th>Name / URL</th>
+                            <th>Events</th>
+                            <th style="text-align:center;">Active</th>
+                            <th>Last Triggered</th>
+                            <th style="text-align:center;">Last Status</th>
+                            <th style="text-align:center;">Failures</th>
+                            <th style="text-align:right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="webhooks-tbody"></tbody>
+                </table>
+            </div>`;
+    }
+
+    const tbody = document.getElementById('webhooks-tbody');
+    if (!tbody) return;
+
+    const urlShort = wh.url.length > 52 ? wh.url.substring(0, 49) + '...' : wh.url;
+    const name = escHtml(wh.name || ('Webhook #' + wh.id));
+    const url = escHtml(wh.url);
+    const evBadges = buildEventBadges(wh.events);
+
+    const tr = document.createElement('tr');
+    tr.id = 'wh-row-' + wh.id;
+    tr.style.borderBottom = '1px solid rgba(255,255,255,0.04)';
+    tr.innerHTML = `
+        <td style="max-width:260px;">
+            <p style="margin:0;font-weight:700;font-size:0.9rem;">${name}</p>
+            <p class="mono text-muted" style="margin:0.2rem 0 0 0;font-size:0.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${url}">${escHtml(urlShort)}</p>
+        </td>
+        <td>
+            <div id="wh-events-${wh.id}" style="display:flex;flex-wrap:wrap;gap:0.3rem;">${evBadges}</div>
+        </td>
+        <td style="text-align:center;">
+            <label class="toggle-switch" title="Active — click to disable">
+                <input type="checkbox" checked onchange="toggleActive(${wh.id}, this.checked)">
+                <span class="toggle-slider"></span>
+            </label>
+        </td>
+        <td>
+            <span id="wh-triggered-${wh.id}" class="mono text-muted" style="font-size:0.78rem;">
+                <span class="text-dim">Never</span>
+            </span>
+        </td>
+        <td style="text-align:center;">
+            <span id="wh-status-${wh.id}" class="mono font-black" style="font-size:0.82rem;color:var(--text-muted);">—</span>
+        </td>
+        <td style="text-align:center;">
+            <span id="wh-failures-${wh.id}" class="mono font-black" style="font-size:0.85rem;color:var(--text-muted);">0</span>
+        </td>
+        <td style="text-align:right;white-space:nowrap;">
+            <button type="button" onclick="testWebhook(${wh.id})" title="Send test payload"
+                    class="btn-xs btn-secondary"
+                    style="margin-right:0.25rem;vertical-align:middle;"
+                    id="test-btn-${wh.id}">
+                <span class="material-symbols-outlined icon-sm">send</span>
+            </button>
+            <button type="button"
+                    onclick="openEditModal(${wh.id}, ${JSON.stringify(wh.name || '')}, ${JSON.stringify(wh.url)}, ${JSON.stringify(wh.events)}, ${JSON.stringify(wh.secret || '')})"
+                    title="Edit webhook"
+                    class="btn-xs btn-secondary"
+                    style="margin-right:0.25rem;vertical-align:middle;">
+                <span class="material-symbols-outlined icon-sm">edit</span>
+            </button>
+            <button type="button"
+                    onclick="deleteWebhook(${wh.id}, ${JSON.stringify(wh.name || 'Webhook #' + wh.id)})"
+                    title="Delete webhook"
+                    class="btn-xs btn-danger-sm"
+                    style="vertical-align:middle;">
+                <span class="material-symbols-outlined icon-sm">delete</span>
+            </button>
+            <span id="test-result-${wh.id}" class="mono" style="font-size:0.75rem;margin-left:0.4rem;display:none;"></span>
+        </td>`;
+    tbody.appendChild(tr);
+}
+
+// ---------------------------------------------------------------------------
+// Error helpers
+// ---------------------------------------------------------------------------
+function showAddError(msg) {
+    const el = document.getElementById('add-form-error');
+    if (el) { el.textContent = msg; el.style.display = 'block'; }
+}
+function clearAddError() {
+    const el = document.getElementById('add-form-error');
+    if (el) { el.textContent = ''; el.style.display = 'none'; }
+}
+function showEditError(msg) {
+    const el = document.getElementById('edit-form-error');
+    if (el) { el.textContent = msg; el.style.display = 'block'; }
+}
+function clearEditError() {
+    const el = document.getElementById('edit-form-error');
+    if (el) { el.textContent = ''; el.style.display = 'none'; }
+}
+
+// ---------------------------------------------------------------------------
+// Toast
+// ---------------------------------------------------------------------------
+let _whToastTimer = null;
+function showToast(msg, type) {
+    const t = document.getElementById('wh-toast');
+    if (!t) return;
+    t.textContent = msg;
+    t.style.display = 'block';
+    const colors = { success: 'var(--success)', danger: 'var(--danger)', warning: 'var(--snap-yellow)', info: 'var(--text-muted)' };
+    t.style.borderColor = colors[type] || colors.info;
+    if (_whToastTimer) clearTimeout(_whToastTimer);
+    _whToastTimer = setTimeout(() => { t.style.display = 'none'; }, 4500);
+}
+
+// ---------------------------------------------------------------------------
+// HTML escape
+// ---------------------------------------------------------------------------
+function escHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}

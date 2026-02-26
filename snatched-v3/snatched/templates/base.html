@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title or "SNATCHED" }}</title>
+
+    <!-- Google Fonts: Inter + JetBrains Mono + Material Symbols -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,1,0" rel="stylesheet">
+
+    <!-- Pico CSS v2 (dark mode) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+
+    <!-- Custom rebellion styles (cache-bust with version) -->
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=5">
+
+    <!-- htmx 2.x (vendored, do not edit) -->
+    <script src="{{ url_for('static', path='htmx.min.js') }}" defer></script>
+</head>
+<body>
+    <!-- Navigation bar -->
+    <nav class="nav-bar">
+        <a href="/" class="nav-brand">
+            <span class="material-symbols-outlined">heart_broken</span>
+            <span class="nav-brand-text">SNATCHED</span>
+        </a>
+        <ul class="nav-links">
+            <li><a href="/dashboard">Dashboard</a></li>
+            <li><a href="/upload">Upload</a></li>
+            <li><a href="/settings">Settings</a></li>
+            <li>
+                <span class="nav-user">{{ username }}</span>
+                {% if tier_info %}<span class="tier-badge tier-badge--{{ tier_info.label | lower }}">{{ tier_info.label }}</span>{% endif %}
+                <a href="/logout" class="nav-logout" title="Sign out">
+                    <span class="material-symbols-outlined nav-logout-icon">logout</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Caution tape divider -->
+    <div class="caution-tape"></div>
+
+    <!-- Main content -->
+    <main class="main-container">
+        <!-- Flash messages -->
+        {% if flash_messages %}
+            {% for category, message in flash_messages %}
+                <div class="alert alert-{{ category }}">
+                    <span>{{ message }}</span>
+                    <button aria-label="Close" onclick="this.parentElement.style.display='none';">&times;</button>
+                </div>
+            {% endfor %}
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+        <p><span class="footer-accent">SNATCHED</span> &mdash; They took your memories. We take them back.</p>
+        <p>&copy; 2026 Snatched. Not affiliated with Snap Inc.</p>
+    </footer>
+
+    <!-- htmx global config -->
+    <script>
+        htmx.config.timeout = 30000;
+        htmx.config.historyEnabled = false;
+        htmx.config.refreshOnHistoryMiss = true;
+    </script>
+</body>
+</html>

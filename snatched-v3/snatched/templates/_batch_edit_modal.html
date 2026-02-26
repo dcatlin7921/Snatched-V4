@@ -1,0 +1,283 @@
+<!-- Batch Edit Tags Modal -->
+{# Include in results.html via: include '_batch_edit_modal.html' #}
+<div id="batch-edit-modal" class="modal-overlay hidden"
+     onclick="if(event.target===this)closeBatchEdit()">
+    <div class="modal-content batch-modal-inner">
+        <h3>Batch Edit Tags &mdash; <span class="batch-modal-count">0</span> files</h3>
+        <p class="text-muted batch-modal-subtitle">
+            Fields left blank are skipped. Changes are written to all selected assets.
+        </p>
+
+        <!-- Common tag fields -->
+        <div class="batch-fields">
+
+            <div class="batch-field-group">
+                <label for="bf-date">EXIF:DateTimeOriginal</label>
+                <input type="datetime-local" id="bf-date" name="EXIF:DateTimeOriginal"
+                       placeholder="YYYY-MM-DDThh:mm" class="batch-tag-input">
+                <span class="field-hint">e.g. 2024-07-04T14:30</span>
+            </div>
+
+            <div class="batch-field-group">
+                <label>EXIF:GPSLatitude</label>
+                <input type="number" id="bf-lat" name="EXIF:GPSLatitude"
+                       step="0.000001" placeholder="e.g. 41.878113"
+                       class="batch-tag-input">
+            </div>
+
+            <div class="batch-field-group">
+                <label>EXIF:GPSLongitude</label>
+                <input type="number" id="bf-lon" name="EXIF:GPSLongitude"
+                       step="0.000001" placeholder="e.g. -87.629799"
+                       class="batch-tag-input">
+            </div>
+
+            <div class="batch-field-group">
+                <label>XMP:Creator</label>
+                <input type="text" id="bf-creator" name="XMP:Creator"
+                       placeholder="Photographer / creator name"
+                       class="batch-tag-input">
+            </div>
+
+            <div class="batch-field-group">
+                <label>XMP:Description</label>
+                <textarea id="bf-desc" name="XMP:Description" rows="2"
+                          placeholder="Image description..."
+                          class="batch-tag-input"></textarea>
+            </div>
+
+        </div>
+
+        <!-- Custom fields section -->
+        <div id="custom-fields-container">
+            <!-- Dynamically added custom fields appear here -->
+        </div>
+
+        <button type="button" class="btn-outline btn-add-field"
+                onclick="addCustomBatchField()">
+            + Add Field
+        </button>
+
+        <!-- Preview result area -->
+        <div id="batch-preview-result" class="batch-preview-result-box" style="display: none;">
+        </div>
+
+        <!-- Status/progress feedback -->
+        <p id="batch-status" class="mono batch-status-text"></p>
+
+        <!-- Action buttons -->
+        <div class="batch-modal-actions">
+            <button type="button" class="btn-outline batch-modal-btn-sm" onclick="submitBatchPreview()">PREVIEW</button>
+            <button type="button" class="btn-primary" id="batch-apply-btn"
+                    onclick="submitBatchEdit()">APPLY TO ALL</button>
+            <button type="button" class="btn-outline batch-modal-btn-sm" onclick="closeBatchEdit()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var JOB_ID = {{ job_id }};
+
+    // ---- Helpers ----
+
+    function closeBatchEdit() {
+        var modal = document.getElementById('batch-edit-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+    window.closeBatchEdit = closeBatchEdit;
+
+    function setStatus(msg, color) {
+        var el = document.getElementById('batch-status');
+        if (!el) return;
+        el.textContent = msg;
+        el.style.color = color || 'inherit';
+    }
+
+    function collectEdits() {
+        var edits = {};
+
+        // Standard fields — only include non-empty values
+        var standardFields = [
+            'EXIF:DateTimeOriginal',
+            'EXIF:GPSLatitude',
+            'EXIF:GPSLongitude',
+            'XMP:Creator',
+            'XMP:Description',
+        ];
+
+        standardFields.forEach(function (tag) {
+            // Find by name attribute
+            var el = document.querySelector('[name="' + tag + '"]');
+            if (!el) return;
+            var val = el.value.trim();
+            if (!val) return;
+
+            // Convert datetime-local format to EXIF format: YYYY:MM:DD HH:MM:SS
+            if (tag === 'EXIF:DateTimeOriginal' && val.includes('T')) {
+                val = val.replace('T', ' ').replace(/-/g, ':');
+                // Pad seconds if missing
+                if (val.length === 16) val += ':00';
+            }
+
+            edits[tag] = val;
+        });
+
+        // Custom fields
+        document.querySelectorAll('.custom-field-row').forEach(function (row) {
+            var nameInput = row.querySelector('.cf-name');
+            var valueInput = row.querySelector('.cf-value');
+            if (!nameInput || !valueInput) return;
+            var name = nameInput.value.trim();
+            var value = valueInput.value.trim();
+            if (!name) return;
+            // Empty value = delete tag (send null)
+            edits[name] = value || null;
+        });
+
+        return edits;
+    }
+
+    // ---- Custom field management ----
+
+    window.addCustomBatchField = function () {
+        var container = document.getElementById('custom-fields-container');
+        if (!container) return;
+        var row = document.createElement('div');
+        row.className = 'custom-field-row';
+        row.innerHTML =
+            '<input type="text" class="cf-name" placeholder="Tag name (e.g. XMP:Title)">' +
+            '<input type="text" class="cf-value" placeholder="Value (blank = delete tag)">' +
+            '<button onclick="this.parentNode.remove()" title="Remove">X</button>';
+        container.appendChild(row);
+    };
+
+    // ---- Preview ----
+
+    window.submitBatchPreview = async function () {
+        var selectedIds = window._batchSelectedIds || [];
+        if (selectedIds.length === 0) {
+            setStatus('No assets selected.', 'var(--danger)');
+            return;
+        }
+
+        var edits = collectEdits();
+        if (Object.keys(edits).length === 0) {
+            setStatus('No fields filled in.', 'var(--danger)');
+            return;
+        }
+
+        setStatus('Fetching preview...', 'var(--snap-yellow)');
+
+        try {
+            var resp = await fetch(
+                '/api/assets/batch-tags/preview?job_id=' + JOB_ID,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ asset_ids: selectedIds, edits: edits }),
+                }
+            );
+            var data = await resp.json();
+            if (!resp.ok) {
+                setStatus('Preview error: ' + (data.detail || resp.statusText), 'var(--danger)');
+                return;
+            }
+
+            setStatus('Preview loaded.', 'var(--success)');
+
+            var previewEl = document.getElementById('batch-preview-result');
+            if (previewEl) {
+                var lines = ['Files that will be modified: ' + data.count];
+                lines.push('');
+                lines.push('Current values (sample of up to 5 files):');
+                Object.entries(data.sample_values || {}).forEach(function (entry) {
+                    var tag = entry[0], vals = entry[1];
+                    lines.push('  ' + tag + ':');
+                    if (vals.length === 0) {
+                        lines.push('    (not set on sampled files)');
+                    } else {
+                        vals.forEach(function (v) { lines.push('    ' + v); });
+                    }
+                });
+                previewEl.textContent = lines.join('\n');
+                previewEl.style.display = 'block';
+            }
+        } catch (err) {
+            setStatus('Preview failed: ' + err.message, 'var(--danger)');
+        }
+    };
+
+    // ---- Apply ----
+
+    window.submitBatchEdit = async function () {
+        var selectedIds = window._batchSelectedIds || [];
+        if (selectedIds.length === 0) {
+            setStatus('No assets selected.', 'var(--danger)');
+            return;
+        }
+
+        var edits = collectEdits();
+        if (Object.keys(edits).length === 0) {
+            setStatus('No fields filled in — nothing to apply.', 'var(--danger)');
+            return;
+        }
+
+        var applyBtn = document.getElementById('batch-apply-btn');
+        if (applyBtn) {
+            applyBtn.disabled = true;
+            applyBtn.textContent = 'APPLYING...';
+        }
+        setStatus(
+            'Writing tags to ' + selectedIds.length + ' file(s)...',
+            'var(--snap-yellow)'
+        );
+
+        try {
+            var resp = await fetch(
+                '/api/assets/batch-tags?job_id=' + JOB_ID,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ asset_ids: selectedIds, edits: edits }),
+                }
+            );
+            var data = await resp.json();
+
+            if (!resp.ok) {
+                setStatus('API error: ' + (data.detail || resp.statusText), 'var(--danger)');
+                return;
+            }
+
+            var msg = 'Done: ' + data.succeeded + '/' + data.total + ' succeeded';
+            if (data.failed > 0) {
+                msg += ', ' + data.failed + ' failed';
+                setStatus(msg, 'var(--danger)');
+
+                // Show error detail in preview area
+                var previewEl = document.getElementById('batch-preview-result');
+                if (previewEl && data.errors && data.errors.length) {
+                    var lines = ['Errors:'];
+                    data.errors.forEach(function (e) {
+                        lines.push('  Asset ' + e.asset_id + ': ' + e.error);
+                    });
+                    previewEl.textContent = lines.join('\n');
+                    previewEl.style.display = 'block';
+                }
+            } else {
+                setStatus(msg, 'var(--success)');
+                // Auto-close after success
+                setTimeout(closeBatchEdit, 1800);
+            }
+        } catch (err) {
+            setStatus('Request failed: ' + err.message, 'var(--danger)');
+        } finally {
+            if (applyBtn) {
+                applyBtn.disabled = false;
+                applyBtn.textContent = 'APPLY TO ALL';
+            }
+        }
+    };
+})();
+</script>
+{# themed: 2026-02-25 #}

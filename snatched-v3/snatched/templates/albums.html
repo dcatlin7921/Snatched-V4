@@ -1,0 +1,315 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav class="breadcrumb mb-3">
+    <a href="/results/{{ job_id }}" class="text-muted">Results</a>
+    <span class="text-muted separator">/</span>
+    <span class="text-yellow">Albums</span>
+</nav>
+
+<!-- Sticky header -->
+<div class="sticky-header" style="flex-wrap: wrap; gap: 0.75rem; align-items: center;">
+    <h1 class="mb-0">Auto Albums</h1>
+    <div class="gap-row" style="flex-wrap: wrap; align-items: center;">
+        <span class="mono text-muted" style="font-size: 0.8rem;">
+            Job #{{ job_id }}{% if job.upload_filename %} &mdash; {{ job.upload_filename }}{% endif %}
+        </span>
+        <a href="/results/{{ job_id }}" class="btn-outline" style="font-size: 0.8rem;">BACK TO RESULTS</a>
+    </div>
+</div>
+
+<!-- Action bar -->
+<div class="gap-row mb-3" style="flex-wrap: wrap; align-items: center;">
+    <button
+        class="btn-primary"
+        hx-post="/api/jobs/{{ job_id }}/albums/generate"
+        hx-target="#albums-grid"
+        hx-swap="innerHTML"
+        hx-indicator="#album-spinner"
+        onclick="document.getElementById('albums-grid').innerHTML = loadingState();"
+    >
+        GENERATE ALBUMS
+    </button>
+    <button class="btn-outline" onclick="document.getElementById('create-album-modal').classList.remove('hidden')">
+        + CREATE ALBUM
+    </button>
+    <span id="album-spinner" class="htmx-indicator mono text-muted" style="font-size: 0.8rem;">
+        <span class="material-symbols-outlined icon-sm" style="animation: spin 1s linear infinite;">progress_activity</span>
+        Clustering GPS data...
+    </span>
+</div>
+
+<!-- Albums grid -->
+<div id="albums-grid" class="albums-grid">
+{% if albums %}
+{% for album in albums %}
+    <div class="album-card" id="album-card-{{ album.id }}">
+        <div class="album-card-header">
+            <div style="display: flex; align-items: center; gap: 0.6rem; flex: 1; min-width: 0;">
+                <span
+                    class="album-name mono"
+                    id="album-name-{{ album.id }}"
+                    style="font-size: 0.9rem; font-weight: 700; color: var(--snap-yellow); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                >{{ album.name }}</span>
+                {% if album.auto_generated %}
+                <span class="auto-badge">AUTO</span>
+                {% endif %}
+            </div>
+            <span class="item-count-badge">{{ album.item_count }} items</span>
+        </div>
+
+        <!-- Thumbnail grid (placeholder icons) -->
+        <div class="album-thumb-grid">
+            {% for i in range(4) %}
+            <div class="album-thumb-cell">
+                <span class="material-symbols-outlined" style="font-size: 1.5rem; color: var(--text-dim);">
+                    {% if i % 2 == 0 %}image{% else %}videocam{% endif %}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Album info -->
+        <div class="album-card-body">
+            {% if album.location_name %}
+            <p class="album-meta">
+                <span class="material-symbols-outlined icon-sm text-green">location_on</span>
+                {{ album.location_name }}
+            </p>
+            {% endif %}
+            {% if album.start_date or album.end_date %}
+            <p class="album-meta">
+                <span class="material-symbols-outlined icon-sm text-muted">calendar_today</span>
+                {{ album.start_date or "?" }} &mdash; {{ album.end_date or "?" }}
+            </p>
+            {% endif %}
+            {% if album.center_lat is not none and album.center_lon is not none %}
+            <p class="album-meta gps-indicator">
+                <span class="material-symbols-outlined icon-sm">my_location</span>
+                {{ "%.4f"|format(album.center_lat) }}, {{ "%.4f"|format(album.center_lon) }}
+            </p>
+            {% endif %}
+            {% if album.description %}
+            <p class="album-meta text-muted italic" style="font-size: 0.78rem;">{{ album.description }}</p>
+            {% endif %}
+        </div>
+
+        <!-- Action buttons -->
+        <div class="album-card-actions">
+            <button class="btn-outline btn-xs" onclick="openRenameAlbum({{ album.id }}, '{{ album.name | replace("'", "\\'") }}')">RENAME</button>
+            <button class="btn-outline btn-xs" onclick="openAlbumItems({{ album.id }})">VIEW ITEMS</button>
+            <button class="btn-danger-sm" onclick="deleteAlbum({{ album.id }}, this)">DELETE</button>
+        </div>
+    </div>
+{% endfor %}
+{% else %}
+    <div class="empty-state" style="grid-column: 1 / -1;">
+        <span class="material-symbols-outlined" style="font-size: 2.5rem; color: var(--text-dim); display: block; margin-bottom: 1rem;">photo_album</span>
+        <p class="mono text-muted">No albums yet. Click "Generate Albums" to auto-detect trips from your GPS data.</p>
+    </div>
+{% endif %}
+</div>
+
+<!-- Create Album Modal -->
+<div id="create-album-modal" class="modal-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-content">
+        <h3>Create Album</h3>
+        <label style="display: block; margin-bottom: 0.75rem;">
+            <span class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem;">NAME</span>
+            <input type="text" id="new-album-name" placeholder="e.g. Summer 2024" style="width: 100%;">
+        </label>
+        <label style="display: block; margin-bottom: 1rem;">
+            <span class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem;">DESCRIPTION (optional)</span>
+            <input type="text" id="new-album-desc" placeholder="Optional description..." style="width: 100%;">
+        </label>
+        <div class="gap-row">
+            <button class="btn-primary" onclick="createAlbum()">CREATE</button>
+            <button class="btn-outline" onclick="document.getElementById('create-album-modal').classList.add('hidden')">Cancel</button>
+        </div>
+        <p id="create-album-status" class="mono text-muted" style="font-size: 0.78rem; margin-top: 0.75rem;"></p>
+    </div>
+</div>
+
+<!-- Rename Album Modal -->
+<div id="rename-album-modal" class="modal-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-content">
+        <h3>Rename Album</h3>
+        <input type="hidden" id="rename-album-id">
+        <label style="display: block; margin-bottom: 1rem;">
+            <span class="mono text-muted uppercase" style="font-size: 0.75rem; display: block; margin-bottom: 0.35rem;">NEW NAME</span>
+            <input type="text" id="rename-album-name" style="width: 100%;">
+        </label>
+        <div class="gap-row">
+            <button class="btn-primary" onclick="submitRename()">SAVE</button>
+            <button class="btn-outline" onclick="document.getElementById('rename-album-modal').classList.add('hidden')">Cancel</button>
+        </div>
+        <p id="rename-album-status" class="mono text-muted" style="font-size: 0.78rem; margin-top: 0.75rem;"></p>
+    </div>
+</div>
+
+<!-- Album Items Modal -->
+<div id="album-items-modal" class="modal-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="modal-content" style="max-width: 700px; width: 95%; max-height: 80vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+            <h3 style="margin: 0;" id="items-modal-title">Album Items</h3>
+            <button class="btn-outline btn-xs" onclick="document.getElementById('album-items-modal').classList.add('hidden')">CLOSE</button>
+        </div>
+        <div id="album-items-content">
+            <p class="text-muted mono" style="font-size: 0.8rem;">Loading...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+var _jobId = {{ job_id }};
+
+function loadingState() {
+    return '<div class="empty-state" style="grid-column:1/-1;">' +
+        '<span class="material-symbols-outlined" style="font-size:2.5rem;color:var(--text-dim);display:block;margin-bottom:1rem;">hourglass_empty</span>' +
+        '<p class="mono text-muted">Clustering GPS data...</p></div>';
+}
+
+function openRenameAlbum(albumId, currentName) {
+    document.getElementById('rename-album-id').value = albumId;
+    document.getElementById('rename-album-name').value = currentName;
+    document.getElementById('rename-album-status').textContent = '';
+    document.getElementById('rename-album-modal').classList.remove('hidden');
+}
+
+async function submitRename() {
+    var albumId = parseInt(document.getElementById('rename-album-id').value);
+    var newName = document.getElementById('rename-album-name').value.trim();
+    var status = document.getElementById('rename-album-status');
+
+    if (!newName) {
+        status.textContent = 'Name cannot be empty.';
+        status.style.color = 'var(--danger)';
+        return;
+    }
+
+    try {
+        var resp = await fetch('/api/albums/' + albumId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName }),
+        });
+        var data = await resp.json();
+        if (resp.ok && data.updated) {
+            status.style.color = 'var(--success)';
+            status.textContent = 'Renamed successfully.';
+            var nameEl = document.getElementById('album-name-' + albumId);
+            if (nameEl) nameEl.textContent = newName;
+            setTimeout(function() {
+                document.getElementById('rename-album-modal').classList.add('hidden');
+            }, 800);
+        } else {
+            status.style.color = 'var(--danger)';
+            status.textContent = 'Failed: ' + (data.detail || 'Unknown error');
+        }
+    } catch (err) {
+        status.style.color = 'var(--danger)';
+        status.textContent = 'Error: ' + err.message;
+    }
+}
+
+async function deleteAlbum(albumId, btnEl) {
+    if (!confirm('Delete this album? This cannot be undone.')) return;
+    btnEl.disabled = true;
+
+    try {
+        var resp = await fetch('/api/albums/' + albumId, { method: 'DELETE' });
+        var data = await resp.json();
+        if (resp.ok && data.deleted) {
+            var card = document.getElementById('album-card-' + albumId);
+            if (card) {
+                card.style.transition = 'opacity 0.3s';
+                card.style.opacity = '0';
+                setTimeout(function() { card.remove(); }, 300);
+            }
+        } else {
+            btnEl.disabled = false;
+            alert('Delete failed: ' + (data.detail || 'Unknown error'));
+        }
+    } catch (err) {
+        btnEl.disabled = false;
+        alert('Error: ' + err.message);
+    }
+}
+
+async function openAlbumItems(albumId) {
+    var modal = document.getElementById('album-items-modal');
+    var content = document.getElementById('album-items-content');
+    var title = document.getElementById('items-modal-title');
+
+    var nameEl = document.getElementById('album-name-' + albumId);
+    title.textContent = nameEl ? nameEl.textContent : 'Album Items';
+    content.innerHTML = '<p class="text-muted mono" style="font-size:0.8rem;">Loading...</p>';
+    modal.classList.remove('hidden');
+
+    try {
+        var resp = await fetch('/api/albums/' + albumId + '/items');
+        var data = await resp.json();
+        if (!resp.ok) {
+            content.innerHTML = '<p class="mono" style="color:var(--danger);font-size:0.8rem;">Failed to load items.</p>';
+            return;
+        }
+        var items = data.items || [];
+        if (items.length === 0) {
+            content.innerHTML = '<div class="empty-state"><p class="mono text-muted">No items in this album.</p></div>';
+            return;
+        }
+
+        var html = '<div class="items-gallery">';
+        items.forEach(function(item) {
+            var icon = (item.asset_type === 'video' || item.is_video) ? 'videocam' : 'image';
+            var conf = item.confidence ? (item.confidence * 100).toFixed(0) + '%' : '—';
+            html += '<div class="item-card">' +
+                '<div class="item-card-icon"><span class="material-symbols-outlined">' + icon + '</span></div>' +
+                '<div class="item-filename">' + (item.filename || 'unknown') + '</div>' +
+                '<div class="item-date">' + (item.matched_date ? item.matched_date.slice(0, 10) : '—') + '</div>' +
+                '<div class="item-date text-green">Conf: ' + conf + '</div>' +
+                '</div>';
+        });
+        html += '</div>';
+        content.innerHTML = html;
+    } catch (err) {
+        content.innerHTML = '<p class="mono" style="color:var(--danger);font-size:0.8rem;">Error: ' + err.message + '</p>';
+    }
+}
+
+async function createAlbum() {
+    var name = document.getElementById('new-album-name').value.trim();
+    var desc = document.getElementById('new-album-desc').value.trim();
+    var status = document.getElementById('create-album-status');
+
+    if (!name) {
+        status.textContent = 'Name is required.';
+        status.style.color = 'var(--danger)';
+        return;
+    }
+
+    try {
+        var resp = await fetch('/api/jobs/' + _jobId + '/albums/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        // For manual creation we use a dedicated endpoint — for now reload the page
+        // after generate. This is a stub that tells the user to use Generate.
+        status.style.color = 'var(--text-muted)';
+        status.textContent = 'Use "Generate Albums" to auto-create. Manual creation coming soon.';
+    } catch (err) {
+        status.style.color = 'var(--danger)';
+        status.textContent = 'Error: ' + err.message;
+    }
+}
+
+// When generate API responds, refresh the grid with new album data
+document.body.addEventListener('htmx:afterOnLoad', function(evt) {
+    if (evt.detail.target && evt.detail.target.id === 'albums-grid') {
+        // htmx already handled innerHTML swap via the response fragment
+    }
+});
+</script>
+{% endblock %}
+{# themed: 2026-02-25 #}
