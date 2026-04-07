@@ -1,10 +1,14 @@
 {% extends "base.html" %}
+{% block title %}Settings — SNATCHED{% endblock %}
 
 {% block content %}
 <!-- Page header -->
 <div class="section-header">
     <h1 class="mb-0 settings-title">Account &amp; Settings</h1>
 </div>
+<p style="font-size: 0.72rem; color: var(--text-dim); margin: -0.5rem 0 0.75rem; font-family: 'JetBrains Mono', monospace;">
+    Manage your account. Exports are priced per-job — no subscription required.
+</p>
 
 <!-- ============================================================
      ACCOUNT INFO
@@ -60,174 +64,76 @@
 </section>
 
 <!-- ============================================================
-     PROCESSING PREFERENCES
+     PROMO CODE
      ============================================================ -->
 <section>
-    <h2>Processing Preferences</h2>
-    <p class="text-muted settings-prefs-note">
-        These defaults pre-fill the upload form. You can override them per-job at upload time.
-    </p>
-
-    <fieldset id="prefs-fieldset">
-        <legend>Output Options</legend>
-
-        <label>
-            <input type="checkbox" id="pref-burn-overlays" {{ 'checked' if prefs.burn_overlays else '' }}>
-            Add date &amp; time text to photos (burn overlays)
-        </label>
-
-        <label>
-            <input type="checkbox" id="pref-dark-mode" {{ 'checked' if prefs.dark_mode_pngs else '' }}>
-            Export chats in dark mode (dark mode PNGs)
-        </label>
-
-        <label>
-            <input type="checkbox" id="pref-exif" {{ 'checked' if prefs.exif_enabled else '' }}>
-            Embed dates, locations &amp; camera info in files (EXIF)
-        </label>
-
-        <label>
-            <input type="checkbox" id="pref-xmp" {{ 'checked' if prefs.xmp_enabled else '' }}>
-            Generate XMP sidecar files (Lightroom / Darktable)
-        </label>
-    </fieldset>
-
-    <fieldset>
-        <legend>Advanced</legend>
-
-        <label for="pref-gps-window" class="gps-window-label">
-            GPS matching window: <strong id="gps-window-label" class="text-yellow">{{ prefs.gps_window_seconds }}s</strong>
-            <span class="text-muted gps-window-hint">
-                (how far from a photo's timestamp to search for GPS data)
-            </span>
-        </label>
-        <input type="range" id="pref-gps-window"
-               min="30" max="1800" step="30" value="{{ prefs.gps_window_seconds }}"
-               oninput="document.getElementById('gps-window-label').textContent = this.value + 's'">
-        <div class="gps-window-scale text-muted mono">
-            <span>30s (precise)</span>
-            <span>300s (default)</span>
-            <span>1800s (wide)</span>
-        </div>
-    </fieldset>
-
-    <!-- Save button + feedback -->
-    <div class="gap-row settings-save-row">
-        <button type="button" id="btn-save-prefs" class="btn-primary" onclick="savePreferences()">
-            SAVE PREFERENCES
-        </button>
-        <span id="prefs-feedback" class="mono text-muted settings-feedback"></span>
+    <h2>Promo Code</h2>
+    <div class="info-card">
+        {% if tier_info.tier == 'pro' %}
+        <p class="mono text-yellow" style="font-size: 0.85rem; margin: 0;">
+            <span class="material-symbols-outlined" style="font-size: 1rem; vertical-align: middle;">verified</span>
+            <!-- OLD: Pro unlocked -->
+            Promo applied
+        </p>
+        {% else %}
+        <p class="text-muted" style="font-size: 0.8rem; margin: 0 0 0.75rem;">
+            <!-- OLD: Have a promo code? Enter it below to unlock Pro features. -->
+            Have a promo code? Enter it below to apply discounts to your exports.
+        </p>
+        <form id="promo-form" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="promo-input" placeholder="Enter code"
+                   class="mono"
+                   style="flex: 1; min-width: 140px; max-width: 280px;
+                          padding: 0.5rem 0.75rem;
+                          background: var(--deep-black, #0a0a0a);
+                          border: 1px solid var(--border-dark, #333);
+                          color: #fff;
+                          font-family: 'JetBrains Mono', monospace;
+                          font-size: 0.85rem;
+                          text-transform: uppercase;
+                          letter-spacing: 0.1em;">
+            <button type="submit" class="btn-primary"
+                    style="padding: 0.5rem 1rem; font-size: 0.8rem; white-space: nowrap;">
+                Redeem
+            </button>
+        </form>
+        <p id="promo-msg" class="mono" style="font-size: 0.75rem; margin: 0.5rem 0 0; display: none;"></p>
+        <script>
+        document.getElementById('promo-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var code = document.getElementById('promo-input').value.trim();
+            var msg = document.getElementById('promo-msg');
+            if (!code) return;
+            msg.style.display = 'block';
+            msg.style.color = 'var(--text-muted)';
+            msg.textContent = 'Checking...';
+            fetch('/api/redeem-promo', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({code: code})
+            })
+            .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+            .then(function(res) {
+                if (res.ok) {
+                    msg.style.color = 'var(--hacker-green, #00ff41)';
+                    msg.textContent = res.data.message || 'Success!';
+                    if (res.data.status === 'upgraded') {
+                        setTimeout(function() { window.location.reload(); }, 1500);
+                    }
+                } else {
+                    msg.style.color = 'var(--danger, #ff4444)';
+                    msg.textContent = res.data.detail || 'Invalid code';
+                }
+            })
+            .catch(function() {
+                msg.style.color = 'var(--danger, #ff4444)';
+                msg.textContent = 'Network error';
+            });
+        });
+        </script>
+        {% endif %}
     </div>
 </section>
-
-
-<!-- ============================================================
-     PLAN & TIER
-     ============================================================ -->
-<section>
-    <h2>Plan &amp; Tier</h2>
-
-    {% if tier_info %}
-    <!-- Current tier card -->
-    <div class="info-card tier-current-card" style="border-left: 4px solid {{ tier_info.color }};">
-        <div class="tier-current-header">
-            <span class="tier-current-name" style="color: {{ tier_info.color }};">{{ tier_info.label }}</span>
-            <span class="tier-badge" style="color: {{ tier_info.color }}; border-color: {{ tier_info.color }};">Current Plan</span>
-        </div>
-        <div class="stats-grid tier-limits-grid">
-            <div class="stat-card tier-limit-card">
-                <p class="stat-label">Storage</p>
-                <p class="stat-value" style="color: {{ tier_info.color }};">
-                    {% if tier_info.limits.storage_gb %}{{ tier_info.limits.storage_gb }} GB{% else %}Unlimited{% endif %}
-                </p>
-            </div>
-            <div class="stat-card tier-limit-card">
-                <p class="stat-label">Max Upload</p>
-                <p class="stat-value" style="color: {{ tier_info.color }};">{{ tier_info.limits.max_upload_label }}</p>
-            </div>
-            <div class="stat-card tier-limit-card">
-                <p class="stat-label">Retention</p>
-                <p class="stat-value" style="color: {{ tier_info.color }};">
-                    {% if tier_info.limits.retention_days %}{{ tier_info.limits.retention_days }}d{% else %}Forever{% endif %}
-                </p>
-            </div>
-            <div class="stat-card tier-limit-card">
-                <p class="stat-label">Concurrent Jobs</p>
-                <p class="stat-value" style="color: {{ tier_info.color }};">
-                    {% if tier_info.limits.concurrent_jobs %}{{ tier_info.limits.concurrent_jobs }}{% else %}Unlimited{% endif %}
-                </p>
-            </div>
-            <div class="stat-card tier-limit-card">
-                <p class="stat-label">Bulk Upload</p>
-                <p class="stat-value {% if tier_info.limits.bulk_upload %}green{% else %}white{% endif %}">
-                    {% if tier_info.limits.bulk_upload %}Yes{% else %}No{% endif %}
-                </p>
-            </div>
-        </div>
-        <div class="tier-quota-action">
-            <a href="/quota" class="btn-primary" style="background: {{ tier_info.color }}; border-color: {{ tier_info.color }}; color: var(--deep-black);">
-                VIEW QUOTA DASHBOARD
-            </a>
-        </div>
-    </div>
-
-    <!-- Tier comparison table -->
-    <div class="info-card">
-        <h3 class="settings-section-subtitle">All Plans</h3>
-        <div class="tier-table-scroll">
-            <table class="tier-table">
-                <thead>
-                    <tr class="tier-table-head">
-                        <th class="tier-th">PLAN</th>
-                        <th class="tier-th tier-th-right">STORAGE</th>
-                        <th class="tier-th tier-th-right">MAX UPLOAD</th>
-                        <th class="tier-th tier-th-right">RETENTION</th>
-                        <th class="tier-th tier-th-right">JOBS</th>
-                        <th class="tier-th tier-th-center">BULK</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for t in all_tiers %}
-                    <tr class="tier-row {% if t.tier == tier_info.tier %}tier-row-current{% endif %}">
-                        <td class="tier-td">
-                            <span class="tier-plan-name" style="color: {{ t.color }};">
-                                {{ t.label }}
-                            </span>
-                            {% if t.tier == tier_info.tier %}
-                            <span class="tier-current-tag text-muted">(current)</span>
-                            {% endif %}
-                        </td>
-                        <td class="tier-td tier-td-right mono">
-                            {% if t.storage_gb %}{{ t.storage_gb }} GB{% else %}Unlimited{% endif %}
-                        </td>
-                        <td class="tier-td tier-td-right mono">{{ t.max_upload_label }}</td>
-                        <td class="tier-td tier-td-right mono">
-                            {% if t.retention_days %}{{ t.retention_days }}d{% else %}Forever{% endif %}
-                        </td>
-                        <td class="tier-td tier-td-right mono">
-                            {% if t.concurrent_jobs %}{{ t.concurrent_jobs }}{% else %}Unlimited{% endif %}
-                        </td>
-                        <td class="tier-td tier-td-center">
-                            {% if t.bulk_upload %}
-                                <span class="text-green">Yes</span>
-                            {% else %}
-                                <span class="text-muted">No</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    {% else %}
-    <div class="info-card">
-        <p class="text-muted">Tier information unavailable.</p>
-        <a href="/quota" class="btn-outline settings-quota-fallback">VIEW QUOTA DASHBOARD</a>
-    </div>
-    {% endif %}
-</section>
-
 
 <!-- ============================================================
      DANGER ZONE
@@ -236,63 +142,65 @@
     <div class="danger-zone-card">
         <h2 class="text-danger danger-zone-title">Danger Zone</h2>
         <p class="text-muted danger-zone-note">
-            These actions are permanent and cannot be undone.
+            This will permanently delete your account and all data — jobs, exports, uploads, settings, everything.
+            There is no undo. Downloaded exports on your device are not affected.
         </p>
-        <button type="button" class="btn-danger"
-                onclick="alert('To delete all your data, please contact support.')">
+        <button type="button" class="btn-danger" id="delete-account-btn"
+                onclick="confirmDeleteAccount()">
             DELETE ALL MY DATA
         </button>
+        <p id="delete-msg" class="mono" style="font-size:0.75rem; margin:0.5rem 0 0; display:none;"></p>
     </div>
 </section>
 
-
 <script>
-async function savePreferences() {
-    const btn = document.getElementById('btn-save-prefs');
-    const feedback = document.getElementById('prefs-feedback');
-
-    const payload = {
-        burn_overlays: document.getElementById('pref-burn-overlays').checked,
-        dark_mode_pngs: document.getElementById('pref-dark-mode').checked,
-        exif_enabled: document.getElementById('pref-exif').checked,
-        xmp_enabled: document.getElementById('pref-xmp').checked,
-        gps_window_seconds: parseInt(document.getElementById('pref-gps-window').value, 10),
-    };
-
-    btn.disabled = true;
-    btn.textContent = 'SAVING...';
-    feedback.textContent = '';
-    feedback.style.color = '';
-
-    try {
-        const resp = await fetch('/api/preferences', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            throw new Error(err.detail || `HTTP ${resp.status}`);
-        }
-
-        const data = await resp.json();
-        if (data.saved) {
-            feedback.textContent = 'Preferences saved.';
-            feedback.style.color = 'var(--success)';
-        } else {
-            throw new Error('Unexpected response from server.');
-        }
-    } catch (err) {
-        feedback.textContent = 'Error: ' + err.message;
-        feedback.style.color = 'var(--danger)';
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'SAVE PREFERENCES';
-        // Clear feedback after 4s
-        setTimeout(() => { feedback.textContent = ''; feedback.style.color = ''; }, 4000);
+function confirmDeleteAccount() {
+    var username = '{{ username }}';
+    var input = prompt(
+        'This will PERMANENTLY DELETE your account and ALL data.\n\n' +
+        'Type your username "' + username + '" to confirm:'
+    );
+    if (!input) return;
+    if (input.trim() !== username) {
+        var msg = document.getElementById('delete-msg');
+        msg.style.display = 'block';
+        msg.style.color = 'var(--danger, #ff4444)';
+        msg.textContent = 'Username did not match. Deletion cancelled.';
+        return;
     }
+    var btn = document.getElementById('delete-account-btn');
+    btn.disabled = true;
+    btn.textContent = 'DELETING...';
+    fetch('/api/account', {
+        method: 'DELETE',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({confirm: input.trim()})
+    })
+    .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+    .then(function(res) {
+        var msg = document.getElementById('delete-msg');
+        msg.style.display = 'block';
+        if (res.ok) {
+            msg.style.color = 'var(--snap-yellow)';
+            msg.textContent = 'Account deleted. Redirecting...';
+            setTimeout(function() { window.location.href = '/login'; }, 1500);
+        } else {
+            msg.style.color = 'var(--danger, #ff4444)';
+            msg.textContent = res.data.detail || 'Deletion failed.';
+            btn.disabled = false;
+            btn.textContent = 'DELETE ALL MY DATA';
+        }
+    })
+    .catch(function() {
+        var msg = document.getElementById('delete-msg');
+        msg.style.display = 'block';
+        msg.style.color = 'var(--danger, #ff4444)';
+        msg.textContent = 'Network error. Try again.';
+        btn.disabled = false;
+        btn.textContent = 'DELETE ALL MY DATA';
+    });
 }
 </script>
+
 {% endblock %}
 {# themed: 2026-02-25 #}

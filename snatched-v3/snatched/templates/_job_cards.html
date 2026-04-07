@@ -1,60 +1,71 @@
 {% if jobs %}
 {% for job in jobs %}
-<div class="job-card {% if job.status == 'running' %}active pulsing-glow{% elif job.status == 'scanned' %}scanned{% elif job.status == 'matched' %}matched{% elif job.status == 'enriched' %}enriched{% elif job.status == 'completed' %}completed{% elif job.status == 'failed' %}failed{% endif %}">
+<div class="job-card {% if job.status in ('running', 'queued') %}active pulsing-glow{% elif job.status == 'scanned' %}scanned{% elif job.status == 'matched' %}matched{% elif job.status == 'enriched' %}enriched{% elif job.status == 'completed' %}completed{% elif job.status == 'failed' %}failed{% endif %}">
     <div class="job-card-header">
         <h3 class="job-id uppercase italic tracking-tight">Job #{{ job.id }}</h3>
-        <span class="status-badge status-{{ job.status }}">{{ job.status | title }}</span>
-    </div>
-
-    {# --- Feature #30: Retention countdown --- #}
-    <div class="retention-info">
-        {% if job.retention_expires_at is none %}
-            <span class="text-muted">No expiration</span>
+        {% if job.status == 'completed' and not job.has_completed_export %}
+        <span class="status-badge status-running">Packaging</span>
+        {% elif job.status == 'completed' %}
+        <span class="status-badge status-{{ job.status }}">Ready</span>
+        {% elif job.status == 'queued' %}
+        <span class="status-badge status-running">Queued</span>
+        {% elif job.status == 'scanned' %}
+        <span class="status-badge" style="background: var(--snap-yellow); color: #000; font-weight: 900;">Choose Package</span>
+        {% elif job.status == 'running' and job.current_phase == 'ingest' %}
+        <span class="status-badge status-running">Scanning</span>
+        {% elif job.status == 'running' %}
+        <span class="status-badge status-{{ job.status }}">Processing</span>
         {% else %}
-            {% set days_left = job.retention_days_remaining %}
-            {% if days_left is none or days_left < 0 %}
-                <span class="text-danger uppercase tracking-wide job-expired-label">EXPIRED</span>
-            {% elif days_left < 3 %}
-                <span class="retention-pulse text-danger">
-                    Expires {{ job.retention_expires_at }} &mdash; {{ days_left }}d left
-                </span>
-            {% elif days_left < 7 %}
-                <span class="text-danger">
-                    Expires {{ job.retention_expires_at }} &mdash; {{ days_left }}d left
-                </span>
-            {% elif days_left <= 14 %}
-                <span class="text-warning">
-                    Expires {{ job.retention_expires_at }} &mdash; {{ days_left }}d left
-                </span>
-            {% else %}
-                <span class="text-green">
-                    Expires {{ job.retention_expires_at }} &mdash; {{ days_left }}d left
-                </span>
-            {% endif %}
-            {% if job.tier != 'free' %}
-            <button
-                hx-post="/api/jobs/{{ job.id }}/extend-retention"
-                hx-swap="none"
-                hx-on::after-request="htmx.trigger('#active-jobs', 'load'); htmx.trigger('#job-history', 'load');"
-                class="btn-outline btn-xs btn-yellow">
-                EXTEND
-            </button>
-            {% endif %}
+        <span class="status-badge status-{{ job.status }}">{{ job.status | title }}</span>
         {% endif %}
     </div>
-    {# --- end Feature #30 --- #}
 
     <div class="job-meta">
         <div><span class="label">File:</span> {{ job.upload_filename }}</div>
         {% if job.upload_size_bytes %}
         <div><span class="label">Size:</span> {{ (job.upload_size_bytes / 1024 / 1024) | round(1) }} MB</div>
         {% endif %}
+        {% if job.job_tier and job.job_tier != 'free' %}
+        <div><span class="label">Package:</span> <span style="color: var(--snap-yellow);">{{ job.job_tier | replace('_', ' ') | title }}</span></div>
+        {% elif job.job_tier == 'free' and job.status == 'completed' %}
+        <div><span class="label">Package:</span> <span style="color: #4ade80;">Free</span></div>
+        {% elif job.processing_mode and job.processing_mode != 'speed_run' %}
+        <!-- legacy --> <div><span class="label">Mode:</span> {{ job.processing_mode | replace('_', ' ') | title }}</div>
+        {% endif %}
+        {% if job.lanes_requested %}
+        <div><span class="label">Lanes:</span> {{ job.lanes_requested | join(', ') }}</div>
+        {% endif %}
         <div><span class="label">Created:</span> {{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else 'N/A' }}</div>
         {% if job.current_phase %}
         <div><span class="label">Phase:</span> {{ job.current_phase | title }}</div>
         {% endif %}
         {% if job.completed_at %}
-        <div><span class="label">Completed:</span> {{ job.completed_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        <div><span class="label">Done:</span> {{ job.completed_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        {% endif %}
+        {% if job.completed_at and job.started_at %}
+        {% set elapsed = (job.completed_at - job.started_at).total_seconds() | int %}
+        <div><span class="label">Duration:</span> {{ elapsed // 60 }}m {{ elapsed % 60 }}s</div>
+        {% endif %}
+        {# Retention inline #}
+        {% if job.retention_expires_at is not none %}
+        {% set days_left = job.retention_days_remaining %}
+        <div>
+            <span class="label">Expires:</span>
+            {% if days_left is none or days_left < 0 %}
+            <span class="text-danger uppercase">EXPIRED</span>
+            {% elif days_left < 7 %}
+            <span class="{% if days_left < 3 %}retention-pulse {% endif %}text-danger">{{ days_left }}d left</span>
+            {% elif days_left <= 14 %}
+            <span class="text-warning">{{ days_left }}d left</span>
+            {% else %}
+            <span class="text-green">{{ days_left }}d</span>
+            {% endif %}
+            {% if job.job_tier and job.job_tier != 'free' %}
+            <button hx-post="/api/jobs/{{ job.id }}/extend-retention" hx-swap="none"
+                hx-on::after-request="htmx.trigger('#active-jobs', 'load'); htmx.trigger('#job-history', 'load');"
+                class="btn-outline btn-xs btn-yellow" style="margin-left: 0.3rem; padding: 0.1rem 0.35rem; font-size: 0.6rem;">EXTEND</button>
+            {% endif %}
+        </div>
         {% endif %}
     </div>
 
@@ -65,14 +76,55 @@
     {% endif %}
 
     {% if job.status == 'completed' and job.stats_json %}
-    <div class="job-stats text-green">
-        {{ job.stats_json.total_assets | default(0) }} assets,
-        {{ job.stats_json.total_matches | default(0) }} matched
-        {% if job.stats_json.match_rate %}({{ (job.stats_json.match_rate * 100) | round(1) }}%){% endif %}
+    {% if not job.has_completed_export %}
+    <div class="job-stats text-yellow">
+        Building download &mdash; {{ job.stats_json.total_assets | default(0) }} assets processed
+    </div>
+    {% else %}
+    <div class="job-stats-grid">
+        {% if job.stats_json.total_memories %}
+        <div class="job-stat-item">
+            <span class="job-stat-num">{{ "{:,}".format(job.stats_json.total_memories) }}</span>
+            <span class="job-stat-lbl">memories</span>
+        </div>
+        {% endif %}
+        {% if job.stats_json.chat_count %}
+        <div class="job-stat-item">
+            <span class="job-stat-num">{{ "{:,}".format(job.stats_json.chat_count) }}</span>
+            <span class="job-stat-lbl">chat media</span>
+        </div>
+        {% endif %}
+        {% if job.stats_json.story_count %}
+        <div class="job-stat-item">
+            <span class="job-stat-num">{{ "{:,}".format(job.stats_json.story_count) }}</span>
+            <span class="job-stat-lbl">stories</span>
+        </div>
+        {% endif %}
+        <div class="job-stat-item">
+            <span class="job-stat-num">{{ "{:,}".format(job.stats_json.total_assets | default(0)) }}</span>
+            <span class="job-stat-lbl">total files</span>
+        </div>
+        <div class="job-stat-item">
+            <span class="job-stat-num">{{ "{:,}".format(job.stats_json.matched_count | default(0)) }}</span>
+            <span class="job-stat-lbl">matched{% if job.stats_json.match_rate %} ({{ (job.stats_json.match_rate * 100) | round(0) | int }}%){% endif %}</span>
+        </div>
+        {% if job.stats_json.gps_count %}
+        <div class="job-stat-item">
+            <span class="job-stat-num">{{ "{:,}".format(job.stats_json.gps_count) }}</span>
+            <span class="job-stat-lbl">GPS tagged{% if job.stats_json.gps_coverage is not none %} ({{ job.stats_json.gps_coverage | round(0) | int }}%){% endif %}</span>
+        </div>
+        {% endif %}
+        {% if job.stats_json.friend_count %}
+        <div class="job-stat-item">
+            <span class="job-stat-num">{{ "{:,}".format(job.stats_json.friend_count) }}</span>
+            <span class="job-stat-lbl">friends</span>
+        </div>
+        {% endif %}
     </div>
     {% endif %}
+    {% endif %}
 
-    {% if job.status == 'running' %}
+    {% if job.status in ('running', 'queued') %}
     <div class="progress-bar">
         <div class="progress-fill striped" style="width: {{ job.progress_pct }}%"></div>
     </div>
@@ -80,40 +132,45 @@
 
     <div class="job-actions">
         {% if job.status == 'scanned' %}
-        <a href="/job/{{ job.id }}" class="btn-primary btn-sm">
-            <span class="material-symbols-outlined icon-sm">tune</span> Configure &amp; Process
+        <a href="/configure/{{ job.id }}" class="btn-primary btn-sm">
+            <span class="material-symbols-outlined icon-sm">analytics</span> View Report &amp; Choose Package
         </a>
         <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Discard</button>
         {% endif %}
         {% if job.status == 'matched' %}
-        <a href="/job/{{ job.id }}" class="btn-primary btn-sm">Review Matches</a>
+        <a href="/snatchedmemories/{{ job.id }}" class="btn-primary btn-sm">Review Matches</a>
         <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Discard</button>
         {% endif %}
         {% if job.status == 'enriched' %}
-        <a href="/job/{{ job.id }}" class="btn-primary btn-sm">Review &amp; Export</a>
+        <a href="/snatchedmemories/{{ job.id }}" class="btn-primary btn-sm">Review &amp; Export</a>
         <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Discard</button>
         {% endif %}
-        {% if job.status == 'running' %}
+        {% if job.status in ('running', 'queued') %}
         <button class="btn-outline btn-sm" onclick="cancelJob({{ job.id }}, this)">Cancel</button>
-        <a href="/job/{{ job.id }}" class="btn-primary btn-sm">Live Progress</a>
+        <a href="/snatchedmemories/{{ job.id }}" class="btn-primary btn-sm">Live Progress</a>
         {% endif %}
         {% if job.status == 'pending' %}
         <button class="btn-outline btn-sm" onclick="cancelJob({{ job.id }}, this)">Cancel</button>
         {% endif %}
-        {% if job.status == 'completed' %}
-        <a href="/job/{{ job.id }}" class="btn-outline btn-sm">View Results</a>
-        <a href="/download/{{ job.id }}" class="btn-primary btn-sm">
+        {% if job.status == 'completed' and job.has_completed_export %}
+        <a href="/snatchedmemories/{{ job.id }}" class="btn-outline btn-sm">View Results</a>
+        <a href="/snatchedmemories/{{ job.id }}" class="btn-primary btn-sm">
             <span class="material-symbols-outlined icon-sm">download</span> Download
+        </a>
+        <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Delete</button>
+        {% elif job.status == 'completed' %}
+        <a href="/snatchedmemories/{{ job.id }}" class="btn-primary btn-sm">
+            <span class="material-symbols-outlined icon-sm">hourglass_top</span> View Progress
         </a>
         <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Delete</button>
         {% endif %}
         {% if job.status == 'failed' %}
-        <a href="/job/{{ job.id }}" class="btn-outline btn-sm">Details</a>
+        <a href="/snatchedmemories/{{ job.id }}" class="btn-outline btn-sm">Details</a>
         <button class="btn-primary btn-sm" onclick="retryJob({{ job.id }})">RETRY</button>
         <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Delete</button>
         {% endif %}
         {% if job.status == 'cancelled' %}
-        <a href="/job/{{ job.id }}" class="btn-outline btn-sm">View Details</a>
+        <a href="/snatchedmemories/{{ job.id }}" class="btn-outline btn-sm">View Details</a>
         <button class="btn-outline btn-sm" onclick="deleteJob({{ job.id }}, this)">Delete</button>
         {% endif %}
     </div>
@@ -126,7 +183,7 @@ async function retryJob(jobId) {
         var resp = await fetch('/api/jobs/' + jobId + '/retry', { method: 'POST' });
         var data = await resp.json();
         if (resp.ok && data.new_job_id) {
-            window.location.href = '/job/' + data.new_job_id;
+            window.location.href = '/snatchedmemories/' + data.new_job_id;
         } else {
             alert('Retry failed: ' + (data.detail || 'Unknown error'));
         }

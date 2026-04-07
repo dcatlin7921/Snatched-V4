@@ -1,0 +1,1087 @@
+{% extends "base.html" %}
+{% block title %}Vault Manager — SNATCHED{% endblock %}
+{% block content %}
+
+<style>
+    .hidden { display: none !important; }
+
+    /* ── Page container ── */
+    .vt-page { max-width: 720px; margin: 0 auto; padding: 0.75rem 0; }
+
+    /* ── Hero (compact) ── */
+    .vt-hero {
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    .vt-hero-title {
+        font-size: 1.3rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        font-style: italic;
+        letter-spacing: 0.03em;
+        margin: 0;
+    }
+    .vt-hero-title .text-yellow { color: var(--snap-yellow); }
+    .vt-hero-sub {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        margin-top: 0.15rem;
+    }
+
+    /* ── Section labels ── */
+    .vt-section-label {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.6rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        color: var(--text-muted);
+        margin-bottom: 0.75rem;
+    }
+    .vt-section-sub {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        margin-top: -0.5rem;
+        margin-bottom: 0.75rem;
+        line-height: 1.4;
+    }
+
+    /* ── Reassurance copy ── */
+    .vt-reassurance {
+        font-size: 0.7rem;
+        color: var(--text-muted);
+        font-style: italic;
+        text-align: center;
+        margin-bottom: 0.75rem;
+        line-height: 1.4;
+    }
+
+    /* ── Stats grid ── */
+    .vt-stat-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+    .vt-stat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.05rem;
+    }
+    .vt-stat-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1.1rem;
+        font-weight: 900;
+        color: var(--snap-yellow);
+        line-height: 1;
+    }
+    .vt-stat-value--green { color: var(--success); }
+    .vt-stat-value--muted { color: var(--text-muted); }
+    .vt-stat-label {
+        font-size: 0.58rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--text-muted);
+    }
+
+    /* ── Import history table ── */
+    .vt-import-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.78rem;
+        margin-top: 0.5rem;
+    }
+    .vt-import-table th {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.6rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--text-muted);
+        text-align: left;
+        padding: 0.5rem 0.4rem;
+        border-bottom: 1px solid var(--border-dark);
+    }
+    .vt-import-table td {
+        padding: 0.45rem 0.4rem;
+        border-bottom: 1px solid rgba(45, 45, 45, 0.5);
+        color: var(--text-primary);
+    }
+    .vt-import-table tr:hover td {
+        background: rgba(255, 252, 0, 0.03);
+    }
+    .vt-import-num {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 800;
+        color: var(--snap-yellow);
+    }
+
+    /* ── Actions ── */
+    .vt-actions {
+        margin-top: 1.25rem;
+    }
+
+    /* ── Divider ── */
+    .vt-divider {
+        height: 1px;
+        background: var(--border-dark);
+        margin: 1rem 0;
+    }
+
+    /* ── Back link ── */
+    .vt-back {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        margin-bottom: 0.75rem;
+    }
+    .vt-back:hover { color: var(--snap-yellow); }
+    .vt-back .material-symbols-outlined { font-size: 0.9rem; }
+
+    /* ── Empty state ── */
+    .vt-empty {
+        padding: 1.5rem 1rem;
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        line-height: 1.5;
+    }
+    .vt-empty strong {
+        display: block;
+        color: var(--text-primary);
+        margin-bottom: 0.25rem;
+    }
+
+    /* ── Job cards (available uploads) ── */
+    .vt-job-card {
+        background: rgba(30, 30, 30, 0.6);
+        border: 1px solid var(--border-dark);
+        border-radius: 6px;
+        padding: 0.85rem 1rem;
+        margin-bottom: 0.65rem;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 1rem;
+    }
+    .vt-job-card:hover {
+        border-color: rgba(255, 252, 0, 0.15);
+    }
+    .vt-job-info {
+        flex: 1;
+        min-width: 200px;
+    }
+    .vt-job-id {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.68rem;
+        font-weight: 800;
+        color: var(--text-muted);
+    }
+    .vt-job-filename {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.78rem;
+        color: var(--text-primary);
+        word-break: break-all;
+        margin: 0.15rem 0;
+    }
+    .vt-job-meta {
+        font-size: 0.65rem;
+        color: var(--text-muted);
+    }
+    .vt-job-meta span + span::before {
+        content: ' \00b7 ';
+    }
+    .vt-job-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-shrink: 0;
+    }
+
+    /* ── Fingerprint badges ── */
+    .vt-fp-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.6rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        padding: 0.2rem 0.5rem;
+        border-radius: 100px;
+        white-space: nowrap;
+        cursor: help;
+    }
+    .vt-fp-badge .material-symbols-outlined {
+        font-size: 0.85rem;
+    }
+    .vt-fp-badge--verified {
+        background: rgba(76, 175, 80, 0.15);
+        color: var(--success);
+    }
+    .vt-fp-badge--partial {
+        background: rgba(255, 193, 7, 0.15);
+        color: var(--warning);
+    }
+    .vt-fp-badge--mismatch {
+        background: rgba(244, 67, 54, 0.15);
+        color: var(--danger);
+    }
+    .vt-fp-badge--no-data {
+        background: rgba(158, 158, 158, 0.15);
+        color: var(--text-muted);
+    }
+    .vt-fp-badge--first-import {
+        background: rgba(255, 252, 0, 0.15);
+        color: var(--snap-yellow);
+    }
+
+    /* ── Merge button ── */
+    .vt-merge-btn {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        padding: 0.4rem 1rem;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        background: var(--snap-yellow);
+        color: #000;
+        transition: opacity 0.2s;
+        white-space: nowrap;
+    }
+    .vt-merge-btn:hover { opacity: 0.85; }
+    .vt-merge-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    .vt-merge-btn--danger {
+        background: transparent;
+        color: var(--danger);
+        border: 1px solid var(--danger);
+    }
+    .vt-merge-btn--danger:hover {
+        background: rgba(244, 67, 54, 0.1);
+        opacity: 1;
+    }
+
+    /* ── Remove button ── */
+    .vt-remove-btn {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.65rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 0.25rem 0.6rem;
+        border: 1px solid var(--border-dark);
+        border-radius: 4px;
+        cursor: pointer;
+        background: transparent;
+        color: var(--text-muted);
+        transition: all 0.2s;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        white-space: nowrap;
+    }
+    .vt-remove-btn .material-symbols-outlined { font-size: 0.85rem; }
+    .vt-remove-btn:hover {
+        color: var(--danger);
+        border-color: var(--danger);
+        background: rgba(244, 67, 54, 0.08);
+    }
+
+    /* ── Mismatch modal ── */
+    .vt-modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.75);
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
+    }
+    .vt-modal-overlay.visible { display: flex; }
+    .vt-modal {
+        background: #1a1a1a;
+        border: 1px solid var(--border-dark);
+        border-radius: 8px;
+        max-width: 500px;
+        width: 90%;
+        padding: 1.5rem;
+    }
+    .vt-modal-title {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.95rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        margin: 0 0 1rem 0;
+    }
+    .vt-modal-title--danger { color: var(--danger); }
+    .vt-modal-title--yellow { color: var(--snap-yellow); }
+    .vt-modal-title--warning { color: var(--warning); }
+    .vt-modal-body {
+        font-size: 0.82rem;
+        color: var(--text-primary);
+        line-height: 1.6;
+        margin-bottom: 1rem;
+        white-space: pre-line;
+    }
+    .vt-modal-body .text-muted {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+    }
+    .vt-modal-actions {
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    .vt-modal-input {
+        width: 100%;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.85rem;
+        padding: 0.5rem;
+        margin-bottom: 0.75rem;
+        background: #111;
+        border: 1px solid var(--border-dark);
+        border-radius: 4px;
+        color: var(--text-primary);
+    }
+    .vt-btn-cancel {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.72rem;
+        font-weight: 800;
+        padding: 0.4rem 1rem;
+        border: 1px solid var(--border-dark);
+        border-radius: 4px;
+        cursor: pointer;
+        background: transparent;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .vt-btn-cancel:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+    /* ── Toast notification ── */
+    .vt-toast {
+        position: fixed;
+        bottom: 1.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.78rem;
+        font-weight: 700;
+        padding: 0.6rem 1.25rem;
+        border-radius: 6px;
+        z-index: 10000;
+        opacity: 0;
+        transition: opacity 0.3s;
+        pointer-events: none;
+    }
+    .vt-toast.visible { opacity: 1; pointer-events: auto; }
+    .vt-toast--success { background: var(--success); color: #000; }
+    .vt-toast--error { background: var(--danger); color: #fff; }
+
+    /* ── Seed check badge ── */
+    .vt-seed-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.2rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.55rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 0.15rem 0.4rem;
+        border-radius: 100px;
+        white-space: nowrap;
+    }
+    .vt-seed-badge--ready {
+        background: rgba(0, 255, 136, 0.12);
+        color: #00ff88;
+    }
+    .vt-seed-badge--insufficient {
+        background: rgba(255, 136, 0, 0.12);
+        color: #ff8800;
+        cursor: help;
+    }
+
+    /* ── Gate rejection card ── */
+    .vt-gate-card {
+        background: rgba(30, 30, 30, 0.8);
+        border: 1px solid rgba(255, 68, 68, 0.3);
+        border-radius: 6px;
+        padding: 1rem 1.1rem;
+        margin-top: 0.6rem;
+        width: 100%;
+    }
+    .vt-gate-title {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #ff4444;
+        margin: 0 0 0.65rem 0;
+    }
+    .vt-gate-checklist {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 0.75rem 0;
+    }
+    .vt-gate-checklist li {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.72rem;
+        padding: 0.3rem 0;
+        display: flex;
+        align-items: baseline;
+        gap: 0.4rem;
+    }
+    .vt-gate-check-icon {
+        flex-shrink: 0;
+        font-size: 0.8rem;
+    }
+    .vt-gate-check-icon--pass { color: #00ff88; }
+    .vt-gate-check-icon--fail { color: #ff4444; }
+    .vt-gate-check-detail {
+        color: var(--text-muted);
+        font-size: 0.62rem;
+        margin-left: 0.15rem;
+    }
+    .vt-gate-recommendation {
+        font-size: 0.72rem;
+        color: var(--snap-yellow);
+        font-style: italic;
+        margin-bottom: 0.65rem;
+        line-height: 1.4;
+    }
+    .vt-gate-learn-more {
+        font-size: 0.65rem;
+        color: var(--text-muted);
+        line-height: 1.5;
+        padding-top: 0.5rem;
+        border-top: 1px solid var(--border-dark);
+    }
+    .vt-gate-learn-toggle {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.6rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-muted);
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0.2rem 0;
+        margin-bottom: 0.3rem;
+    }
+    .vt-gate-learn-toggle:hover { color: var(--snap-yellow); }
+    .vt-gate-learn-body {
+        display: none;
+    }
+    .vt-gate-learn-body.visible {
+        display: block;
+    }
+    .vt-gate-dismiss {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.6rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+        background: none;
+        border: 1px solid var(--border-dark);
+        border-radius: 4px;
+        padding: 0.25rem 0.6rem;
+        cursor: pointer;
+        margin-top: 0.5rem;
+    }
+    .vt-gate-dismiss:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+    /* ── Responsive ── */
+    @media (max-width: 479px) {
+        .vt-stat-grid { grid-template-columns: 1fr 1fr; }
+        .vt-stat-value { font-size: 0.95rem; }
+        .vt-hero-title { font-size: 1.1rem; }
+        .vt-import-table { font-size: 0.7rem; }
+        .vt-import-table th:nth-child(2),
+        .vt-import-table td:nth-child(2) { display: none; }
+        .vt-job-card { flex-direction: column; align-items: flex-start; }
+        .vt-job-actions { width: 100%; justify-content: flex-end; }
+    }
+</style>
+
+<div class="vt-page" id="vault-content">
+
+    <!-- Back nav -->
+    <a href="/dashboard" class="vt-back">
+        <span class="material-symbols-outlined">arrow_back</span>
+        Dashboard
+    </a>
+
+    <!-- Hero -->
+    <div class="vt-hero">
+        {% if vault %}
+        <h1 class="vt-hero-title">
+            <span class="text-yellow">YOUR</span> VAULT
+        </h1>
+        {% if vault.snap_account_uid %}
+        <p class="vt-hero-sub">UID: {{ vault.snap_account_uid }}</p>
+        {% endif %}
+        <p class="vt-hero-sub">Created {{ vault.created_at.strftime('%Y-%m-%d') if vault.created_at else 'N/A' }}</p>
+        <p class="vt-reassurance">One vault. Every upload. All your Snapchat data, deduplicated and protected.</p>
+        {% else %}
+        <h1 class="vt-hero-title">
+            <span class="text-yellow">YOUR</span> VAULT
+        </h1>
+        <p class="vt-hero-sub">One vault. Every upload. All your Snapchat data, deduplicated and protected.</p>
+        {% endif %}
+    </div>
+
+    <div class="vt-divider"></div>
+
+    <!-- Stats Grid -->
+    {% if vault %}
+    <p class="vt-section-label">VAULT STATISTICS</p>
+    <div class="vt-stat-grid">
+        <div class="vt-stat">
+            <span class="vt-stat-value">{{ "{:,}".format(stats.total_assets) }}</span>
+            <span class="vt-stat-label">Total Assets</span>
+        </div>
+        <div class="vt-stat">
+            <span class="vt-stat-value">{{ "{:,}".format(stats.total_memories) }}</span>
+            <span class="vt-stat-label">Memories</span>
+        </div>
+        <div class="vt-stat">
+            <span class="vt-stat-value">{{ "{:,}".format(stats.total_locations) }}</span>
+            <span class="vt-stat-label">Locations</span>
+        </div>
+        <div class="vt-stat">
+            <span class="vt-stat-value">{{ "{:,}".format(stats.total_friends) }}</span>
+            <span class="vt-stat-label">Friends</span>
+        </div>
+        <div class="vt-stat">
+            <span class="vt-stat-value">{{ "{:,}".format(stats.total_chat_messages) }}</span>
+            <span class="vt-stat-label">Chat Messages</span>
+        </div>
+        <div class="vt-stat">
+            <span class="vt-stat-value">{{ "{:,}".format(stats.total_snap_messages) }}</span>
+            <span class="vt-stat-label">Snap Messages</span>
+        </div>
+    </div>
+
+    <!-- Secondary stats row -->
+    <div class="vt-stat-grid">
+        <div class="vt-stat">
+            <span class="vt-stat-value{% if stats.gps_coverage.pct >= 75 %} vt-stat-value--green{% endif %}">{{ stats.gps_coverage.pct }}%</span>
+            <span class="vt-stat-label">GPS Coverage</span>
+        </div>
+        <div class="vt-stat">
+            <span class="vt-stat-value">{{ stats.import_count }}</span>
+            <span class="vt-stat-label">Imports</span>
+        </div>
+        <div class="vt-stat">
+            {% if stats.date_range.min and stats.date_range.max %}
+            <span class="vt-stat-value vt-stat-value--muted" style="font-size: 0.75rem;">{{ stats.date_range.min[:10] }} &mdash; {{ stats.date_range.max[:10] }}</span>
+            {% else %}
+            <span class="vt-stat-value vt-stat-value--muted" style="font-size: 0.75rem;">No dates</span>
+            {% endif %}
+            <span class="vt-stat-label">Date Range</span>
+        </div>
+    </div>
+
+    <div class="vt-divider"></div>
+    {% else %}
+    <!-- No vault yet -->
+    <div class="vt-empty">
+        <strong>No vault yet.</strong>
+        Complete a job and merge it here to create your personal vault. Every upload after that builds on top of it.
+    </div>
+    <div class="vt-divider"></div>
+    {% endif %}
+
+    <!-- ═══ READY TO MERGE ═══ -->
+    <p class="vt-section-label">READY TO MERGE</p>
+    <p class="vt-section-sub">Completed jobs waiting to join your vault. You decide what goes in.</p>
+
+    {% if available_jobs %}
+    {% for job in available_jobs %}
+    <div class="vt-job-card" id="job-card-{{ job.id }}">
+        <div class="vt-job-info">
+            <div class="vt-job-id">Job #{{ job.id }}</div>
+            <div class="vt-job-filename">
+                {% for fn in job.original_filenames %}
+                {{ fn }}{% if not loop.last %}, {% endif %}
+                {% endfor %}
+            </div>
+            <div class="vt-job-meta">
+                {% if job.completed_at %}
+                <span>{{ job.completed_at.strftime('%b %d, %Y') }}</span>
+                {% endif %}
+                {% if job.preview_stats and job.preview_stats.assets %}
+                <span>{{ "{:,}".format(job.preview_stats.assets) }} assets</span>
+                {% endif %}
+            </div>
+        </div>
+        <!-- Gate rejection card placeholder (filled by JS on 422) -->
+        <div class="vt-gate-slot" id="gate-slot-{{ job.id }}" style="width:100%;"></div>
+        <div class="vt-job-actions">
+            <!-- Seed check badge (first import only, pre-merge indicator) -->
+            {% if job.seed_check %}
+                {% if job.seed_check.pass %}
+                <span class="vt-seed-badge vt-seed-badge--ready">VAULT READY</span>
+                {% else %}
+                <span class="vt-seed-badge vt-seed-badge--insufficient"
+                      title="{% for k, v in job.seed_check.checks.items() %}{% if not v.pass %}{{ v.detail }}{% if not loop.last %}; {% endif %}{% endif %}{% endfor %}">
+                    INSUFFICIENT DATA
+                </span>
+                {% endif %}
+            {% endif %}
+            <!-- Fingerprint badge -->
+            {% if job.fingerprint.status == 'verified' %}
+            <span class="vt-fp-badge vt-fp-badge--verified" title="This upload's Snapchat account matches your vault. Safe to merge.">
+                <span class="material-symbols-outlined">verified</span>
+                VERIFIED
+            </span>
+            {% elif job.fingerprint.status == 'first_import' %}
+            <span class="vt-fp-badge vt-fp-badge--first-import" title="This will create your vault. The Snapchat account in this upload becomes your vault's identity.">
+                <span class="material-symbols-outlined">add_circle</span>
+                FIRST IMPORT
+            </span>
+            {% elif job.fingerprint.status == 'partial' %}
+            <span class="vt-fp-badge vt-fp-badge--partial" title="This upload has no account info (media-only or split ZIP). Your vault already has verified imports, so it's probably fine — but we can't confirm the account.">
+                <span class="material-symbols-outlined">help</span>
+                NO ID
+            </span>
+            {% elif job.fingerprint.status == 'mismatch' %}
+            <span class="vt-fp-badge vt-fp-badge--mismatch" title="This upload belongs to a different Snapchat account. Merging it will corrupt your matching data. Don't do this unless you're absolutely sure.">
+                <span class="material-symbols-outlined">gpp_bad</span>
+                WRONG ACCOUNT
+            </span>
+            {% elif job.fingerprint.status == 'no_data' %}
+            <span class="vt-fp-badge vt-fp-badge--no-data" title="This upload contains only media files — no Snapchat metadata to verify. Merging adds the files but won't improve matching.">
+                <span class="material-symbols-outlined">image</span>
+                MEDIA ONLY
+            </span>
+            {% endif %}
+
+            <!-- Merge button -->
+            {% if job.fingerprint.status == 'mismatch' %}
+            <button class="vt-merge-btn vt-merge-btn--danger"
+                    onclick="showMismatchModal({{ job.id }}, '{{ job.fingerprint.job_username or '' }}', '{{ job.fingerprint.job_uid or '' }}')">
+                Force Merge
+            </button>
+            {% elif job.fingerprint.status == 'first_import' %}
+            <button class="vt-merge-btn"
+                    onclick="showFirstImportModal({{ job.id }}, '{{ job.snap_username or '' }}', '{{ job.snap_account_uid or '' }}')">
+                Create Vault &amp; Merge
+            </button>
+            {% elif job.fingerprint.status == 'partial' %}
+            <button class="vt-merge-btn"
+                    onclick="showPartialModal({{ job.id }})">
+                Merge into Vault
+            </button>
+            {% elif job.fingerprint.status == 'no_data' %}
+            <button class="vt-merge-btn"
+                    onclick="showNoDataModal({{ job.id }})">
+                Merge into Vault
+            </button>
+            {% else %}
+            {# verified — no confirmation needed #}
+            <button class="vt-merge-btn"
+                    onclick="doMerge({{ job.id }}, false, this)">
+                Merge into Vault
+            </button>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="vt-empty">
+        <strong>Nothing waiting.</strong>
+        All your completed jobs are already in the vault — or you haven't finished one yet.
+    </div>
+    {% endif %}
+
+    <div class="vt-divider"></div>
+
+    <!-- ═══ MERGED IMPORTS ═══ -->
+    <p class="vt-section-label">MERGED IMPORTS</p>
+    <p class="vt-section-sub">Everything currently stored in your vault. Remove an import to undo it.</p>
+
+    {% if imports %}
+    <table class="vt-import-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Date</th>
+                <th>Files</th>
+                <th>Added</th>
+                <th>Skipped</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for imp in imports %}
+            <tr id="import-row-{{ imp.id }}">
+                <td class="vt-import-num">#{{ loop.index }}</td>
+                <td>{{ imp.created_at.strftime('%b %d, %Y %H:%M') if imp.created_at else 'N/A' }}</td>
+                <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; word-break: break-all;">{{ imp.original_filename or 'Unknown' }}</td>
+                <td class="vt-import-num">{{ "{:,}".format(imp.assets_added) }} new</td>
+                <td style="color: var(--text-muted);">{{ "{:,}".format(imp.assets_skipped) }} dupes</td>
+                <td style="text-align: right;">
+                    <button class="vt-remove-btn"
+                            onclick="showUnmergeModal({{ imp.id }}, '{{ (imp.original_filename or 'Unknown') | e }}', '{{ imp.created_at.strftime('%b %d, %Y') if imp.created_at else 'N/A' }}', {{ imp.assets_added }}, 0, 0)">
+                        <span class="material-symbols-outlined">delete_sweep</span>
+                        Remove
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% elif vault %}
+    <div class="vt-empty">
+        <strong>Your vault is empty.</strong>
+        Merge a completed job to start building your collection.
+    </div>
+    {% else %}
+    <div class="vt-empty">
+        <strong>No vault yet.</strong>
+        Complete a job and merge it here to create your personal vault. Every upload after that builds on top of it.
+    </div>
+    {% endif %}
+
+    <div class="vt-divider"></div>
+
+    <!-- Actions -->
+    <div class="vt-actions">
+        <a href="/dashboard" class="btn-outline" style="padding: 0.5rem 1.25rem; font-size: 0.85rem;">Back to Dashboard</a>
+        <span style="font-size: 0.65rem; color: var(--text-muted); font-style: italic; margin-left: 0.5rem;">Vault export coming soon</span>
+    </div>
+
+</div><!-- end #vault-content -->
+
+<!-- ═══ MODALS ═══ -->
+
+<!-- First Import Modal -->
+<div class="vt-modal-overlay" id="modal-first-import">
+    <div class="vt-modal">
+        <h3 class="vt-modal-title vt-modal-title--yellow">Creating Your Vault</h3>
+        <div class="vt-modal-body">This upload will become the foundation of your vault.
+
+Account detected:
+  <span id="first-import-account"></span>
+
+Every future upload gets matched against this account. Make sure this is the right one.</div>
+        <div class="vt-modal-actions">
+            <button class="vt-merge-btn" id="first-import-confirm">Create Vault</button>
+            <button class="vt-btn-cancel" onclick="closeModal('modal-first-import')">Not Yet</button>
+        </div>
+    </div>
+</div>
+
+<!-- Partial Upload Modal -->
+<div class="vt-modal-overlay" id="modal-partial">
+    <div class="vt-modal">
+        <h3 class="vt-modal-title vt-modal-title--warning">No Account Info</h3>
+        <div class="vt-modal-body">This upload doesn't contain Snapchat account data — it's probably a split ZIP (like mydata-2.zip) or a media-only export.
+
+Your vault already has verified imports{% if vault and vault.snap_username %} from {{ vault.snap_username }}{% endif %}, so this is most likely fine. We just can't double-check.</div>
+        <div class="vt-modal-actions">
+            <button class="vt-merge-btn" id="partial-confirm">Merge Anyway</button>
+            <button class="vt-btn-cancel" onclick="closeModal('modal-partial')">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- No Data Modal -->
+<div class="vt-modal-overlay" id="modal-no-data">
+    <div class="vt-modal">
+        <h3 class="vt-modal-title vt-modal-title--warning">Media-Only Upload</h3>
+        <div class="vt-modal-body">This upload has media files but zero Snapchat metadata. Merging adds the files to your vault, but without metadata they can't be matched to memories, locations, or conversations.
+
+Still useful if you want everything in one place.</div>
+        <div class="vt-modal-actions">
+            <button class="vt-merge-btn" id="no-data-confirm">Merge Files</button>
+            <button class="vt-btn-cancel" onclick="closeModal('modal-no-data')">Skip</button>
+        </div>
+    </div>
+</div>
+
+<!-- Mismatch Modal (the scary one) -->
+<div class="vt-modal-overlay" id="modal-mismatch">
+    <div class="vt-modal">
+        <h3 class="vt-modal-title vt-modal-title--danger">
+            <span class="material-symbols-outlined" style="vertical-align: middle; margin-right: 0.25rem;">gpp_bad</span>
+            Wrong Snapchat Account
+        </h3>
+        <div class="vt-modal-body">STOP. This upload belongs to a different Snapchat account.
+
+Your vault:    {% if vault %}{{ vault.snap_username or '' }} ({{ vault.snap_account_uid or '' }}){% endif %}
+This upload:   <span id="mismatch-job-account"></span>
+
+Merging different accounts into one vault corrupts the matching algorithm. Memories get assigned to wrong people. Locations get crossed. Friend lists merge incorrectly.
+
+This is almost never what you want.
+
+<span class="text-muted">If you're absolutely certain — maybe you changed your Snapchat username, or this is a secondary account you want combined — you can force it. But there's no undo for the data confusion this causes.</span></div>
+        <input type="text" class="vt-modal-input" id="mismatch-confirm-input" placeholder="Type MERGE to confirm" autocomplete="off">
+        <div class="vt-modal-actions">
+            <button class="vt-merge-btn vt-merge-btn--danger" id="mismatch-confirm" disabled>Force Merge — I Accept the Risk</button>
+            <button class="vt-btn-cancel" onclick="closeModal('modal-mismatch')">Get Me Out of Here</button>
+        </div>
+    </div>
+</div>
+
+<!-- Unmerge Modal -->
+<div class="vt-modal-overlay" id="modal-unmerge">
+    <div class="vt-modal">
+        <h3 class="vt-modal-title">Remove Import from Vault?</h3>
+        <div class="vt-modal-body" id="unmerge-body"></div>
+        <div class="vt-modal-actions">
+            <button class="vt-merge-btn vt-merge-btn--danger" id="unmerge-confirm">Remove Import</button>
+            <button class="vt-btn-cancel" onclick="closeModal('modal-unmerge')">Keep It</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="vt-toast" id="vt-toast"></div>
+
+<script>
+// ── Helpers ──
+
+function closeModal(id) {
+    document.getElementById(id).classList.remove('visible');
+}
+
+function showToast(message, type) {
+    var toast = document.getElementById('vt-toast');
+    toast.textContent = message;
+    toast.className = 'vt-toast vt-toast--' + (type || 'success') + ' visible';
+    setTimeout(function() { toast.classList.remove('visible'); }, 4000);
+}
+
+function buildGateCard(data, jobId) {
+    var checks = data.checks || {};
+    var html = '<div class="vt-gate-card" id="gate-card-' + jobId + '">';
+    html += '<h4 class="vt-gate-title">YOUR EXPORT NEEDS MORE DATA</h4>';
+    html += '<ul class="vt-gate-checklist">';
+
+    // Fingerprint check
+    var fp = checks.fingerprint || {};
+    html += '<li><span class="vt-gate-check-icon ' +
+        (fp.pass ? 'vt-gate-check-icon--pass">&#10003;' : 'vt-gate-check-icon--fail">&#10007;') +
+        '</span><span>Account fingerprint detected' +
+        (fp.detail ? ' <span class="vt-gate-check-detail">(' + escapeHtml(fp.detail) + ')</span>' : '') +
+        '</span></li>';
+
+    // Date span check
+    var ds = checks.date_span || {};
+    html += '<li><span class="vt-gate-check-icon ' +
+        (ds.pass ? 'vt-gate-check-icon--pass">&#10003;' : 'vt-gate-check-icon--fail">&#10007;') +
+        '</span><span>Date range covers 90+ days' +
+        ' <span class="vt-gate-check-detail">(actual: ' + (ds.days || 0) + ' days)</span>' +
+        '</span></li>';
+
+    // Richness check
+    var ri = checks.richness || {};
+    var cats = ri.categories || {};
+    var catList = [];
+    for (var k in cats) { if (cats[k] > 0) catList.push(k + ': ' + cats[k].toLocaleString()); }
+    html += '<li><span class="vt-gate-check-icon ' +
+        (ri.pass ? 'vt-gate-check-icon--pass">&#10003;' : 'vt-gate-check-icon--fail">&#10007;') +
+        '</span><span>3+ data categories populated' +
+        ' <span class="vt-gate-check-detail">(' + (ri.populated || 0) + '/5' +
+        (catList.length ? ' — ' + catList.join(', ') : '') + ')</span>' +
+        '</span></li>';
+
+    html += '</ul>';
+
+    // Recommendation
+    if (data.recommendation) {
+        html += '<div class="vt-gate-recommendation">' + escapeHtml(data.recommendation) + '</div>';
+    }
+
+    // Learn more section
+    html += '<div class="vt-gate-learn-more">';
+    html += '<button class="vt-gate-learn-toggle" onclick="this.nextElementSibling.classList.toggle(\'visible\')">Learn More</button>';
+    html += '<div class="vt-gate-learn-body">' +
+        'The vault is your permanent Snapchat archive. Creating it from a small or incomplete export ' +
+        'means missing data that can never be recovered. For the best results, request a FULL account ' +
+        'export from Snapchat (Settings &rarr; My Data &rarr; Submit Request) and select ALL data categories.' +
+        '</div>';
+    html += '</div>';
+
+    html += '<button class="vt-gate-dismiss" onclick="this.closest(\'.vt-gate-card\').remove()">Dismiss</button>';
+    html += '</div>';
+    return html;
+}
+
+function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+}
+
+function doMerge(jobId, force, btn) {
+    if (btn) btn.disabled = true;
+    var url = '/api/vault/merge/' + jobId;
+    if (force) url += '?force=true';
+
+    fetch(url, { method: 'POST' })
+        .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, status: r.status, data: d}; }); })
+        .then(function(res) {
+            if (res.ok && res.data.ok) {
+                var ms = res.data.merge_stats || {};
+                var added = ms.assets_added || 0;
+                var skipped = ms.assets_skipped || 0;
+                showToast('Merged into vault — ' + added + ' new items added, ' + skipped + ' duplicates skipped.', 'success');
+                setTimeout(function() { window.location.reload(); }, 1200);
+            } else if (res.status === 422 && res.data.error === 'vault_seed_insufficient') {
+                // Show inline gate rejection card
+                var slot = document.getElementById('gate-slot-' + jobId);
+                if (slot) {
+                    // Remove any existing gate card
+                    var existing = document.getElementById('gate-card-' + jobId);
+                    if (existing) existing.remove();
+                    slot.innerHTML = buildGateCard(res.data, jobId);
+                }
+                showToast('This export needs more data to create a vault.', 'error');
+                if (btn) btn.disabled = false;
+            } else {
+                var errMsg = res.data.detail || res.data.error || 'Unknown error';
+                showToast('Merge failed: ' + errMsg + '. Your vault is unchanged. Try again or check the job status.', 'error');
+                if (btn) btn.disabled = false;
+            }
+        })
+        .catch(function() {
+            showToast('Network error. Please try again.', 'error');
+            if (btn) btn.disabled = false;
+        });
+}
+
+function doUnmerge(importId, btn) {
+    if (btn) btn.disabled = true;
+
+    fetch('/api/vault/unmerge/' + importId, { method: 'POST' })
+        .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+        .then(function(res) {
+            if (res.ok) {
+                var removed = (res.data.removal_stats && res.data.removal_stats.assets_removed) || 0;
+                showToast('Import removed from vault. ' + removed + ' items cleared.', 'success');
+                setTimeout(function() { window.location.reload(); }, 1200);
+            } else {
+                var errMsg = res.data.detail || res.data.error || 'Unknown error';
+                showToast("Couldn't remove import: " + errMsg + ". Vault unchanged.", 'error');
+                if (btn) btn.disabled = false;
+            }
+        })
+        .catch(function() {
+            showToast('Network error. Please try again.', 'error');
+            if (btn) btn.disabled = false;
+        });
+}
+
+// ── Modal triggers ──
+
+var pendingMergeJobId = null;
+var pendingUnmergeImportId = null;
+
+function showFirstImportModal(jobId, snapUsername, snapUid) {
+    pendingMergeJobId = jobId;
+    var acct = snapUsername || 'Unknown';
+    if (snapUid) acct += ' (' + snapUid + ')';
+    document.getElementById('first-import-account').textContent = acct;
+    document.getElementById('modal-first-import').classList.add('visible');
+}
+
+function showPartialModal(jobId) {
+    pendingMergeJobId = jobId;
+    document.getElementById('modal-partial').classList.add('visible');
+}
+
+function showNoDataModal(jobId) {
+    pendingMergeJobId = jobId;
+    document.getElementById('modal-no-data').classList.add('visible');
+}
+
+function showMismatchModal(jobId, jobUsername, jobUid) {
+    pendingMergeJobId = jobId;
+    var acct = jobUsername || 'Unknown';
+    if (jobUid) acct += ' (' + jobUid + ')';
+    document.getElementById('mismatch-job-account').textContent = acct;
+    document.getElementById('mismatch-confirm-input').value = '';
+    document.getElementById('mismatch-confirm').disabled = true;
+    document.getElementById('modal-mismatch').classList.add('visible');
+}
+
+function showUnmergeModal(importId, filename, mergeDate, assetsAdded, memoriesAdded, locationsAdded) {
+    pendingUnmergeImportId = importId;
+    var body = 'This will remove all data that came from this upload:\n\n' +
+        '  ' + filename + '\n' +
+        '  Merged on ' + mergeDate + '\n' +
+        '  ' + assetsAdded + ' assets\n\n' +
+        'Data unique to this import gets deleted from your vault. Data that also exists in other imports stays.\n\n' +
+        'You can always re-merge this job later — the original data isn\'t touched.';
+    document.getElementById('unmerge-body').textContent = body;
+    document.getElementById('modal-unmerge').classList.add('visible');
+}
+
+// ── Modal confirmations ──
+
+document.getElementById('first-import-confirm').addEventListener('click', function() {
+    closeModal('modal-first-import');
+    doMerge(pendingMergeJobId, false, null);
+});
+
+document.getElementById('partial-confirm').addEventListener('click', function() {
+    closeModal('modal-partial');
+    doMerge(pendingMergeJobId, false, null);
+});
+
+document.getElementById('no-data-confirm').addEventListener('click', function() {
+    closeModal('modal-no-data');
+    doMerge(pendingMergeJobId, false, null);
+});
+
+document.getElementById('mismatch-confirm-input').addEventListener('input', function() {
+    document.getElementById('mismatch-confirm').disabled = (this.value.trim() !== 'MERGE');
+});
+
+document.getElementById('mismatch-confirm').addEventListener('click', function() {
+    closeModal('modal-mismatch');
+    doMerge(pendingMergeJobId, true, null);
+});
+
+document.getElementById('unmerge-confirm').addEventListener('click', function() {
+    closeModal('modal-unmerge');
+    doUnmerge(pendingUnmergeImportId, null);
+});
+
+// Close modals on overlay click
+document.querySelectorAll('.vt-modal-overlay').forEach(function(overlay) {
+    overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) overlay.classList.remove('visible');
+    });
+});
+
+// Close modals on Escape
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.vt-modal-overlay.visible').forEach(function(m) {
+            m.classList.remove('visible');
+        });
+    }
+});
+</script>
+
+{% endblock %}

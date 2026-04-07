@@ -1,0 +1,136 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - link "heart_broken SNATCHED" [ref=e3] [cursor=pointer]:
+      - /url: /
+      - generic [ref=e4]: heart_broken
+      - generic [ref=e5]: SNATCHED
+    - list [ref=e6]:
+      - listitem [ref=e7]:
+        - link "Help" [ref=e8] [cursor=pointer]:
+          - /url: /help
+      - listitem [ref=e9]:
+        - link "Log In" [ref=e10] [cursor=pointer]:
+          - /url: /login
+      - listitem [ref=e11]:
+        - link "Sign Up Free" [ref=e12] [cursor=pointer]:
+          - /url: /register
+  - main [ref=e14]:
+    - generic [ref=e15]:
+      - generic [ref=e16]: Snapchat Data Recovery
+      - heading "Snapchat stripped your metadata. We're putting it back." [level=1] [ref=e17]:
+        - text: Snapchat stripped your metadata.
+        - text: We're putting it back.
+      - paragraph [ref=e18]: Snatched fixes your Snapchat data export — restoring the real dates, locations, and filters that Snapchat strips from your photos and videos. No more nameless files. No more lost locations.
+      - generic [ref=e19]:
+        - link "SCAN YOUR EXPORT — FREE" [ref=e20] [cursor=pointer]:
+          - /url: /upload
+        - link "CREATE FREE ACCOUNT" [ref=e21] [cursor=pointer]:
+          - /url: /register
+      - paragraph [ref=e22]: Free scan · Memories with dates free · GPS & full archive from $4.99
+    - generic [ref=e24]:
+      - generic [ref=e25]: Snapchat deletes your data in
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - generic [ref=e28]: "159"
+          - generic [ref=e29]: Days
+        - generic [ref=e30]: ":"
+        - generic [ref=e31]:
+          - generic [ref=e32]: "18"
+          - generic [ref=e33]: Hours
+        - generic [ref=e34]: ":"
+        - generic [ref=e35]:
+          - generic [ref=e36]: "56"
+          - generic [ref=e37]: Min
+        - generic [ref=e38]: ":"
+        - generic [ref=e39]:
+          - generic [ref=e40]: "34"
+          - generic [ref=e41]: Sec
+      - generic [ref=e42]: September 1, 2026 — Snapchat storage deadline
+    - generic [ref=e44]:
+      - generic [ref=e45]:
+        - generic [ref=e46]: 2,408
+        - text: Memories Rescued
+      - generic [ref=e47]:
+        - generic [ref=e48]: "0"
+        - text: Locations Restored
+      - generic [ref=e49]:
+        - generic [ref=e50]: "1"
+        - text: Users Served
+    - generic [ref=e51]:
+      - generic [ref=e52]:
+        - generic [ref=e53]: lock
+        - text: Files processed on our server, never shared
+      - generic [ref=e54]:
+        - generic [ref=e55]: delete_sweep
+        - text: Auto-deleted after 30 days
+      - generic [ref=e56]:
+        - generic [ref=e57]: visibility_off
+        - text: No tracking, no analytics
+    - generic [ref=e58]:
+      - generic [ref=e60]: Capabilities
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - generic [ref=e64]: calendar_month
+          - heading "RECOVER DATES" [level=3] [ref=e65]
+          - paragraph [ref=e66]: Every photo gets its real date back. Six matching strategies reconnect your memories to when they actually happened. Free with every scan.
+        - generic [ref=e67]:
+          - generic [ref=e68]: my_location
+          - heading "RESTORE LOCATIONS" [level=3] [ref=e69]
+          - paragraph [ref=e70]: GPS coordinates embedded directly into your files. See where every photo was taken on a map. Your camera roll finally knows where you've been.
+        - generic [ref=e71]:
+          - generic [ref=e72]: photo_library
+          - heading "GET YOUR FILES" [level=3] [ref=e73]
+          - paragraph [ref=e74]: Camera-roll ready with full EXIF metadata. Works with Google Photos, Apple Photos, Immich, Lightroom — any app that reads photo data.
+    - generic [ref=e75]:
+      - generic [ref=e77]: What To Know
+      - generic [ref=e79]:
+        - generic [ref=e80]: info
+        - generic [ref=e81]:
+          - heading "Snapchat compresses your data" [level=3] [ref=e82]
+          - paragraph [ref=e83]:
+            - text: Snapchat's data export delivers photos at
+            - strong [ref=e84]: lower quality than the originals
+            - text: saved to your camera roll. Files exported from Snapchat's servers are pre-compressed (typically JPEG quality 61–80), and
+            - strong [ref=e85]: data has been shown to shrink over time
+            - text: as Snapchat re-encodes stored media. Snatched preserves every byte Snapchat gives us — we never re-compress your photos. Overlays (text, stickers) are burned at quality 95 to minimize any additional loss.
+            - strong [ref=e86]: The sooner you export, the better your quality will be.
+    - generic [ref=e87]:
+      - generic [ref=e89]: How It Works
+      - heading "How It Works" [level=2] [ref=e91]
+      - generic [ref=e92]:
+        - generic [ref=e93]:
+          - generic [ref=e94]: "1"
+          - heading "Export from Snap" [level=4] [ref=e95]
+          - paragraph [ref=e96]:
+            - text: Request your data at Settings > My Data.
+            - link "Full guide →" [ref=e97] [cursor=pointer]:
+              - /url: /help
+        - generic [ref=e98]:
+          - generic [ref=e99]: "2"
+          - heading "Upload & Scan" [level=4] [ref=e100]
+          - paragraph [ref=e101]: Upload your ZIP. We scan it instantly and show you exactly what's inside — free.
+        - generic [ref=e102]:
+          - generic [ref=e103]: "3"
+          - heading "Choose Your Package" [level=4] [ref=e104]
+          - paragraph [ref=e105]: Memories with dates free. Add GPS, overlays, chats, or get everything from $4.99.
+        - generic [ref=e106]:
+          - generic [ref=e107]: "4"
+          - heading "Download" [level=4] [ref=e108]
+          - paragraph [ref=e109]: Camera-roll ready files with your real dates, locations, and metadata restored.
+    - generic [ref=e110]:
+      - heading "See what's in your export — free" [level=2] [ref=e111]
+      - paragraph [ref=e112]: Snapchat deletes your data September 2026. Clock's ticking.
+      - link "UPLOAD & SCAN FREE" [ref=e113] [cursor=pointer]:
+        - /url: /upload
+  - contentinfo [ref=e114]:
+    - paragraph [ref=e115]: SNATCHED — They took your memories. We take them back.
+    - paragraph [ref=e116]: © 2026 Snatched. Not affiliated with Snap Inc.
+  - contentinfo [ref=e117]:
+    - text: SNATCHED © 2026 ·
+    - link "Help" [ref=e118] [cursor=pointer]:
+      - /url: /help
+    - text: · Privacy · Terms
+```

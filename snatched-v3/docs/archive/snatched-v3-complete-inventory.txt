@@ -1,0 +1,625 @@
+================================================================================
+SNATCHED v3 COMPLETE CODEBASE INVENTORY
+Generated: 2026-02-26
+Location: ~/CascadeProjects/snatched-v3/snatched/
+================================================================================
+
+ROUTE SUMMARY
+=============
+Total Routes: 152
+  - pages.py (HTML page routes): 36
+  - api.py (JSON API routes): 111
+  - uploads.py (upload mechanics): 5
+
+Template Files: 40
+  - 5 template partials (prefixed with _)
+  - 35 full page templates
+
+Total Template Lines of Code: 14,530
+
+================================================================================
+PAGES.PY ROUTES (36 routes — HTML page responses)
+================================================================================
+
+GET /dev-login → dev_login
+GET /login → login_page
+POST /login → login_submit
+GET /register → register_page
+POST /register → register_submit
+GET /logout → logout
+GET / → landing
+GET /upload → upload_page
+GET /dashboard → dashboard
+GET /job/{job_id} → job_canvas
+GET /jobs/{job_id} → job_progress
+GET /results/{job_id} → results
+GET /assets/{job_id}/{asset_id} → asset_detail
+GET /settings → settings_page
+GET /friends → friends_page
+GET /presets → presets_page
+GET /download/{job_id} → download_page
+GET /gps/{job_id} → gps_correction
+GET /redact/{job_id} → redaction_page
+GET /schemas → schemas_page
+GET /match-config/{job_id} → match_config
+GET /dry-run/{job_id} → dry_run_page
+GET /timestamps/{job_id} → timestamp_correction
+GET /export-config → export_config_page
+GET /browse/{job_id} → memory_browser
+GET /browse/chats/{job_id} → conversation_browser
+GET /timeline/{job_id} → timeline_page
+GET /map/{job_id} → map_page
+GET /duplicates/{job_id} → duplicates_page
+GET /albums/{job_id} → albums_page
+GET /quota → quota_page
+GET /job-group/{group_id} → job_group_page
+GET /api-keys → api_keys_page
+GET /webhooks → webhooks_page
+GET /schedules → schedules_page
+GET /configure/{job_id} → configure_page
+
+================================================================================
+UPLOADS.PY ROUTES (5 routes — upload session mechanics)
+================================================================================
+
+POST /upload/init → init_upload
+PUT /upload/chunk/{session_id}/{file_index} → receive_chunk
+POST /upload/verify/{session_id}/{file_index} → verify_file
+GET /upload/status/{session_id} → upload_status
+DELETE /upload/abort/{session_id} → abort_upload
+
+================================================================================
+API.PY ROUTES PART 1: CORE FEATURES
+================================================================================
+
+CATEGORY: CORE PIPELINE (14 routes)
+-----------------------
+GET /jobs → list_jobs
+GET /jobs/html → list_jobs_html
+GET /jobs/{job_id} → job_detail
+GET /jobs/{job_id}/stream → stream_job
+POST /jobs/{job_id}/cancel → cancel
+DELETE /jobs/{job_id} → delete_job
+POST /jobs/{job_id}/retry → retry_job
+POST /jobs/{job_id}/reprocess → reprocess
+GET /jobs/{job_id}/report → job_report
+POST /jobs/{job_id}/configure → configure_and_start
+POST /jobs/{job_id}/start-enrich → start_enrich
+POST /jobs/{job_id}/start-export → start_export
+GET /summary → user_summary
+GET /health → health
+
+CATEGORY: ASSET MANAGEMENT & VIEWING (10 routes)
+------------------------------------
+GET /assets → list_assets
+GET /assets/html → list_assets_html
+GET /assets/{asset_id}/tags → get_asset_tags
+PUT /assets/{asset_id}/tags → update_asset_tags
+POST /assets/batch-tags/preview → batch_edit_preview
+POST /assets/batch-tags → batch_edit_tags
+POST /assets/{asset_id}/apply-preset → apply_preset
+POST /assets/batch-apply-preset → batch_apply_preset
+GET /assets/{asset_id}/xmp → get_xmp
+PUT /assets/{asset_id}/xmp → update_xmp
+
+CATEGORY: DOWNLOAD & FILE RETRIEVAL (3 routes)
+-----------------------------------
+GET /download/tree → download_tree
+GET /download/all → download_all
+GET /download/{path:path} → download_file
+
+CATEGORY: MATCH ANALYSIS & REPORTING (8 routes)
+------------------------------------
+GET /matches → list_matches
+GET /matches/html → list_matches_html
+GET /jobs/{job_id}/match-stats → match_stats
+GET /jobs/{job_id}/match-stats/html → match_stats_html
+GET /jobs/{job_id}/match-config → get_match_config
+GET /jobs/{job_id}/match-report → job_match_report
+GET /jobs/{job_id}/asset-report → job_asset_report
+GET /jobs/{job_id}/scan-results → get_scan_results
+
+CATEGORY: PREFERENCES & USER SETTINGS (1 route)
+-------------------------------------
+POST /preferences → save_preferences
+
+CATEGORY: PRESETS - TAG/EXPORT TEMPLATES (4 routes)
+---------------------------------------
+GET /presets → list_presets
+POST /presets → create_preset
+PUT /presets/{preset_id} → update_preset
+DELETE /presets/{preset_id} → delete_preset
+
+CATEGORY: SCHEMA MANAGEMENT - CUSTOM METADATA (4 routes)
+----------------------------------------------
+GET /schemas → list_schemas
+POST /schemas → create_schema
+PUT /schemas/{schema_id} → update_schema
+DELETE /schemas/{schema_id} → delete_schema
+
+================================================================================
+API.PY ROUTES PART 2: ASSET TOOLS
+================================================================================
+
+CATEGORY: GPS CORRECTION & LOCATION (6 routes)
+-----------------------------------
+PUT /assets/{asset_id}/gps → update_asset_gps
+POST /assets/batch-gps → batch_update_gps
+GET /saved-locations → list_saved_locations
+POST /saved-locations → create_saved_location
+DELETE /saved-locations/{location_id} → delete_saved_location
+POST /assets/snap-to-location → snap_to_location
+
+CATEGORY: TIMESTAMP CORRECTION & TIMEZONE (4 routes)
+------------------------------------------
+GET /jobs/{job_id}/timestamps → get_timestamps
+PUT /assets/{asset_id}/timestamp → update_timestamp
+POST /assets/batch-timeshift → batch_timeshift
+POST /assets/batch-timezone → batch_timezone
+
+CATEGORY: FRIENDS & PERSON MATCHING (5 routes)
+----------------------------------
+GET /friends → list_friends
+POST /friends/alias → upsert_friend_alias
+DELETE /friends/alias/{alias_id} → delete_friend_alias
+POST /friends/apply → apply_friend_names
+POST /friends/merge → merge_friends
+
+CATEGORY: REDACTION - PRIVACY/CENSORING (6 routes)
+---------------------------------------
+GET /redaction-profiles → list_redaction_profiles
+POST /redaction-profiles → create_redaction_profile
+PUT /redaction-profiles/{profile_id} → update_redaction_profile
+DELETE /redaction-profiles/{profile_id} → delete_redaction_profile
+POST /assets/redact/preview → redact_preview
+POST /assets/redact/apply → apply_redaction
+
+CATEGORY: MATCH CONFIG & PIPELINE CONFIG (4 routes)
+-----------------------------------------
+PUT /match-preferences → save_match_preferences
+POST /pipeline-configs → create_pipeline_config
+GET /pipeline-configs → list_pipeline_configs
+DELETE /pipeline-configs/{config_id} → delete_pipeline_config
+
+CATEGORY: DRY RUN & EXPORT (5 routes)
+--------------------------
+GET /jobs/{job_id}/dry-run-summary → dry_run_summary
+POST /jobs/{job_id}/promote → promote_dry_run
+GET /export-settings → get_export_settings
+PUT /export-settings → put_export_settings
+POST /export-settings/preview-paths → preview_export_paths
+
+================================================================================
+API.PY ROUTES PART 3: VIEWS & ANALYSIS
+================================================================================
+
+CATEGORY: GALLERY & VIEWING (8 routes)
+---------------------------
+GET /jobs/{job_id}/gallery → gallery_json
+GET /jobs/{job_id}/gallery/html → gallery_html
+GET /jobs/{job_id}/conversations → list_conversations
+GET /jobs/{job_id}/conversations/html → list_conversations_html
+GET /jobs/{job_id}/conversations/{conversation_id}/messages → get_conversation_messages
+GET /jobs/{job_id}/conversations/{conversation_id}/messages/html → get_conversation_messages_html
+GET /jobs/{job_id}/timeline-data → timeline_data
+GET /jobs/{job_id}/map-data → map_data
+
+CATEGORY: DUPLICATES (3 routes)
+--------------------
+GET /jobs/{job_id}/duplicates → get_duplicates
+POST /jobs/{job_id}/duplicates/resolve → resolve_duplicate
+GET /jobs/{job_id}/duplicates/html → get_duplicates_html
+
+CATEGORY: ALBUMS - AUTO-ORGANIZED COLLECTIONS (5 routes)
+----------------------------------------------
+POST /jobs/{job_id}/albums/generate → generate_albums
+GET /jobs/{job_id}/albums → list_job_albums
+PUT /albums/{album_id} → update_album
+DELETE /albums/{album_id} → delete_album
+GET /albums/{album_id}/items → get_album_items
+
+CATEGORY: QUOTA & TIER MANAGEMENT (6 routes)
+---------------------------------
+GET /tier → get_tier
+GET /quota → quota_api
+GET /quota/upload-history → quota_upload_history
+GET /upload-limits → upload_limits
+POST /jobs/{job_id}/extend-retention → extend_retention
+GET /jobs/{job_id}/retention → get_retention
+
+================================================================================
+API.PY ROUTES PART 4: POWER USER & ADMIN
+================================================================================
+
+CATEGORY: SLOTS & JOB GROUPS (3 routes)
+---------------------------
+GET /slots → get_slots
+GET /job-groups/{group_id} → get_job_group
+GET /job-groups → list_job_groups
+
+CATEGORY: API KEYS & ACCESS CONTROL (3 routes)
+-----------------------------------
+POST /keys → create_api_key
+GET /keys → list_api_keys
+DELETE /keys/{key_id} → revoke_api_key
+
+CATEGORY: WEBHOOKS (5 routes)
+------------------
+POST /webhooks → create_webhook
+GET /webhooks → list_webhooks
+PUT /webhooks/{webhook_id} → update_webhook
+DELETE /webhooks/{webhook_id} → delete_webhook
+POST /webhooks/{webhook_id}/test → test_webhook
+
+CATEGORY: SCHEDULES (4 routes)
+-------------------
+POST /schedules → create_schedule
+GET /schedules → list_schedules
+PUT /schedules/{schedule_id} → update_schedule
+DELETE /schedules/{schedule_id} → delete_schedule
+
+================================================================================
+TEMPLATE FILE INVENTORY (40 files, 14,530 lines total)
+================================================================================
+
+Sorted by complexity (lines of code):
+
+COMPLEX TEMPLATES (500+ lines)
+------------------------------
+upload.html (1,181 lines) — File upload widget, chunked upload manager
+gps_correction.html (802 lines) — GPS location picker, map, batch corrections
+timestamp_correction.html (802 lines) — Timestamp editor, timezone shifter, batch ops
+webhooks.html (794 lines) — Webhook CRUD, event types, delivery logs
+match_config.html (678 lines) — Match algorithm tuning, lane/criteria config
+redaction.html (681 lines) — Redaction mask builder, privacy region editor
+presets.html (660 lines) — Preset builder, tag template library
+friends.html (603 lines) — Person/group management, alias mapping
+schemas.html (530 lines) — Custom metadata schema editor, field builder
+schedules.html (517 lines) — Job scheduling, recurrence rules
+conversation_browser.html (498 lines) — Chat/conversation viewer, message search
+export_config.html (471 lines) — Export path templates, lane selection
+_xmp_viewer.html (472 lines) — EXIF/XMP metadata viewer (partial)
+
+MEDIUM TEMPLATES (200-500 lines)
+---------------------------------
+job.html (470 lines) — Main job canvas, phase visualization, view tabs
+results.html (373 lines) — Results summary, tool access menu, report downloads
+quota.html (360 lines) — Quota dashboard, tier info, usage breakdown
+api_keys.html (390 lines) — API key manager, token generation
+map.html (392 lines) — Leaflet map viewer, location display
+timeline.html (407 lines) — Timeline visualization, date filtering
+dry_run.html (306 lines) — Dry run preview, export preview
+configure.html (303 lines) — Job config before start, lane selection
+settings.html (298 lines) — User preferences, tier info, account settings
+_batch_edit_modal.html (283 lines) — Batch edit modal (partial, reusable)
+duplicates.html (228 lines) — Duplicate pair finder, merge tool
+job_progress.html (212 lines) — Job progress display, live updates
+_job_cards.html (195 lines) — Job card component (partial, reusable)
+memory_browser.html (173 lines) — Asset file browser, folder navigation
+
+SIMPLE TEMPLATES (< 200 lines)
+-------------------------------
+_asset_rows.html (146 lines) — Asset row component (partial, reusable)
+dashboard.html (133 lines) — Job list, quick stats
+job_group.html (110 lines) — Job group viewer
+download.html (96 lines) — Download manager/file listing
+landing.html (91 lines) — Public landing page
+base.html (75 lines) — Base template (nav, footer, layout)
+register.html (55 lines) — Registration form
+_match_stats.html (61 lines) — Match stats card (partial, reusable)
+login.html (47 lines) — Login form
+_match_rows.html (44 lines) — Match row component (partial, reusable)
+error.html (25 lines) — Error page
+
+PARTIALS/COMPONENTS (prefixed with _)
+-------------------------------------
+_asset_rows.html (146 lines)
+_batch_edit_modal.html (283 lines)
+_job_cards.html (195 lines)
+_match_rows.html (44 lines)
+_match_stats.html (61 lines)
+_xmp_viewer.html (472 lines)
+
+================================================================================
+BASE.HTML NAVIGATION LINKS
+================================================================================
+
+Primary Nav (visible on all pages):
+  - /dashboard (Dashboard)
+  - /upload (Upload)
+  - /settings (Settings)
+  - /logout (Sign out — icon only)
+
+User context:
+  - {{ username }} (display only)
+  - Tier badge (display only)
+
+================================================================================
+JOB.HTML VIEW TABS & TOOL SIDEBAR
+================================================================================
+
+View Tabs (main content switcher):
+  - Gallery (default, always enabled)
+  - Timeline (enabled after Match phase)
+  - Map (enabled after Enrich phase)
+  - Conversations (enabled after Enrich phase)
+
+Tools Sidebar Links (enabled when status in [matched, enriched, completed]):
+  - /friends (Friends & Aliases)
+  - /gps/{job_id} (GPS Correction — disabled until Enrich phase)
+  - /timestamps/{job_id} (Timestamp Fixes)
+  - /duplicates/{job_id} (Duplicates)
+  - /albums/{job_id} (Albums — disabled until Enrich phase)
+  - /export-config (Export Config)
+  - /presets (Tag Presets)
+
+Download Area (shown only when status='completed'):
+  - /api/download/all?job_id={job_id} (Download All button)
+
+State Management:
+  - onClick handlers: continueToNextPhase(), pauseAndReview()
+  - View switchers: switchView('gallery'), switchView('timeline'), etc.
+  - SSE stream: /api/jobs/{job_id}/stream (live updates)
+
+================================================================================
+RESULTS.HTML TOOL MENU & REPORTS
+================================================================================
+
+Dry Run Analysis:
+  - /dry-run/{job_id} (VIEW DRY RUN ANALYSIS button)
+
+Main CTA:
+  - /download/{job_id} (Download button)
+
+Tools Menu (toggle):
+  - /gps/{job_id} (GPS Correction)
+  - /timestamps/{job_id} (Timestamps)
+  - /redact/{job_id} (Redact)
+  - /match-config/{job_id} (Match Config)
+
+Browse & View:
+  - /browse/{job_id} (Browse Files)
+  - /browse/chats/{job_id} (Chats)
+  - /timeline/{job_id} (Timeline)
+  - /map/{job_id} (Map)
+
+Asset Tools:
+  - /duplicates/{job_id} (Duplicates)
+  - /albums/{job_id} (Albums)
+
+Reports (download as JSON/CSV):
+  - /api/jobs/{job_id}/report?format=json
+  - /api/jobs/{job_id}/report?format=csv
+  - /api/jobs/{job_id}/match-report?format=json
+  - /api/jobs/{job_id}/match-report?format=csv
+  - /api/jobs/{job_id}/asset-report?format=json
+  - /api/jobs/{job_id}/asset-report?format=csv
+
+Modal Handlers:
+  - onclick="toggleReports()" (Reports toggle)
+  - onclick="toggleToolsMenu()" (Tools menu toggle)
+  - onclick="submitReprocess()" (Submit reprocess)
+
+Summary Tab Links:
+  - onclick="openTab(event, 'summary')"
+  - onclick="openTab(event, 'matches')"
+  - onclick="openTab(event, 'assets')"
+
+================================================================================
+DASHBOARD.HTML LINKS
+================================================================================
+
+Main CTA:
+  - /upload (UPLOAD YOUR FIRST EXPORT button, when empty)
+  - /upload (+ Upload Job button, when populated)
+
+================================================================================
+SETTINGS.HTML LINKS & BUTTONS
+================================================================================
+
+Preferences:
+  - onclick="savePreferences()" (Save preferences)
+
+Quota Integration:
+  - /quota (VIEW QUOTA DASHBOARD button — styled with tier color)
+  - /quota (Fallback link if quota widget unavailable)
+
+Account Actions:
+  - Contact support for data deletion (not self-service)
+
+================================================================================
+FEATURE CATEGORIZATION (34+ features)
+================================================================================
+
+CORE PIPELINE FEATURES (4)
+---------------------------
+1. Upload & Ingest (init, chunk, verify, status, abort — 5 endpoints)
+2. Match (configure auto, resume, cancel, retry — 6 endpoints)
+3. Enrich (enrich start, stream — 2 endpoints)
+4. Export (export config, download, report — 6 endpoints)
+
+USER MANAGEMENT (5)
+-------------------
+1. Login / Register (email + password auth — 4 endpoints)
+2. Logout
+3. Dev login (for testing)
+4. Tier/subscription info
+5. Preferences (per-user settings — 1 endpoint)
+
+ASSET TOOLS (10)
+----------------
+1. Asset tagging (get, update, batch preview, batch apply — 4 endpoints)
+2. Asset XMP metadata (get, update, full viewer — 2 endpoints)
+3. Friend/person matching (list, alias CRUD, apply names, merge — 5 endpoints)
+4. GPS correction (single update, batch update, saved locations, snap — 6 endpoints)
+5. Timestamp correction (single update, batch timeshift, timezone — 4 endpoints)
+6. Redaction profiles (CRUD, preview, apply — 6 endpoints)
+7. Duplicates detection & resolution (find, resolve, view — 3 endpoints)
+8. Albums generation & management (generate, list, CRUD items — 5 endpoints)
+9. Tag presets (CRUD, apply single, batch apply — 4 endpoints)
+10. Custom schemas (CRUD, define metadata fields — 4 endpoints)
+
+VIEWING & ANALYTICS (8)
+-----------------------
+1. Gallery view (htmx-loaded photo grid — 2 endpoints)
+2. Timeline view (chronological, date filtering — 1 endpoint)
+3. Map view (location visualization — 1 endpoint)
+4. Conversation/chat view (message browser — 4 endpoints)
+5. Memory browser (file system view — 1 endpoint)
+6. Match statistics (match rate, match config — 4 endpoints)
+7. Dry-run preview (export preview before commit — 2 endpoints)
+8. Reports (JSON/CSV export, asset report, match report — 6 endpoints)
+
+POWER USER FEATURES (8)
+-----------------------
+1. API keys (CRUD — 3 endpoints)
+2. Webhooks (CRUD, event types, delivery logs, test — 5 endpoints)
+3. Schedules (cron-like, recurrence — 4 endpoints)
+4. Pipeline configs (DRY saved match/export configs — 3 endpoints)
+5. Match preferences (tunable match algorithm — 1 endpoint)
+6. Export settings (path templates, format options — 3 endpoints)
+7. Job groups (batch operations on multiple jobs — 3 endpoints)
+8. Retention & quota mgmt (extend, view usage, tier upsell — 6 endpoints)
+
+================================================================================
+WIRING STATUS AUDIT
+================================================================================
+
+FULLY WIRED (full UI + API coverage)
+--------------------------------------------------
+✓ Upload & Ingest → 5 upload endpoints + upload.html (1181 lines)
+✓ Job lifecycle → 14 core endpoints + job canvas (job.html 470 lines)
+✓ Asset viewing → gallery, results, asset_detail (all htmx)
+✓ Tag management → 4 API + _batch_edit_modal + asset detail
+✓ Preset system → 4 CRUD + presets.html (660 lines)
+✓ GPS correction → 6 endpoints + gps_correction.html (802 lines)
+✓ Timestamp correction → 4 endpoints + timestamp_correction.html (802 lines)
+✓ Friend matching → 5 endpoints + friends.html (603 lines)
+✓ Redaction → 6 endpoints + redaction.html (681 lines)
+✓ Report generation → 6 report endpoints + results.html (373 lines)
+✓ Login/Auth → 4 auth endpoints + login.html + register.html
+✓ Settings → settings page + preferences endpoint
+✓ Quota mgmt → 6 endpoints + quota.html (360 lines)
+✓ Webhooks → 5 endpoints + webhooks.html (794 lines)
+✓ API keys → 3 endpoints + api_keys.html (390 lines)
+✓ Schedules → 4 endpoints + schedules.html (517 lines)
+
+MOSTLY WIRED (full API, solid UI coverage)
+----------------------------------
+✓ Dry-run preview → 2 endpoints + dry_run.html (306 lines)
+✓ Duplicates → 3 endpoints + duplicates.html (228 lines)
+✓ Albums → 5 endpoints + albums.html (315 lines)
+✓ Match config → 1 endpoint + match_config.html (678 lines)
+✓ Timeline view → 1 data endpoint + timeline.html (407 lines)
+✓ Map view → 1 data endpoint + map.html (392 lines)
+✓ Conversations → 4 data endpoints + conversation_browser.html (498 lines)
+
+PARTIAL/UNCLEAR WIRING (mixed coverage)
+------------------------------------
+? Schemas → 4 CRUD endpoints + schemas.html (530 lines) — Power-user feature, unclear usage
+? Pipeline configs → 3 endpoints, no dedicated page (modal-based?)
+? Job groups → 3 endpoints + job_group.html (110 lines) — minimal UI
+? Saved locations → 3 endpoints, UI embedded in gps_correction.html
+? Export settings → 3 endpoints + export_config.html (471 lines) — used by export lane
+? XMP viewer → 2 endpoints + _xmp_viewer.html (472 lines partial) — reusable component
+? Batch edit → batch tag endpoints + _batch_edit_modal.html (reusable)
+
+ORPHANED/MINIMAL COVERAGE
+-------------------------
+? Memory browser → 1 endpoint + memory_browser.html (173 lines) — vs conversation_browser duplication
+? Match stats → 2 endpoints + _match_stats.html (61 lines partial) — component only
+? Download file → 1 endpoint for file retrieval — no dedicated UI
+? Download tree → 1 endpoint for structured download — no dedicated UI
+? Health check → 1 endpoint, no UI (internal)
+
+================================================================================
+API ENDPOINT RESPONSE TYPE ANALYSIS
+================================================================================
+
+HTML Responses (for htmx content swapping): 11 endpoints
+  - /jobs/html
+  - /matches/html
+  - /assets/html
+  - /jobs/{job_id}/match-stats/html
+  - /jobs/{job_id}/gallery/html
+  - /jobs/{job_id}/conversations/html
+  - /jobs/{job_id}/conversations/{conversation_id}/messages/html
+  - /jobs/{job_id}/duplicates/html
+  - /quota/upload-history (HTML response)
+  - All loaded via: hx-get="..." hx-swap="innerHTML"
+
+JSON Responses: 100+ endpoints
+  - Designed for frontend data loading (fetch API)
+  - Programmatic access (API keys, webhooks)
+  - Client-side rendering
+
+SSE Streaming: 1 endpoint
+  - /jobs/{job_id}/stream → job progress, phase transitions, completion
+
+================================================================================
+KEY OBSERVATIONS
+================================================================================
+
+1. ARCHITECTURE PATTERN:
+   - Hybrid pages + API model: pages.py serves initial HTML shells
+   - api.py serves data (JSON or HTML fragments for htmx)
+   - Progressive disclosure: phases unlock view tabs on job canvas
+   - htmx integration: gallery, timeline, map, conversations load dynamically
+
+2. COMPLEXITY DISTRIBUTION:
+   - Heavy frontend: upload (1181 L), gps (802 L), timestamps (802 L)
+   - Mid-tier: webhooks (794 L), presets (660 L), match_config (678 L)
+   - Lightweight: landing (91 L), dashboard (133 L), error (25 L)
+
+3. FEATURE MATURITY:
+   - COMPLETE: 16 features with full UI + API
+   - MOSTLY DONE: 7 features with full API, solid UI
+   - IN PROGRESS: 8 features with API, partial or scattered UI
+   - MINIMAL: 4 endpoints with no UI
+
+4. COVERAGE GAPS:
+   - Schemas: complex CRUD UI but unclear user workflow
+   - Pipeline configs: API exists but no dedicated configuration page
+   - Memory browser vs conversation browser: possible overlap
+   - Job groups: 3 endpoints but minimal UI (110 lines)
+   - Saved locations: embedded in GPS tool, not discoverable as standalone
+
+5. NAMING CONSISTENCY:
+   - Page routes match feature names: /gps, /timestamps, /friends, /albums
+   - API follows REST patterns: GET /resource, POST /resource, PUT /resource/{id}
+   - Ambiguity: /job/{id} (job canvas) vs /jobs/{id} (API detail)
+   - Action endpoints: /jobs/{id}/configure, /jobs/{id}/start-enrich, etc.
+
+6. WIRING COMPLETENESS:
+   - 35/36 page routes fully wired to templates
+   - 111 API endpoints mostly wired (direct htmx or fetch)
+   - 11 API endpoints have HTML variant for htmx content swapping
+   - Some power-user features (schemas, pipeline configs) under-exposed
+
+7. BUTTON/LINK DISTRIBUTION:
+   - Main nav: 3 links + logout (minimalist)
+   - Job canvas: 4 view tabs, 7 tool sidebar links, 1 download button
+   - Results page: 3 main CTAs + 8 tool menu links + 6 report downloads
+   - Dashboard: 1-2 buttons (upload-centric)
+   - Settings: 2 main links + account actions
+
+================================================================================
+ENDPOINT SUMMATION
+================================================================================
+
+By category (111 API routes):
+  - Core pipeline: 14 endpoints
+  - Asset tools: 40 endpoints (tags, gps, timestamps, friends, redaction, presets, schemas, albums)
+  - Views/analytics: 16 endpoints (gallery, timeline, map, conversations, duplicates, reports)
+  - User/account: 6 endpoints (login, auth, preferences, tier, quota, retention)
+  - Power user: 16 endpoints (api keys, webhooks, schedules, pipeline configs, job groups)
+  - Download: 3 endpoints
+  - Health/status: 2 endpoints
+
+Total codebase complexity:
+  - Routes: 152 (36 pages + 5 upload + 111 API)
+  - Templates: 40 (14,530 lines)
+  - Organized around 34+ distinct features
+  - Approximately 8,935 lines in api.py, significant complexity in pages.py
+
+================================================================================

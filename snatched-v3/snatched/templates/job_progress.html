@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block title %}Scanning Job #{{ job_id }} — SNATCHED{% endblock %}
 
 {% block content %}
 <!-- Breadcrumb -->
@@ -9,11 +10,12 @@
 </div>
 
 <!-- Title -->
-<h1 class="glitch-logo">Rescuing your memories...</h1>
+<!-- OLD: <h1 class="glitch-logo">Rescuing your memories...</h1> -->
+<h1 class="glitch-logo">Scanning your export...</h1>
 
 <!-- Progress subtitle -->
 <p id="progress-subtitle" class="mono text-yellow mb-1">
-    Waiting for updates...
+    Analyzing your Snapchat data — this takes 1–2 minutes
 </p>
 
 <!-- SSE container — all htmx attributes preserved exactly -->
@@ -25,26 +27,44 @@
         <span class="progress-text" id="progress-text">0%</span>
     </div>
 
-    <!-- Phase Cards -->
+    <!-- Phase Cards — scan-first: only show Scan + placeholder for next steps -->
+    <!-- OLD: 4-phase grid (ingest/match/enrich/export) — preserved in case of revert
     <div class="phases-grid">
-        {% for phase_name, phase_label, phase_icon in [
-            ('ingest', 'Ingest', 'inventory_2'),
-            ('match',  'Match',  'radar'),
-            ('enrich', 'Enrich', 'encrypted'),
-            ('export', 'Export', 'ios_share')
-        ] %}
-        <div class="phase-card pending" data-phase="{{ phase_name }}">
+        {% for phase_name, phase_label, phase_icon in [('ingest','Ingest','inventory_2'),('match','Match','radar'),('enrich','Enrich','encrypted'),('export','Export','ios_share')] %}
+        <div class="phase-card pending" data-phase="{{ phase_name }}">...</div>
+        {% endfor %}
+    </div>
+    -->
+    <div class="phases-grid">
+        <div class="phase-card pending" data-phase="ingest">
             <div class="phase-icon pending">
-                <span class="material-symbols-outlined">{{ phase_icon }}</span>
+                <span class="material-symbols-outlined">inventory_2</span>
             </div>
-            <div class="phase-name">Phase {{ loop.index }}</div>
-            <div class="phase-label">{{ phase_label }}</div>
+            <div class="phase-name">Step 1</div>
+            <div class="phase-label">Scan</div>
             <div class="phase-status-text">Waiting</div>
             <div class="phase-bar">
                 <div class="phase-progress"></div>
             </div>
         </div>
-        {% endfor %}
+        <div class="phase-card pending" style="opacity: 0.3;">
+            <div class="phase-icon pending">
+                <span class="material-symbols-outlined">analytics</span>
+            </div>
+            <div class="phase-name">Step 2</div>
+            <div class="phase-label">Choose</div>
+            <div class="phase-status-text">After scan</div>
+            <div class="phase-bar"><div class="phase-progress"></div></div>
+        </div>
+        <div class="phase-card pending" style="opacity: 0.3;">
+            <div class="phase-icon pending">
+                <span class="material-symbols-outlined">download</span>
+            </div>
+            <div class="phase-name">Step 3</div>
+            <div class="phase-label">Download</div>
+            <div class="phase-status-text">After scan</div>
+            <div class="phase-bar"><div class="phase-progress"></div></div>
+        </div>
     </div>
 
     <!-- Log Terminal -->
@@ -72,13 +92,13 @@
         Back to Dashboard
     </a>
     <div class="gap-row">
-        <a href="/download/{{ job_id }}" class="btn-primary hidden" id="download-button">
+        <a href="/snatchedmemories/{{ job_id }}" class="btn-primary hidden" id="download-button">
             <span class="material-symbols-outlined">download</span> DOWNLOAD YOUR FILES
         </a>
         <a href="/results/{{ job_id }}" class="btn-outline hidden" id="results-button">VIEW RESULTS</a>
-        <button class="btn-danger" onclick="abortMission(this)">
+        <button class="btn-danger" onclick="cancelJob(this)">
             <span class="material-symbols-outlined">dangerous</span>
-            ABORT MISSION
+            CANCEL JOB
         </button>
     </div>
 </div>
@@ -159,7 +179,7 @@ htmx.on('htmx:sseMessage', function(evt) {
 
     // Redirect to configure page when scan completes (ingest-only jobs)
     if (evt.detail.type === 'scanned') {
-        document.getElementById('progress-subtitle').textContent = 'Scan complete! Redirecting to configuration...';
+        document.getElementById('progress-subtitle').textContent = 'Scan complete! Loading your Intelligence Report...';
         document.getElementById('overall-progress').style.width = '100%';
         document.getElementById('progress-text').textContent = '100%';
         setTimeout(function() {
@@ -188,7 +208,7 @@ htmx.on('htmx:sseMessage', function(evt) {
     }
 });
 
-function abortMission(btn) {
+function cancelJob(btn) {
     if (!confirm('Cancel this job? This cannot be undone.')) return;
     btn.disabled = true;
     btn.textContent = 'CANCELLING...';
@@ -198,13 +218,13 @@ function abortMission(btn) {
                 window.location.href = '/dashboard';
             } else {
                 btn.disabled = false;
-                btn.querySelector('.material-symbols-outlined') && (btn.innerHTML = '<span class="material-symbols-outlined">dangerous</span> ABORT MISSION');
-                btn.textContent = btn.textContent || 'ABORT MISSION';
+                btn.querySelector('.material-symbols-outlined') && (btn.innerHTML = '<span class="material-symbols-outlined">dangerous</span> CANCEL JOB');
+                btn.textContent = btn.textContent || 'CANCEL JOB';
             }
         })
         .catch(function() {
             btn.disabled = false;
-            btn.textContent = 'ABORT MISSION';
+            btn.textContent = 'CANCEL JOB';
         });
 }
 </script>

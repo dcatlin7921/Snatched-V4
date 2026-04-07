@@ -2,6 +2,346 @@
 {% block title %}Job #{{ job.id }} — Snatched{% endblock %}
 {% block content %}
 
+<!-- Payment success banner (shown when returning from Stripe checkout) -->
+<div id="payment-success-banner" style="display: none; background: rgba(74, 222, 128, 0.1); border: 1px solid rgba(74, 222, 128, 0.4); padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.78rem; align-items: center; gap: 0.4rem;">
+    <span class="material-symbols-outlined" style="font-size: 0.9rem; color: #4ade80;">check_circle</span>
+    <span>Payment confirmed! Your export is now processing.</span>
+</div>
+<script>
+if (new URLSearchParams(window.location.search).get('payment') === 'success') {
+    document.getElementById('payment-success-banner').style.display = 'flex';
+    history.replaceState(null, '', window.location.pathname);
+}
+</script>
+
+{% if processing_mode == 'quick_rescue' %}
+<!-- ═══════════════════════════════════════════════════
+     QUICK RESCUE — Simplified Job View
+     Clean, focused loading screen. No tools, no tabs.
+     ═══════════════════════════════════════════════════ -->
+<div class="qr-container" id="qr-container">
+
+    <!-- Phase indicator -->
+    <div class="qr-phase" id="qr-phase">
+        <span class="material-symbols-outlined qr-phase-icon" id="qr-phase-icon">hourglass_top</span>
+        <span class="qr-phase-label" id="qr-phase-label">
+            {% if job.status == 'completed' %}Complete
+            {% elif job.status == 'failed' %}Failed
+            {% elif job.current_phase == 'export' %}Building Export...
+            {% elif job.current_phase == 'enrich' %}Enriching...
+            {% elif job.current_phase == 'match' %}Matching...
+            {% else %}Scanning...
+            {% endif %}
+        </span>
+    </div>
+
+    <!-- Large progress bar -->
+    <div class="qr-progress">
+        <div class="qr-progress-track">
+            <div class="qr-progress-fill{% if job.status not in ('completed', 'failed', 'cancelled') %} striped{% endif %}" id="qr-progress-fill" style="width: {{ job.progress_pct or 0 }}%"></div>
+        </div>
+        <div class="qr-progress-pct mono" id="qr-progress-pct">{{ job.progress_pct or 0 }}%</div>
+    </div>
+
+    <!-- Phase steps (mini pipeline) -->
+    <div class="qr-steps">
+        <div class="qr-step {% if phase_idx >= 1 %}qr-step--done{% elif phase_idx == 0 %}qr-step--active{% endif %}" data-step="0">
+            <span class="material-symbols-outlined">search</span>
+            <span>Scan</span>
+        </div>
+        <div class="qr-step-line {% if phase_idx >= 1 %}qr-step-line--done{% endif %}"></div>
+        <div class="qr-step {% if phase_idx >= 2 %}qr-step--done{% elif phase_idx == 1 %}qr-step--active{% endif %}" data-step="1">
+            <span class="material-symbols-outlined">join</span>
+            <span>Match</span>
+        </div>
+        <div class="qr-step-line {% if phase_idx >= 2 %}qr-step-line--done{% endif %}"></div>
+        <div class="qr-step {% if phase_idx >= 3 %}qr-step--done{% elif phase_idx == 2 %}qr-step--active{% endif %}" data-step="2">
+            <span class="material-symbols-outlined">auto_fix_high</span>
+            <span>Enrich</span>
+        </div>
+        <div class="qr-step-line {% if phase_idx >= 3 %}qr-step-line--done{% endif %}"></div>
+        <div class="qr-step {% if phase_idx >= 4 %}qr-step--done{% elif phase_idx == 3 %}qr-step--active{% endif %}" data-step="3">
+            <span class="material-symbols-outlined">package_2</span>
+            <span>Export</span>
+        </div>
+    </div>
+
+    <!-- Live stats counters -->
+    <div class="qr-stats" id="qr-stats">
+        <div class="qr-stat">
+            <span class="qr-stat-value" id="qr-stat-files">{{ stats.total_assets or '0' }}</span>
+            <span class="qr-stat-label">files found</span>
+        </div>
+        <div class="qr-stat">
+            <span class="qr-stat-value" id="qr-stat-matched">{{ stats.matched_count or '0' }}</span>
+            <span class="qr-stat-label">matched</span>
+        </div>
+        <div class="qr-stat">
+            <span class="qr-stat-value" id="qr-stat-gps">{{ stats.gps_count or '0' }}</span>
+            <span class="qr-stat-label">GPS tagged</span>
+        </div>
+        <div class="qr-stat">
+            <span class="qr-stat-value" id="qr-stat-exported">{{ stats.total_exported or '0' }}</span>
+            <span class="qr-stat-label">exported</span>
+        </div>
+    </div>
+
+    <!-- Status message (hidden when job is done so it doesn't show alongside download button) -->
+    <div class="qr-message mono {% if job.status in ('completed', 'failed') %}hidden{% endif %}" id="qr-message">
+        {% if job.status == 'failed' %}An error occurred during processing.
+        {% else %}Rescuing your memories...{% endif %}
+    </div>
+
+    <!-- Completion state (hidden until done) -->
+    <div class="qr-complete {% if job.status != 'completed' %}hidden{% endif %}" id="qr-complete">
+        <span class="material-symbols-outlined qr-complete-icon">check_circle</span>
+        <h2 class="qr-complete-title">Your memories are ready!</h2>
+        <a href="/snatchedmemories/{{ job.id }}" class="btn-yellow btn-large qr-download-btn" id="qr-download-btn">
+            <span class="material-symbols-outlined">download</span>
+            View & Download
+        </a>
+        <p class="qr-complete-sub">Your dates, locations, and filters have been restored.</p>
+    </div>
+
+    <!-- Export packaging indicator (hidden until export phase) -->
+    <div class="qr-packaging {% if job.current_phase != 'export' or job.status == 'completed' %}hidden{% endif %}" id="qr-packaging">
+        <div class="qr-packaging-label mono">Packaging your download...</div>
+        <div class="qr-packaging-track">
+            <div class="qr-packaging-fill striped" id="qr-packaging-fill" style="width: 0%"></div>
+        </div>
+    </div>
+
+    <!-- Failed state -->
+    <div class="qr-failed {% if job.status != 'failed' %}hidden{% endif %}" id="qr-failed">
+        <span class="material-symbols-outlined qr-failed-icon">error</span>
+        <h2 class="qr-failed-title">Something went wrong</h2>
+        <p class="qr-failed-message" id="qr-failed-message">{{ job.error_message or 'An unexpected error occurred.' }}</p>
+        <a href="/dashboard" class="btn-secondary">Back to Dashboard</a>
+    </div>
+</div>
+
+<!-- QUICK RESCUE SSE + STATE MANAGEMENT -->
+<script>
+const JOB_ID = {{ job.id }};
+const PROCESSING_MODE = 'quick_rescue';
+let currentPhase = '{{ job.current_phase or "" }}';
+let jobStatus = '{{ job.status }}';
+let configureCalledOnce = false;
+
+const QR_PHASE_LABELS = {
+    'ingest': 'Scanning...',
+    'match': 'Matching...',
+    'enrich': 'Enriching...',
+    'export': 'Building Export...',
+};
+const QR_PHASE_ICONS = {
+    'ingest': 'search',
+    'match': 'join',
+    'enrich': 'auto_fix_high',
+    'export': 'package_2',
+};
+const PHASE_ORDER = ['ingest', 'match', 'enrich', 'export'];
+
+function qrUpdatePhase(phase) {
+    currentPhase = phase;
+    const label = document.getElementById('qr-phase-label');
+    const icon = document.getElementById('qr-phase-icon');
+    if (label) label.textContent = QR_PHASE_LABELS[phase] || phase;
+    if (icon) icon.textContent = QR_PHASE_ICONS[phase] || 'hourglass_top';
+
+    // Update step indicators
+    const idx = PHASE_ORDER.indexOf(phase);
+    document.querySelectorAll('.qr-step').forEach((el, i) => {
+        el.classList.remove('qr-step--active', 'qr-step--done');
+        if (i < idx) el.classList.add('qr-step--done');
+        else if (i === idx) el.classList.add('qr-step--active');
+    });
+    document.querySelectorAll('.qr-step-line').forEach((el, i) => {
+        el.classList.toggle('qr-step-line--done', i < idx);
+    });
+
+    // Show/hide packaging indicator
+    const pkg = document.getElementById('qr-packaging');
+    if (pkg) {
+        if (phase === 'export') pkg.classList.remove('hidden');
+        else pkg.classList.add('hidden');
+    }
+}
+
+function qrUpdateProgress(data) {
+    const fill = document.getElementById('qr-progress-fill');
+    const pct = document.getElementById('qr-progress-pct');
+    if (fill && data.progress_pct !== undefined) {
+        fill.style.width = data.progress_pct + '%';
+    }
+    if (pct && data.progress_pct !== undefined) {
+        pct.textContent = Math.round(data.progress_pct) + '%';
+    }
+
+    // Update stats
+    if (data.total_files) document.getElementById('qr-stat-files').textContent = data.total_files;
+    if (data.matched_count !== undefined) document.getElementById('qr-stat-matched').textContent = data.matched_count;
+    if (data.gps_count !== undefined) document.getElementById('qr-stat-gps').textContent = data.gps_count;
+    if (data.total_exported !== undefined) document.getElementById('qr-stat-exported').textContent = data.total_exported;
+
+    // Update message
+    const msg = document.getElementById('qr-message');
+    if (msg && data.message) msg.textContent = data.message;
+
+    // Update packaging progress if in export phase
+    if (currentPhase === 'export') {
+        const pkgFill = document.getElementById('qr-packaging-fill');
+        if (pkgFill && data.progress_pct !== undefined) {
+            pkgFill.style.width = data.progress_pct + '%';
+        }
+    }
+}
+
+function qrShowComplete() {
+    jobStatus = 'completed';
+    const fill = document.getElementById('qr-progress-fill');
+    const pct = document.getElementById('qr-progress-pct');
+    if (fill) { fill.style.width = '100%'; fill.classList.remove('striped'); }
+    if (pct) pct.textContent = '100%';
+
+    // Update phase indicator
+    const label = document.getElementById('qr-phase-label');
+    const icon = document.getElementById('qr-phase-icon');
+    if (label) label.textContent = 'Complete';
+    if (icon) icon.textContent = 'check_circle';
+
+    // Mark all steps done
+    document.querySelectorAll('.qr-step').forEach(el => {
+        el.classList.remove('qr-step--active');
+        el.classList.add('qr-step--done');
+    });
+    document.querySelectorAll('.qr-step-line').forEach(el => {
+        el.classList.add('qr-step-line--done');
+    });
+
+    // Hide packaging, show completion
+    document.querySelectorAll('.qr-phase-step').forEach(s => s.classList.add('done'));
+    var proc = document.getElementById('qr-processing');
+    var comp = document.getElementById('qr-complete');
+    if (proc) proc.classList.add('hidden');
+    const pkg = document.getElementById('qr-packaging');
+    if (pkg) pkg.classList.add('hidden');
+    const msg = document.getElementById('qr-message');
+    if (msg) msg.classList.add('hidden');
+    if (comp) {
+        // Update title with actual count if available
+        var title = comp.querySelector('.qr-complete-title');
+        var exported = document.getElementById('qr-stat-exported');
+        if (title && exported) {
+            var count = parseInt(exported.textContent) || 0;
+            if (count > 0) {
+                title.textContent = count + ' memories rescued!';
+            }
+        }
+        comp.classList.remove('hidden');
+    }
+}
+
+function qrShowFailed(errorMsg) {
+    jobStatus = 'failed';
+    const fill = document.getElementById('qr-progress-fill');
+    if (fill) fill.style.background = 'var(--danger)';
+    const msg = document.getElementById('qr-message');
+    if (msg) msg.classList.add('hidden');
+    const pkg = document.getElementById('qr-packaging');
+    if (pkg) pkg.classList.add('hidden');
+    const failed = document.getElementById('qr-failed');
+    if (failed) failed.classList.remove('hidden');
+    if (errorMsg) {
+        const fmsg = document.getElementById('qr-failed-message');
+        if (fmsg) fmsg.textContent = errorMsg;
+    }
+}
+
+function connectSSE() {
+    if (['completed', 'failed', 'cancelled'].includes(jobStatus)) return;
+    // Only skip configure for states definitively past the scanned point.
+    // 'running' is NOT included — the job could still be in initial ingest
+    // (pre-scanned), not post-configure running.
+    if (['matched', 'enriched'].includes(jobStatus)) configureCalledOnce = true;
+
+    const evtSource = new EventSource(`/api/jobs/${JOB_ID}/stream`);
+
+    evtSource.addEventListener('progress', (e) => {
+        const data = JSON.parse(e.data);
+        qrUpdateProgress(data);
+    });
+
+    evtSource.addEventListener('phase_start', (e) => {
+        const data = JSON.parse(e.data);
+        if (data.phase) qrUpdatePhase(data.phase);
+    });
+
+    evtSource.addEventListener('scanned', (e) => {
+        if (configureCalledOnce) return;
+        configureCalledOnce = true;
+        jobStatus = 'scanned';
+        // Redirect to Intelligence Report / tier selection page
+        window.location.href = '/configure/' + JOB_ID;
+    });
+
+    // Configure already chains match→enrich→export, so these just update the UI
+    evtSource.addEventListener('matched', (e) => {
+        jobStatus = 'matched';
+        qrUpdatePhase('enrich');
+    });
+
+    evtSource.addEventListener('enriched', (e) => {
+        jobStatus = 'enriched';
+        qrUpdatePhase('export');
+    });
+
+    evtSource.addEventListener('complete', (e) => {
+        evtSource.close();
+        qrShowComplete();
+    });
+
+    evtSource.addEventListener('error', (e) => {
+        if (evtSource.readyState === EventSource.CLOSED) return;
+        evtSource.close();
+        setTimeout(connectSSE, 3000);
+    });
+
+    evtSource.addEventListener('cancelled', (e) => {
+        jobStatus = 'cancelled';
+        evtSource.close();
+        window.location.href = '/dashboard';
+    });
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    if (jobStatus === 'completed') {
+        qrShowComplete();
+        return;
+    }
+    if (jobStatus === 'failed') {
+        qrShowFailed();
+        return;
+    }
+
+    // If job is already scanned, redirect to configure page
+    if (jobStatus === 'scanned') {
+        window.location.href = '/configure/' + JOB_ID;
+        return;
+    }
+
+    if (['pending', 'queued', 'running', 'matched', 'enriched'].includes(jobStatus)) {
+        connectSSE();
+    }
+});
+</script>
+
+{% else %}
+<!-- ═══════════════════════════════════════════════════
+     FULL JOB VIEW — Standard / Speed Run / Power User
+     ═══════════════════════════════════════════════════ -->
+
 <!-- DATA VIZ BAND — pinned to top -->
 <div id="viz-band" class="viz-band">
     <div class="viz-band__phases">
@@ -14,10 +354,10 @@
         <span class="viz-phase {% if phase_idx >= 4 %}viz-phase--done{% elif phase_idx == 3 %}viz-phase--active{% endif %}" data-phase="export">EXPORT</span>
     </div>
     <div class="viz-band__stats" id="viz-stats">
-        <span id="stat-files">{{ stats.total_files or '—' }} files</span>
+        <span id="stat-files">{{ stats.total_assets or '—' }} files</span>
         <span id="stat-daterange">{{ stats.date_range or '' }}</span>
-        <span id="stat-matchrate" class="{% if stats.match_rate is not none %}{% if stats.match_rate >= 85 %}text-green{% elif stats.match_rate >= 60 %}text-warning{% else %}text-danger{% endif %}{% endif %}">
-            {% if stats.match_rate is not none %}{{ stats.match_rate }}% matched{% endif %}
+        <span id="stat-matchrate" class="{% if stats.match_rate is not none %}{% if stats.match_rate >= 0.85 %}text-green{% elif stats.match_rate >= 0.60 %}text-warning{% else %}text-danger{% endif %}{% endif %}">
+            {% if stats.match_rate is not none %}{{ (stats.match_rate * 100) | round(1) }}% matched{% endif %}
         </span>
         <span id="stat-gps">{% if stats.gps_count %}{{ stats.gps_count }} GPS{% endif %}</span>
     </div>
@@ -30,7 +370,7 @@
 </div>
 
 <!-- COUNTDOWN INTERSTITIAL MODAL -->
-<div id="countdown-modal" class="countdown-modal hidden">
+<div id="countdown-modal" class="countdown-modal">
     <div class="countdown-modal__content">
         <div class="countdown-modal__timer" id="countdown-number">10</div>
         <div class="countdown-modal__phase" id="countdown-phase-label">Continuing to Match...</div>
@@ -105,6 +445,26 @@
     <!-- Conversations loaded when tab activated -->
 </div>
 
+<!-- VAULT MERGE STATUS BANNER -->
+{% if job.status == 'completed' %}
+{% if is_merged %}
+<div style="border-left: 3px solid var(--success); padding: 0.75rem 1rem; margin: 0.75rem 0; background: rgba(76,175,80,0.06); font-size: 0.85rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+    <span class="material-symbols-outlined" style="color: var(--success); font-size: 1.1rem;">check_circle</span>
+    <span>Merged into vault{% if merge_date %} on {{ merge_date }}{% endif %}.</span>
+    <a href="/vault/manage" style="font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: var(--snap-yellow); text-decoration: none;">View Vault</a>
+</div>
+{% else %}
+<div style="border-left: 3px solid var(--snap-yellow); padding: 0.75rem 1rem; margin: 0.75rem 0; background: rgba(255,252,0,0.04); font-size: 0.85rem;">
+    <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+        <span class="material-symbols-outlined" style="color: var(--snap-yellow); font-size: 1.1rem;">info</span>
+        <span>This job is ready but not in your vault yet.</span>
+        <a href="/vault/manage" style="font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #000; background: var(--snap-yellow); padding: 0.3rem 0.8rem; text-decoration: none; border-radius: 3px;">Go to Vault Manager</a>
+    </div>
+    <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.35rem; padding-left: 2rem;">Merge it to make this data permanent and deduplicated across all your uploads.</div>
+</div>
+{% endif %}
+{% endif %}
+
 <!-- REVIEW STATE: Download + Tools (shown when status=completed) -->
 {% if job.status == 'completed' %}
 <div class="review-bar">
@@ -112,7 +472,10 @@
         <span class="rescued-count">{{ stats.total_exported or stats.total_files or 0 }}</span>
         <span class="rescued-label">files rescued</span>
     </div>
-    <a href="/api/download/all?job_id={{ job.id }}" class="btn-yellow btn-large">Download All</a>
+    <div style="display: flex; gap: 0.75rem; align-items: center;">
+        <a href="/api/download/all?job_id={{ job.id }}" class="btn-yellow btn-large">Download All</a>
+        <a href="/vault/manage" style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: var(--snap-yellow); border: 1px solid var(--snap-yellow); background: transparent; padding: 0.5rem 1rem; text-decoration: none; transition: background 0.2s, color 0.2s;" onmouseover="this.style.background='var(--snap-yellow)';this.style.color='#000'" onmouseout="this.style.background='transparent';this.style.color='var(--snap-yellow)'">View Vault</a>
+    </div>
 </div>
 {% endif %}
 
@@ -124,6 +487,7 @@
     <a href="/timestamps/{{ job.id }}" class="tool-link">Timestamp Fixes</a>
     <a href="/duplicates/{{ job.id }}" class="tool-link">Duplicates</a>
     <a href="/albums/{{ job.id }}" class="tool-link {% if phase_idx < 3 %}disabled{% endif %}">Albums</a>
+    <a href="/redact/{{ job.id }}" class="tool-link">Privacy Redaction</a>
     <a href="/export-config" class="tool-link">Export Config</a>
     <a href="/presets" class="tool-link">Tag Presets</a>
 </div>
@@ -163,29 +527,11 @@ function connectSSE() {
     });
 
     evtSource.addEventListener('scanned', (e) => {
-        if (configureCalledOnce) return;  // Already handled — ignore replayed event
+        if (configureCalledOnce) return;
         configureCalledOnce = true;
-        const data = JSON.parse(e.data);
         jobStatus = 'scanned';
-        updatePhaseViz(1);  // ingest done
-        evtSource.close();
-        // Auto-start match (configure_and_start handles mode; empty body preserves saved prefs)
-        fetch(`/api/jobs/${JOB_ID}/configure`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({})
-        }).then(r => {
-            if (r.ok) {
-                connectSSE();
-            } else {
-                // Configure may have already been called (race) — try reconnecting SSE anyway
-                // The job is likely already running from a prior call
-                connectSSE();
-            }
-        }).catch(() => {
-            const eta = document.getElementById('progress-eta');
-            if (eta) eta.textContent = 'Network error. Please refresh the page.';
-        });
+        // Redirect to Intelligence Report / tier selection page
+        window.location.href = '/configure/' + JOB_ID;
     });
 
     evtSource.addEventListener('matched', (e) => {
@@ -322,12 +668,12 @@ function showCountdown(nextPhase, stats) {
     label.textContent = `Continuing to ${nextPhase}...`;
     if (stats) {
         let html = '';
-        if (stats.match_rate) html += `<span>Match rate: ${stats.match_rate}%</span>`;
+        if (stats.match_rate) html += `<span>Match rate: ${(stats.match_rate * 100).toFixed(1)}%</span>`;
         if (stats.gps_count) html += `<span>GPS tagged: ${stats.gps_count}</span>`;
         statsEl.innerHTML = html;
     }
 
-    modal.classList.remove('hidden');
+    modal.classList.add('visible');
 
     // Show export config panel only at the Export gate
     const exportPanel = document.getElementById('export-config-panel');
@@ -354,7 +700,7 @@ function showCountdown(nextPhase, stats) {
 
 function continueToNextPhase() {
     clearInterval(countdownTimer);
-    document.getElementById('countdown-modal').classList.add('hidden');
+    document.getElementById('countdown-modal').classList.remove('visible');
 
     if (jobStatus === 'matched') {
         fetch(`/api/jobs/${JOB_ID}/start-enrich`, {method: 'POST'})
@@ -381,7 +727,7 @@ function continueToNextPhase() {
 
 function pauseAndReview() {
     clearInterval(countdownTimer);
-    document.getElementById('countdown-modal').classList.add('hidden');
+    document.getElementById('countdown-modal').classList.remove('visible');
     // Show tools sidebar for corrections
     document.getElementById('tools-sidebar').classList.remove('hidden');
 }
@@ -439,32 +785,22 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    // Speed run: if the page loads with the job already in 'scanned' state (ingest
-    // finished before the page rendered, or SSE was broken and never delivered the
-    // scanned event), immediately POST configure and then connect SSE for the
-    // remaining phases. Never show a countdown for speed_run.
-    if (jobStatus === 'scanned' && PROCESSING_MODE === 'speed_run') {
-        configureCalledOnce = true;  // Prevent SSE scanned handler from double-firing
-        fetch(`/api/jobs/${JOB_ID}/configure`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({})
-        }).then(r => {
-            // Whether configure succeeded (200) or was already called (400),
-            // connect SSE to watch the remaining phases
-            connectSSE();
-        }).catch(() => {
-            const eta = document.getElementById('progress-eta');
-            if (eta) eta.textContent = 'Network error. Please refresh the page.';
-        });
+    // If page loads with job in 'scanned' state, redirect to configure page
+    if (jobStatus === 'scanned') {
+        window.location.href = '/configure/' + JOB_ID;
         return;
     }
 
-    if (['pending', 'running', 'scanned', 'matched', 'enriched'].includes(jobStatus)) {
+    if (['pending', 'queued', 'running', 'scanned', 'matched', 'enriched'].includes(jobStatus)) {
         connectSSE();
     }
+
 });
+
+
 </script>
+
+{% endif %}{# end quick_rescue / full view switch #}
 
 {% endblock %}
 {# themed: 2026-02-25 #}

@@ -1,119 +1,97 @@
 {% extends "base.html" %}
+{% block title %}Dashboard — SNATCHED{% endblock %}
 
 {% block content %}
+<div class="dashboard-compact">
+
 <!-- Header -->
 <div class="section-header">
     <h1 class="mb-0">Your Jobs</h1>
-    <a href="/upload" class="btn-primary">
-        <span class="material-symbols-outlined">add_circle</span>
+    <a href="/upload" class="btn-primary" style="padding: 0.4rem 1rem; font-size: 0.85rem;">
+        <span class="material-symbols-outlined" style="font-size: 1rem;">add_circle</span>
         New Upload
     </a>
 </div>
 
-<!-- Stat Cards -->
-<div class="stats-grid">
+<!-- Stat Cards — inline row with slots -->
+<div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
     <div class="stat-card">
-        <p class="stat-label">Total Jobs</p>
+        <p class="stat-label">Uploads</p>
         <p class="stat-value">{{ total_jobs }}</p>
     </div>
     <div class="stat-card">
-        <p class="stat-label">Completed</p>
+        <p class="stat-label">Processed</p>
         <p class="stat-value green">{{ completed_jobs }}</p>
     </div>
     <div class="stat-card">
-        <p class="stat-label">Storage Usage</p>
+        <p class="stat-label">Storage</p>
         <p class="stat-value white">{{ total_storage_mb }} MB</p>
     </div>
-</div>
-
-<!-- Feature #31: Processing Slots indicator -->
-<div class="stats-grid slots-grid">
-    <div class="stat-card slots-card">
-        <div class="slots-header">
-            <p class="stat-label mb-0">Processing Slots</p>
+    <div class="stat-card">
+        <p class="stat-label" style="display: flex; align-items: center; gap: 0.4rem;">
+            Slots
             {% if tier_info %}
-            <span class="tier-badge" style="color: {{ tier_info.color }}; border-color: {{ tier_info.color }};">
+            <span class="tier-badge" style="color: {{ tier_info.color }}; border-color: {{ tier_info.color }}; font-size: 0.5rem; padding: 0.1rem 0.3rem;">
                 {{ tier_info.label | upper }}
             </span>
             {% endif %}
-        </div>
-
+        </p>
         {% if max_slots is none %}
-            {# Unlimited tier #}
-            <p class="stat-value white mb-0">Unlimited</p>
-            <p class="slots-note text-muted">
-                {{ active_jobs_count }} job{{ 's' if active_jobs_count != 1 else '' }} currently active
-            </p>
+        <p class="stat-value white">&infin;</p>
         {% else %}
-            {# Finite slot tier #}
-            {% set used = active_jobs_count if active_jobs_count <= max_slots else max_slots %}
-            {% set available = max_slots - used %}
-            <p class="stat-value {% if used >= max_slots %}red{% elif used > 0 %}white{% else %}green{% endif %} mb-0">
-                {{ used }}/{{ max_slots }} slots in use
-            </p>
-            {# Dot indicators #}
-            <div class="slot-dots">
-                {% for i in range(max_slots) %}
-                    <div class="slot-dot {% if i < used %}slot-dot-used{% else %}slot-dot-free{% endif %}"></div>
-                {% endfor %}
-            </div>
-            {% if available == 0 and queued_jobs_count and queued_jobs_count > 0 %}
-            <p class="slots-note text-yellow">
-                {{ queued_jobs_count }} job{{ 's' if queued_jobs_count != 1 else '' }} queued &mdash;
-                your position: #{{ queue_position if queue_position else '?' }}
-            </p>
-            {% elif available == 0 %}
-            <p class="slots-note text-yellow">
-                All slots occupied &mdash; new jobs will queue
-            </p>
-            {% else %}
-            <p class="slots-note text-muted">
-                {{ available }} slot{{ 's' if available != 1 else '' }} available
-            </p>
-            {% endif %}
+        {% set used = active_jobs_count if active_jobs_count <= max_slots else max_slots %}
+        <p class="stat-value {% if used >= max_slots %}red{% elif used > 0 %}white{% else %}green{% endif %}">{{ used }}/{{ max_slots }}</p>
         {% endif %}
     </div>
 </div>
-<!-- end Feature #31 -->
-
-<!-- Section divider: Active Jobs -->
-<div class="section-divider">
-    <span class="section-divider-label mono uppercase tracking-wide">Mission Registry</span>
-</div>
 
 <!-- Active Jobs -->
-<section>
-    <h2>Active Jobs</h2>
-    <div id="active-jobs"
-         hx-get="/api/jobs/html?status=running,pending,scanned"
-         hx-trigger="load, every 2s"
-         hx-target="this"
-         hx-swap="innerHTML">
-        <p class="text-muted">Loading active jobs...</p>
-    </div>
-</section>
-
-<!-- Section divider: History -->
 <div class="section-divider">
-    <span class="section-divider-label mono uppercase tracking-wide">Job History</span>
+    <span class="section-divider-label mono uppercase tracking-wide">Active</span>
+</div>
+<div id="active-jobs"
+     hx-get="/api/jobs/html?status=running,pending,queued,scanned"
+     hx-trigger="load, every 2s"
+     hx-target="this"
+     hx-swap="innerHTML">
+    <p class="text-muted" style="font-size: 0.85rem;">Loading...</p>
 </div>
 
 <!-- Job History -->
-<section>
-    <div id="job-history"
-         hx-get="/api/jobs/html?status=completed,failed,cancelled"
-         hx-trigger="load, every 10s"
-         hx-target="this"
-         hx-swap="innerHTML">
-        <p class="text-muted">Loading job history...</p>
-    </div>
-</section>
-
-<!-- Empty state (shown when no jobs, hidden by default) -->
-<div id="empty-state" class="empty-state hidden">
-    <p>No jobs yet. Ready to rescue your memories?</p>
-    <a href="/upload" class="btn-primary">UPLOAD YOUR FIRST EXPORT</a>
+<div class="section-divider">
+    <span class="section-divider-label mono uppercase tracking-wide">History</span>
 </div>
+<div id="job-history"
+     hx-get="/api/jobs/html?status=completed,failed,cancelled"
+     hx-trigger="load, every 10s"
+     hx-target="this"
+     hx-swap="innerHTML">
+    <p class="text-muted" style="font-size: 0.85rem;">Loading...</p>
+</div>
+
+<!-- Your Vaults -->
+<div class="section-divider">
+    <span class="section-divider-label mono uppercase tracking-wide">Your Vaults</span>
+</div>
+<div id="user-vaults"
+     hx-get="/api/vaults/html"
+     hx-trigger="load, every 30s"
+     hx-target="this"
+     hx-swap="innerHTML">
+    <p class="text-muted" style="font-size: 0.85rem;">Loading...</p>
+</div>
+
+<!-- Empty state (shown when no jobs) -->
+<div id="empty-state" class="empty-state {% if total_jobs > 0 %}hidden{% endif %}">
+    <span class="material-symbols-outlined" style="font-size: 3rem; color: var(--snap-yellow); display: block; margin-bottom: 0.75rem;">rocket_launch</span>
+    <h3 style="margin-bottom: 0.5rem;">No jobs yet</h3>
+    <!-- OLD: <p>Upload your Snapchat data export and we'll restore your dates, locations, and filters.</p> -->
+    <p style="color: var(--text-muted); margin-bottom: 1rem; font-size: 0.9rem;">Upload your Snapchat export — we'll scan it free and show you exactly what's inside.</p>
+    <a href="/upload" class="btn-primary">UPLOAD YOUR FIRST EXPORT</a>
+    <p style="margin-top: 0.75rem; font-size: 0.8rem;"><a href="/help" style="color: var(--snap-yellow);">Need help getting your export?</a></p>
+</div>
+
+</div><!-- /.dashboard-compact -->
 
 <script>
 document.addEventListener('htmx:afterSettle', function() {

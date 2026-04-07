@@ -1,0 +1,496 @@
+================================================================================
+SNATCHED v3 FEATURE WIRING ANALYSIS
+Detailed UI + API Coverage Assessment
+================================================================================
+
+FULLY WIRED FEATURES (16 total — complete UI + API)
+==================================================
+
+1. UPLOAD & INGEST
+   Routes: POST /upload/init, PUT /upload/chunk, POST /upload/verify, GET /upload/status, DELETE /upload/abort
+   UI: upload.html (1,181 lines) — chunked upload manager, progress tracking
+   Status: COMPLETE
+   Notes: Most complex template. Full drag-drop, resume, abort capabilities.
+
+2. JOB LIFECYCLE
+   Routes: GET /jobs, GET /jobs/{job_id}, POST /jobs/{job_id}/cancel, DELETE /jobs/{job_id}, POST /jobs/{job_id}/retry, POST /jobs/{job_id}/reprocess
+   UI: job.html (470 lines) — canvas, phase visualization, live progress
+   UI: job_progress.html (212 lines) — alternative progress view
+   UI: dashboard.html (133 lines) — job list, summary stats
+   Status: COMPLETE
+   Notes: Core job management. SSE streaming for live updates.
+
+3. ASSET TAGGING
+   Routes: GET /assets/{asset_id}/tags, PUT /assets/{asset_id}/tags, POST /assets/batch-tags/preview, POST /assets/batch-tags
+   UI: asset_detail.html (313 lines) — tag editor inline
+   UI: _batch_edit_modal.html (283 lines) — batch operations
+   Status: COMPLETE
+   Notes: Full tag lifecycle. Preview before batch apply.
+
+4. TAG PRESETS
+   Routes: GET /presets, POST /presets, PUT /presets/{preset_id}, DELETE /presets/{preset_id}, POST /assets/{asset_id}/apply-preset, POST /assets/batch-apply-preset
+   UI: presets.html (660 lines) — preset builder, library
+   Status: COMPLETE
+   Notes: Template-based tagging. Single and batch application.
+
+5. GPS CORRECTION
+   Routes: PUT /assets/{asset_id}/gps, POST /assets/batch-gps, GET /saved-locations, POST /saved-locations, DELETE /saved-locations/{location_id}, POST /assets/snap-to-location
+   UI: gps_correction.html (802 lines) — map picker, batch tools, saved locations
+   Status: COMPLETE
+   Notes: Second-most complex template. Map integration, location saving.
+
+6. TIMESTAMP CORRECTION
+   Routes: GET /jobs/{job_id}/timestamps, PUT /assets/{asset_id}/timestamp, POST /assets/batch-timeshift, POST /assets/batch-timezone
+   UI: timestamp_correction.html (802 lines) — timestamp editor, timezone tools
+   Status: COMPLETE
+   Notes: Tied with GPS for complexity. Batch timezone/timeshift.
+
+7. FRIEND MATCHING
+   Routes: GET /friends, POST /friends/alias, DELETE /friends/alias/{alias_id}, POST /friends/apply, POST /friends/merge
+   UI: friends.html (603 lines) — person/group manager, alias mapping
+   Status: COMPLETE
+   Notes: Person-centric tool. Alias resolution, merge operations.
+
+8. REDACTION PROFILES
+   Routes: GET /redaction-profiles, POST /redaction-profiles, PUT /redaction-profiles/{profile_id}, DELETE /redaction-profiles/{profile_id}, POST /assets/redact/preview, POST /assets/redact/apply
+   UI: redaction.html (681 lines) — mask builder, privacy region editor
+   Status: COMPLETE
+   Notes: Complex privacy tool. Preview redactions before applying.
+
+9. REPORT GENERATION
+   Routes: GET /jobs/{job_id}/report, GET /jobs/{job_id}/match-report, GET /jobs/{job_id}/asset-report (JSON/CSV formats)
+   UI: results.html (373 lines) — report download UI, report tabs
+   Status: COMPLETE
+   Notes: Three report types. Multi-format (JSON, CSV) export.
+
+10. AUTHENTICATION
+    Routes: GET /login, POST /login, GET /register, POST /register, GET /logout, GET /dev-login
+    UI: login.html (47 lines), register.html (55 lines), landing.html (91 lines)
+    Status: COMPLETE
+    Notes: Email/password auth. Dev login for testing.
+
+11. USER SETTINGS
+    Routes: POST /preferences, GET /tier, GET /quota
+    UI: settings.html (298 lines) — preferences, tier info
+    Status: COMPLETE
+    Notes: Per-user preferences stored and retrieved.
+
+12. QUOTA MANAGEMENT
+    Routes: GET /tier, GET /quota, GET /quota/upload-history, GET /upload-limits, POST /jobs/{job_id}/extend-retention, GET /jobs/{job_id}/retention
+    UI: quota.html (360 lines) — dashboard, tier upsell, usage breakdown
+    Status: COMPLETE
+    Notes: Comprehensive quota/billing display.
+
+13. API KEYS
+    Routes: POST /keys, GET /keys, DELETE /keys/{key_id}
+    UI: api_keys.html (390 lines) — key manager, token generation, revocation
+    Status: COMPLETE
+    Notes: Full CRUD. Likely includes secret masking.
+
+14. WEBHOOKS
+    Routes: POST /webhooks, GET /webhooks, PUT /webhooks/{webhook_id}, DELETE /webhooks/{webhook_id}, POST /webhooks/{webhook_id}/test
+    UI: webhooks.html (794 lines) — webhook manager, event types, delivery logs, test interface
+    Status: COMPLETE
+    Notes: Third-most complex template. Event subscription, test firing.
+
+15. SCHEDULES
+    Routes: POST /schedules, GET /schedules, PUT /schedules/{schedule_id}, DELETE /schedules/{schedule_id}
+    UI: schedules.html (517 lines) — schedule editor, cron-like interface
+    Status: COMPLETE
+    Notes: Recurring job scheduling. Likely uses cron syntax.
+
+16. ASSET GALLERY & VIEWING
+    Routes: GET /jobs/{job_id}/gallery, GET /jobs/{job_id}/gallery/html
+    UI: job.html (470 lines, gallery tab) — photo grid with htmx loading
+    Status: COMPLETE
+    Notes: Main visual interface. Lazy-loaded via htmx.
+
+================================================================================
+MOSTLY WIRED FEATURES (7 total — full API, solid UI)
+==================================================
+
+1. DUPLICATES DETECTION
+   Routes: GET /jobs/{job_id}/duplicates, POST /jobs/{job_id}/duplicates/resolve, GET /jobs/{job_id}/duplicates/html
+   UI: duplicates.html (228 lines) — pair viewer, merge/discard interface
+   Status: 95% COMPLETE
+   Notes: Found duplicates, resolve with merge/discard options. HTML variant for htmx.
+
+2. ALBUMS (AUTO-COLLECTIONS)
+   Routes: POST /jobs/{job_id}/albums/generate, GET /jobs/{job_id}/albums, PUT /albums/{album_id}, DELETE /albums/{album_id}, GET /albums/{album_id}/items
+   UI: albums.html (315 lines) — album viewer, album CRUD
+   Status: 95% COMPLETE
+   Notes: Auto-generated collections. Full management UI.
+
+3. DRY RUN / PREVIEW
+   Routes: GET /jobs/{job_id}/dry-run-summary, POST /jobs/{job_id}/promote
+   UI: dry_run.html (306 lines) — preview results before commit
+   Status: 95% COMPLETE
+   Notes: Pre-export validation. Promote to export when ready.
+
+4. TIMELINE VIEW
+   Routes: GET /jobs/{job_id}/timeline-data
+   UI: timeline.html (407 lines) — chronological view with htmx loading
+   Status: 95% COMPLETE
+   Notes: Date-filtered timeline. Enabled after Match phase.
+
+5. MAP VIEW
+   Routes: GET /jobs/{job_id}/map-data
+   UI: map.html (392 lines) — Leaflet map with location display, htmx loading
+   Status: 95% COMPLETE
+   Notes: GPS visualization. Requires enriched data.
+
+6. CONVERSATION BROWSER
+   Routes: GET /jobs/{job_id}/conversations, GET /jobs/{job_id}/conversations/html, GET /jobs/{job_id}/conversations/{conversation_id}/messages, GET /jobs/{job_id}/conversations/{conversation_id}/messages/html
+   UI: conversation_browser.html (498 lines) — chat/message viewer
+   Status: 95% COMPLETE
+   Notes: Chat content display. Multiple-level hierarchical view.
+
+7. MATCH CONFIGURATION
+   Routes: GET /jobs/{job_id}/match-config
+   UI: match_config.html (678 lines) — match algorithm tuning, lane selection
+   Status: 95% COMPLETE
+   Notes: Complex algorithm UI. Criteria tuning and lane customization.
+
+================================================================================
+PARTIAL/UNCLEAR WIRING (8 total — mixed coverage)
+==================================================
+
+1. SCHEMAS (CUSTOM METADATA)
+   Routes: GET /schemas, POST /schemas, PUT /schemas/{schema_id}, DELETE /schemas/{schema_id}
+   UI: schemas.html (530 lines) — schema editor, field builder
+   Status: UI EXISTS BUT UNCLEAR USAGE
+   Issues:
+     - No clear entry point from main flow
+     - Complex CRUD but user journey undefined
+     - Not linked from main nav or job canvas
+     - Appears to be power-user feature but not documented
+   Recommendation: Clarify user workflow. Link from settings or admin area.
+
+2. PIPELINE CONFIGURATIONS
+   Routes: POST /pipeline-configs, GET /pipeline-configs, DELETE /pipeline-configs/{config_id}
+   UI: NO DEDICATED PAGE
+   Status: API ONLY, CONFIGURATION UNCLEAR
+   Issues:
+     - Full CRUD but no page or discoverable UI
+     - Likely accessed via modal/inline?
+     - Unclear if used during job creation or globally
+   Recommendation: Create dedicated pipeline-config.html page or document modal usage.
+
+3. JOB GROUPS
+   Routes: GET /job-groups/{group_id}, GET /job-groups
+   UI: job_group.html (110 lines) — minimal job group viewer
+   Status: 50% WIRED
+   Issues:
+     - Only 110 lines of UI (very minimal)
+     - No CRUD for creating/editing job groups
+     - No clear entry point from dashboard
+     - GET endpoints suggest read-only
+   Recommendation: Expand UI or clarify if job groups are admin-only/system-generated.
+
+4. SAVED LOCATIONS
+   Routes: GET /saved-locations, POST /saved-locations, DELETE /saved-locations/{location_id}
+   UI: EMBEDDED IN gps_correction.html
+   Status: 70% WIRED
+   Issues:
+     - Endpoints exist with full CRUD
+     - UI embedded within GPS tool, not discoverable standalone
+     - Users may not know they can save locations for reuse
+   Recommendation: Extract to dialog or make UI more discoverable.
+
+5. EXPORT SETTINGS
+   Routes: GET /export-settings, PUT /export-settings, POST /export-settings/preview-paths
+   UI: export_config.html (471 lines) — path templates, format selection
+   Status: 80% WIRED
+   Issues:
+     - Full UI exists but entry point unclear
+     - Accessed from /export-config page (page route exists)
+     - Used during export lane but relationship not obvious
+   Recommendation: Link more clearly from export lane setup.
+
+6. XMP METADATA VIEWER
+   Routes: GET /assets/{asset_id}/xmp, PUT /assets/{asset_id}/xmp
+   UI: _xmp_viewer.html (472 lines) — EXIF/XMP viewer (partial/component)
+   Status: 75% WIRED
+   Issues:
+     - Endpoints exist but partial component only
+     - Not a full page, embedded in asset_detail or similar
+     - Used for low-level metadata access
+   Recommendation: Document where _xmp_viewer is integrated.
+
+7. BATCH EDIT OPERATIONS
+   Routes: POST /assets/batch-tags/preview, POST /assets/batch-tags
+   UI: _batch_edit_modal.html (283 lines) — reusable modal component
+   Status: 80% WIRED
+   Issues:
+     - Component exists but reusable (prefixed with _)
+     - Integrated into results.html or asset list
+     - Not discoverable as standalone page
+   Recommendation: Ensure modal is accessible from all asset listing views.
+
+8. MATCH STATISTICS
+   Routes: GET /jobs/{job_id}/match-stats, GET /jobs/{job_id}/match-stats/html
+   UI: _match_stats.html (61 lines) — stats card (partial/component)
+   Status: 70% WIRED
+   Issues:
+     - Only 61 lines, component-only
+     - Integrated into job canvas or results
+     - User may not access detailed stats
+   Recommendation: Enhance UI or link to dedicated match analysis.
+
+================================================================================
+ORPHANED/MINIMAL COVERAGE (4 total)
+==================================================
+
+1. MEMORY BROWSER (FILE SYSTEM VIEW)
+   Routes: GET /browse/{job_id}
+   UI: memory_browser.html (173 lines) — file tree viewer
+   Status: ORPHANED
+   Issues:
+     - 173-line UI exists at /browse/{job_id}
+     - NOT linked from main navigation
+     - CONFLICT: /browse/chats/{job_id} exists too (conversation_browser)
+     - Users may not discover this feature
+   Recommendation:
+     - Decide: is this needed alongside conversation browser?
+     - If yes: link from results tool menu
+     - If no: consider deprecating
+
+2. DOWNLOAD MANAGER
+   Routes: GET /download/tree, GET /download/all, GET /download/{path:path}
+   UI: download.html (96 lines) — minimal file listing
+   Status: ORPHANED
+   Issues:
+     - Endpoints exist (tree, all, path-based download)
+     - Minimal 96-line UI
+     - NOT linked from main flow
+     - /api/download/all used in review state instead
+   Recommendation: Clarify use case. /api/download/all seems primary, download.html unused.
+
+3. HEALTH/STATUS ENDPOINT
+   Routes: GET /health
+   UI: NONE
+   Status: INTERNAL ONLY
+   Notes: No UI expected. Likely for monitoring/load balancer checks.
+
+4. MATCH STATISTICS DETAILED VIEW
+   Routes: GET /jobs/{job_id}/match-stats (JSON)
+   UI: _match_stats.html (61 lines, component)
+   Status: PARTIAL
+   Issues:
+     - JSON endpoint returns full data but UI minimal (61 lines)
+     - Component-only, not standalone page
+     - Detailed match analysis not discoverable
+   Recommendation: Create dedicated match-stats.html page or expand component.
+
+================================================================================
+ENTRY POINT ANALYSIS (How users discover features)
+==================================================
+
+PRIMARY NAVIGATION (via base.html)
+----------------------------------
+- /dashboard (Dashboard)
+- /upload (Upload)
+- /settings (Settings)
+- /logout (Sign out)
+
+JOB CANVAS ENTRY POINTS (job.html tools sidebar)
+-------------------------------------------------
+- /friends (Friends & Aliases)
+- /gps/{job_id} (GPS Correction)
+- /timestamps/{job_id} (Timestamp Fixes)
+- /duplicates/{job_id} (Duplicates)
+- /albums/{job_id} (Albums)
+- /export-config (Export Config)
+- /presets (Tag Presets)
+
+RESULTS PAGE ENTRY POINTS (results.html tool menu)
+---------------------------------------------------
+- /dry-run/{job_id} (Dry Run Analysis)
+- /download/{job_id} (Download)
+- /gps/{job_id} (GPS Correction)
+- /timestamps/{job_id} (Timestamps)
+- /redact/{job_id} (Redact)
+- /match-config/{job_id} (Match Config)
+- /browse/{job_id} (Browse Files)
+- /browse/chats/{job_id} (Chats)
+- /timeline/{job_id} (Timeline)
+- /map/{job_id} (Map)
+- /duplicates/{job_id} (Duplicates)
+- /albums/{job_id} (Albums)
+
+SETTINGS PAGE ENTRY POINTS (settings.html)
+-------------------------------------------
+- /quota (Quota Dashboard)
+
+NOT DISCOVERABLE (No clear entry point)
+----------------------------------------
+- /schemas (Schema management) — HIDDEN
+- /pipeline-configs (Pipeline configs) — API ONLY
+- /job-group/{group_id} (Job groups) — Minimal UI
+- /api-keys (API Keys) — Accessible via /api-keys page but not linked
+- /webhooks (Webhooks) — Accessible via /webhooks page but not linked
+- /schedules (Schedules) — Accessible via /schedules page but not linked
+- /browse/{job_id} (Memory browser) — Accessible via results.html
+- /match-config/{job_id} (Match config) — In results tool menu
+
+DISCOVERABLE POWER-USER FEATURES
+---------------------------------
+- API Keys: /api-keys (direct URL)
+- Webhooks: /webhooks (direct URL)
+- Schedules: /schedules (direct URL)
+
+================================================================================
+HTMX INTEGRATION POINTS
+==================================================
+
+Partially-Loaded Content (via hx-get)
+-------------------------------------
+1. Gallery: /api/jobs/{job_id}/gallery/html
+   Location: job.html view-gallery div
+   Trigger: Page load (hx-trigger="load")
+
+2. Timeline: /api/jobs/{job_id}/timeline-data
+   Location: job.html view-timeline div
+   Trigger: Tab click (switchView)
+
+3. Map: /api/jobs/{job_id}/map-data
+   Location: job.html view-map div
+   Trigger: Tab click (switchView)
+
+4. Conversations: /api/jobs/{job_id}/conversations/html
+   Location: job.html view-conversations div
+   Trigger: Tab click (switchView)
+
+5. Job List (HTML): /api/jobs/html
+   Location: dashboard.html
+   Trigger: Possibly load or periodic refresh
+
+6. Assets List (HTML): /api/assets/html
+   Location: results.html or asset view
+   Trigger: Load or filtering
+
+7. Matches List (HTML): /api/matches/html
+   Location: results.html
+   Trigger: Tab switch
+
+8. Duplicates (HTML): /api/jobs/{job_id}/duplicates/html
+   Location: duplicates.html
+   Trigger: Page load
+
+9. Match Stats (HTML): /api/jobs/{job_id}/match-stats/html
+   Location: results.html
+   Trigger: Tab switch
+
+10. Quota History (HTML): /api/quota/upload-history
+    Location: quota.html
+    Trigger: Page load
+
+SSE STREAMING
+-------------
+1. Job Progress: /api/jobs/{job_id}/stream
+   Events: progress, phase_start, scanned, matched, enriched, complete, error, cancelled
+   Used by: job.html for live updates
+
+================================================================================
+ISSUE SUMMARY
+==================================================
+
+CRITICAL (Block users from features)
+------------------------------------
+- Schemas: Power-user feature with no clear entry point or documentation
+- Pipeline configs: API exists but no UI for creation/editing
+- Memory browser: 173-line UI exists but not linked from anywhere
+
+MAJOR (Reduce feature discoverability)
+--------------------------------------
+- Saved locations: CRUD endpoints but embedded in GPS tool
+- Export settings: Endpoints exist but unclear relationship to export flow
+- Job groups: Minimal UI (110 lines) doesn't show full CRUD capability
+- Match stats: Full data available but UI is 61-line component only
+
+MINOR (Documentation/UX)
+------------------------
+- XMP viewer: Component-only, unclear where integrated
+- Batch edit: Reusable component but may not be accessible from all views
+- Health endpoint: No UI (expected) but should document internally
+
+DUPLICATION/OVERLAP
+-------------------
+- /browse/{job_id} vs /browse/chats/{job_id}: Are these complementary or redundant?
+- /api/download/all vs /download/{job_id}: Which is primary?
+- Memory browser vs conversation browser: Both do file/message browsing?
+
+================================================================================
+RECOMMENDED ACTIONS
+==================================================
+
+HIGH PRIORITY (Blocking full feature access)
+---------------------------------------------
+1. Create /configure/{job_id} page or document modal usage
+   - Pipeline configs need UI for creation
+   - Currently API-only, may cause user confusion
+
+2. Create dedicated /schemas page or document power-user workflow
+   - 530-line UI exists but no discoverability
+   - Clarify when/why users create schemas
+
+3. Make saved locations discoverable
+   - Either extract from GPS tool to standalone modal
+   - Or add "Learn more" link in GPS tool
+
+MEDIUM PRIORITY (Improve feature discoverability)
+--------------------------------------------------
+1. Link /api-keys, /webhooks, /schedules from settings or admin section
+   - Power-user features currently accessible but not discoverable
+
+2. Clarify /browse/{job_id} vs /browse/chats/{job_id}
+   - Are both needed? Rename for clarity?
+
+3. Enhance job groups UI or document as system-only feature
+   - 110 lines of UI insufficient for full feature
+
+4. Create dedicated match analysis page
+   - Move /jobs/{job_id}/match-stats/html to full page
+   - Complement main match_config page
+
+LOW PRIORITY (Nice to have)
+---------------------------
+1. Link memory_browser.html from results page if it's useful
+2. Consolidate download UI or document dual endpoints
+3. Document XMP viewer integration
+
+================================================================================
+COMPLETENESS SCORECARD
+==================================================
+
+Feature Count: 34+ features
+  - Fully wired: 16 (47%)
+  - Mostly wired: 7 (21%)
+  - Partially wired: 8 (23%)
+  - Orphaned: 4 (12%)
+
+Route Coverage: 152 routes
+  - Pages: 36/36 (100%) have dedicated templates
+  - API: 111/111 routes (100%) have endpoints
+  - HTML variants: 11/111 API endpoints (10%)
+  - Proper CRUD: ~85% follow REST patterns
+
+Template Coverage: 40 templates
+  - 14,530 total lines
+  - 5 partials/components
+  - Average page: 340 lines (excluding partials)
+  - Most complex: upload.html (1,181 lines)
+
+Entry Point Connectivity:
+  - Primary nav: 4 links (minimal, by design)
+  - Job canvas: 7 tool links (good coverage)
+  - Results page: 12 tool/view links (comprehensive)
+  - Settings: 1 link (quota)
+  - Hidden: 3-4 power-user features (schemas, pipeline-configs, job-groups)
+
+Navigation Gaps:
+  - No settings/admin hub for power-user features
+  - API keys, webhooks, schedules not linked from main flow
+  - Schemas not discoverable without direct URL
+
+================================================================================

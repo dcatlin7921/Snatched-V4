@@ -27,6 +27,103 @@ logger = logging.getLogger("snatched.routes.uploads")
 router = APIRouter()
 
 
+def _staging_dir(data_dir: str, username: str, session_id: str) -> Path:
+    """Return the staging directory for an upload session.
+
+    Prefers /ramdisk for fast I/O; falls back to data_dir on disk.
+    Also checks both locations for existing sessions (backwards compat).
+    """
+    ramdisk = Path("/ramdisk")
+    if ramdisk.exists():
+        ram_path = ramdisk / "staging" / username / session_id
+        if ram_path.exists():
+            return ram_path
+        disk_path = Path(data_dir) / username / "staging" / session_id
+        if disk_path.exists():
+            return disk_path
+        # New session — use ramdisk
+        return ram_path
+    return Path(data_dir) / username / "staging" / session_id
+
+
+# ============================================================================
+# Background archive function
+# ============================================================================
+
+async def _archive_upload(username: str, job_id: int, source_path: Path, metadata: dict):
+    """Silently copy verified upload to admin archive on NAS.
+
+    Fire-and-forget — if archive write fails (NAS offline, disk full),
+    log a warning and continue. Never fail the user's job.
+    """
+    try:
+        archive_base = Path("/archive")
+        if not archive_base.exists():
+            logger.warning("Archive directory /archive not mounted — skipping archive")
+            return
+
+        archive_dir = archive_base / username / str(job_id)
+        await asyncio.to_thread(archive_dir.mkdir, parents=True, exist_ok=True)
+
+        # Copy uploaded files from staging
+        if source_path.is_dir():
+            for part_file in sorted(source_path.glob("*.part")):
+                await asyncio.to_thread(
+                    shutil.copy2, str(part_file), str(archive_dir / part_file.name)
+                )
+        elif source_path.is_file():
+            await asyncio.to_thread(
+                shutil.copy2, str(source_path), str(archive_dir / "original.zip")
+            )
+
+        # Write manifest
+        manifest = {
+            **metadata,
+            "archived_at": datetime.now(timezone.utc).isoformat(),
+        }
+        manifest_path = archive_dir / "manifest.json"
+        await asyncio.to_thread(
+            manifest_path.write_text,
+            json.dumps(manifest, indent=2, default=str)
+        )
+
+        logger.info(f"Archived upload for {username}/job-{job_id} to {archive_dir}")
+
+    except Exception as e:
+        logger.warning(f"Failed to archive upload for {username}/job-{job_id}: {e}")
+
+
+# ============================================================================
+# Path validation helper
+# ============================================================================
+
+def _validate_relative_path(rel_path: str) -> bool:
+    """Validate a client-provided relative path is safe.
+
+    Prevents path traversal attacks, absolute paths, and other suspicious
+    patterns that could allow writing outside the extraction directory.
+    """
+    if not rel_path:
+        return False
+    # No null bytes
+    if "\x00" in rel_path:
+        return False
+    # No absolute paths
+    if rel_path.startswith("/"):
+        return False
+    # No home-directory expansion
+    if rel_path.startswith("~"):
+        return False
+    # No .. components (check each segment individually to catch foo/../bar)
+    parts = rel_path.replace("\\", "/").split("/")
+    if ".." in parts:
+        return False
+    # Reject empty segments that could cause confusion (e.g. foo//bar)
+    if "" in parts[:-1]:  # trailing empty is ok for "dir/" but mid-empty is not
+        return False
+    return True
+
+
 # ============================================================================
 # 1. POST /api/upload/init — Initialize upload session
 # ============================================================================
@@ -68,14 +165,19 @@ async def init_upload(
     if not files_manifest:
         raise HTTPException(400, "No files in request")
 
+    # Upload type: "zip" (default, single/multi ZIP archives) or "folder" (raw folder files)
+    upload_type = body.get("upload_type", "zip")
+    if upload_type not in ("zip", "folder"):
+        upload_type = "zip"
+
     # Parse processing options, lane selection, phase selection, and processing mode
     options = body.get("options", {})
     lanes = body.get("lanes", ["memories", "chats", "stories"])
     phases = body.get("phases", ["ingest", "match", "enrich", "export"])
-    # processing_mode: 'speed_run' (fast, sane defaults) or 'power_user' (all knobs exposed)
+    # processing_mode: 'speed_run' | 'power_user' | 'quick_rescue'
     # Handles both new format (top-level) and old format (nested in options)
     processing_mode = body.get("processing_mode", options.get("processing_mode", "speed_run"))
-    if processing_mode not in ("speed_run", "power_user"):
+    if processing_mode not in ("speed_run", "power_user", "quick_rescue"):
         processing_mode = "speed_run"
 
     # Validate lanes
@@ -90,12 +192,24 @@ async def init_upload(
     if "ingest" not in phases:
         phases.insert(0, "ingest")
 
-    # Validate all files are .zip and within size limits
+    # Validate files and size limits
     upload_config = config.upload
     for f in files_manifest:
         filename = f.get("filename", "")
-        if not filename.lower().endswith(".zip"):
-            raise HTTPException(400, f"File '{filename}' is not a .zip archive")
+
+        if upload_type == "zip":
+            # ZIP uploads: every file in the manifest must be a .zip archive
+            if not filename.lower().endswith(".zip"):
+                raise HTTPException(400, f"File '{filename}' is not a .zip archive")
+        else:
+            # Folder uploads: individual files (.jpg, .json, .mp4, etc.) — no extension check
+            # Validate relative_path if provided
+            rel_path = f.get("relative_path")
+            if rel_path is not None and not _validate_relative_path(rel_path):
+                raise HTTPException(
+                    400,
+                    f"File '{filename}' has an invalid relative_path: '{rel_path}'",
+                )
 
         size = f.get("size", 0)
         if size > upload_config.max_file_bytes:
@@ -111,26 +225,42 @@ async def init_upload(
             f"Total upload size {total_size} exceeds {upload_config.max_total_bytes} byte limit",
         )
 
+    from snatched.tiers import get_tier_limits_async, get_system_config
+
     # Get or create user
     user_id = await get_or_create_user(pool, username)
 
-    # Check quota
+    # --- Global concurrent job cap (circuit breaker) ---
+    sys_cfg = await get_system_config(pool)
+    max_global = sys_cfg.get("max_global_concurrent_jobs", 4)
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
+        global_active = await conn.fetchval(
+            "SELECT COUNT(*) FROM processing_jobs WHERE status IN ('running', 'pending', 'queued')"
+        )
+    if global_active >= max_global:
+        raise HTTPException(503, "System is at capacity. Please try again shortly.")
+
+    # --- Storage quota from tier_plans (dynamic) ---
+    async with pool.acquire() as conn:
+        user_row = await conn.fetchrow(
+            "SELECT tier FROM users WHERE id = $1", user_id
+        )
+        used_bytes = await conn.fetchval(
             """
-            SELECT u.storage_quota_bytes,
-                   COALESCE(SUM(pj.upload_size_bytes), 0) AS used_bytes
-            FROM users u
-            LEFT JOIN processing_jobs pj ON u.id = pj.user_id
-                AND pj.status NOT IN ('failed', 'cancelled')
-            WHERE u.id = $1
-            GROUP BY u.id, u.storage_quota_bytes
+            SELECT COALESCE(SUM(upload_size_bytes), 0)
+            FROM processing_jobs
+            WHERE user_id = $1 AND status NOT IN ('failed', 'cancelled')
             """,
             user_id,
         )
 
-    if row["used_bytes"] + total_size > row["storage_quota_bytes"]:
-        raise HTTPException(507, "Storage quota exceeded")
+    tier = user_row["tier"] if user_row else "free"
+    limits = await get_tier_limits_async(pool, tier)
+    storage_gb = limits.get("storage_gb")
+    if storage_gb is not None:
+        quota_bytes = storage_gb * (1024 ** 3)
+        if used_bytes + total_size > quota_bytes:
+            raise HTTPException(507, "Storage quota exceeded")
 
     # Check max concurrent sessions per user
     async with pool.acquire() as conn:
@@ -148,9 +278,9 @@ async def init_upload(
             f"Maximum {upload_config.max_concurrent_sessions} concurrent upload(s) per user",
         )
 
-    # Create session token and directories
+    # Create session token and directories — prefer ramdisk for fast I/O
     session_token = str(uuid.uuid4())
-    session_dir = Path(str(config.server.data_dir)) / username / "staging" / session_token
+    session_dir = _staging_dir(str(config.server.data_dir), username, session_token)
     os.makedirs(session_dir, mode=0o750, exist_ok=True)
 
     # Create .part files (pre-allocated)
@@ -179,6 +309,11 @@ async def init_upload(
         "phases": phases,
         # Living Canvas: persisted so verify endpoint can forward to job creation
         "processing_mode": processing_mode,
+        "job_group_id": body.get("job_group_id"),
+        # Upload type: "zip" or "folder" — controls verification and reconstruction
+        "upload_type": upload_type,
+        # Original filenames for vault fingerprinting
+        "original_filenames": [f.get("filename", "") for f in files_manifest],
     }
 
     async with pool.acquire() as conn:
@@ -194,22 +329,27 @@ async def init_upload(
             len(files_manifest),
             total_size,
             expires_at,
-            json.dumps(session_options),
+            session_options,  # JSONB codec handles serialization
         )
 
         # Create upload_files records
         for idx, f in enumerate(files_manifest):
+            # For folder uploads, preserve the relative_path so we can reconstruct
+            # the directory tree once all files are verified.
+            relative_path = f.get("relative_path", None)
             await conn.execute(
                 """
                 INSERT INTO upload_files
-                    (session_id, file_index, filename, file_size, sha256_expected, status)
-                VALUES ($1, $2, $3, $4, $5, 'pending')
+                    (session_id, file_index, filename, file_size, sha256_expected,
+                     status, relative_path)
+                VALUES ($1, $2, $3, $4, $5, 'pending', $6)
                 """,
                 session_id,
                 idx,
                 f.get("filename", ""),
                 f.get("size", 0),
                 f.get("sha256", ""),
+                relative_path,
             )
 
     # Only update preferences if options were explicitly provided
@@ -350,9 +490,8 @@ async def receive_chunk(
             f"Invalid offset {chunk_offset}: expected {file_row['bytes_received']} (bytes already received)",
         )
 
-    # Stream chunk directly to disk
-    user_data_dir = Path(str(config.server.data_dir)) / username
-    staging_dir = user_data_dir / "staging" / session_id
+    # Stream chunk to staging (ramdisk preferred)
+    staging_dir = _staging_dir(str(config.server.data_dir), username, session_id)
     part_path = staging_dir / f"file_{file_index}.part"
 
     if not part_path.exists():
@@ -389,10 +528,17 @@ async def receive_chunk(
         logger.error(f"Error writing chunk to {part_path}: {e}")
         raise HTTPException(500, f"Failed to write chunk to disk: {e}")
 
-    # Validate we wrote the expected amount
+    # Reject partial writes — client must retry the chunk
     if bytes_written != chunk_size:
-        logger.warning(
-            f"Bytes written ({bytes_written}) != Content-Length ({chunk_size})"
+        logger.error(
+            f"Partial chunk write: got {bytes_written} bytes, expected {chunk_size}. "
+            f"Removing partial file {part_path}"
+        )
+        if part_path.exists():
+            part_path.unlink()
+        raise HTTPException(
+            400,
+            f"Chunk incomplete: received {bytes_written} of {chunk_size} bytes. Retry this chunk."
         )
 
     new_bytes_received = file_row["bytes_received"] + bytes_written
@@ -532,8 +678,7 @@ async def verify_file(
         )
 
     # Compute SHA-256 of assembled file (in thread pool to not block event loop)
-    user_data_dir = Path(str(config.server.data_dir)) / username
-    staging_dir = user_data_dir / "staging" / session_id
+    staging_dir = _staging_dir(str(config.server.data_dir), username, session_id)
     part_path = staging_dir / f"file_{file_index}.part"
 
     loop = asyncio.get_running_loop()
@@ -634,9 +779,8 @@ async def verify_file(
                     logger.info(f"All files in session {session_id} verified. Creating job for ingest scan...")
 
                     user_id = session_row["user_id"]
-                    staging_dir = str(
-                        Path(str(config.server.data_dir)) / username / "staging" / session_id
-                    )
+                    staging_dir_path = _staging_dir(str(config.server.data_dir), username, session_id)
+                    staging_dir = str(staging_dir_path)
 
                     # Read processing options from session
                     raw_opts = session_row["options_json"]
@@ -644,28 +788,106 @@ async def verify_file(
                         session_opts = json.loads(raw_opts)
                     else:
                         session_opts = raw_opts or {}
+                    # Handle double-encoded JSON (string wrapping a JSON string)
+                    if isinstance(session_opts, str):
+                        session_opts = json.loads(session_opts)
                     job_lanes = session_opts.get("lanes", ["memories", "chats", "stories"])
                     # STORY-1: Ingest-only scan — phases_requested is ["ingest"] (not full pipeline)
                     job_phases = ["ingest"]
                     # Living Canvas: forward mode from upload session options (default: speed_run)
                     job_mode = session_opts.get("processing_mode", "speed_run")
-                    if job_mode not in ("speed_run", "power_user"):
+                    if job_mode not in ("speed_run", "power_user", "quick_rescue"):
                         job_mode = "speed_run"
 
+                    # ----------------------------------------------------------------
+                    # Folder upload reconstruction
+                    # For folder uploads, move each .part file to its original path
+                    # inside an "extracted/" directory alongside staging.
+                    # The pipeline receives extracted_dir instead of staging_dir.
+                    # ----------------------------------------------------------------
+                    upload_type = session_opts.get("upload_type", "zip")
+                    pipeline_dir = staging_dir  # default: ZIP path, pipeline handles it
+
+                    if upload_type == "folder":
+                        extracted_dir = staging_dir_path.parent / "extracted" / session_id
+                        extracted_dir.mkdir(parents=True, exist_ok=True)
+
+                        # Fetch all file records within this transaction (lock already held)
+                        file_records = await conn.fetch(
+                            """
+                            SELECT file_index, relative_path
+                            FROM upload_files
+                            WHERE session_id = $1
+                            ORDER BY file_index
+                            """,
+                            session_db_id,
+                        )
+
+                        reconstructed = 0
+                        for record in file_records:
+                            source = staging_dir_path / f"file_{record['file_index']}.part"
+                            rel_path = record["relative_path"]
+
+                            if not rel_path:
+                                logger.warning(
+                                    f"Session {session_id} file {record['file_index']} "
+                                    f"has no relative_path — skipping reconstruction"
+                                )
+                                continue
+
+                            # Security: validate the path again server-side before use
+                            if not _validate_relative_path(rel_path):
+                                logger.warning(
+                                    f"Skipping suspicious relative_path for file "
+                                    f"{record['file_index']}: '{rel_path}'"
+                                )
+                                continue
+
+                            # Extra safety: resolve and confirm target stays inside extracted_dir
+                            target = (extracted_dir / rel_path).resolve()
+                            try:
+                                target.relative_to(extracted_dir.resolve())
+                            except ValueError:
+                                logger.warning(
+                                    f"Path traversal detected after resolve for file "
+                                    f"{record['file_index']}: '{rel_path}' -> {target}"
+                                )
+                                continue
+
+                            if not source.exists():
+                                logger.warning(
+                                    f"Part file missing for file {record['file_index']}: {source}"
+                                )
+                                continue
+
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            await asyncio.to_thread(shutil.move, str(source), str(target))
+                            reconstructed += 1
+
+                        logger.info(
+                            f"Reconstructed folder structure: {reconstructed}/{len(file_records)} "
+                            f"files in {extracted_dir}"
+                        )
+                        pipeline_dir = str(extracted_dir)
+
+                    job_group_id = session_opts.get("job_group_id")
                     job_id = await conn.fetchval(
                         """
                         INSERT INTO processing_jobs
                             (user_id, upload_filename, upload_size_bytes,
-                             phases_requested, lanes_requested, processing_mode, status)
-                        VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+                             phases_requested, lanes_requested, processing_mode,
+                             job_group_id, status)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
                         RETURNING id
                         """,
                         user_id,
-                        f"upload-{session_id}",
+                        # Use original ZIP filename for vault fingerprinting (fallback to session ID)
+                        (session_opts.get("original_filenames", [None])[0]) or f"upload-{session_id}",
                         session_row["total_bytes"],
                         job_phases,
                         job_lanes,
                         job_mode,
+                        job_group_id,
                     )
                     # Note: SQL mirrors jobs.py:create_processing_job() — keep in sync
                     logger.info(f"Created job {job_id} for session {session_id}")
@@ -681,18 +903,72 @@ async def verify_file(
                         session_db_id,
                     )
 
-                    # Launch job as background task (with staging_dir so pipeline finds files)
-                    # Job will set status to 'scanned' when ingest completes (see jobs.py)
-                    asyncio.create_task(
-                        run_job(pool, job_id, username, config, staging_dir=staging_dir)
-                    )
-
                     response["job_id"] = job_id
                     logger.info(f"Job {job_id} created for upload session {session_id}")
+
+            # ── Post-transaction: enqueue job to ARQ worker ──
+            # The transaction is now committed so the worker can read the job row.
+            if response.get("job_id"):
+                arq_pool = getattr(request.app.state, "arq_pool", None)
+                if arq_pool:
+                    # Enqueue to ARQ worker — durable Redis queue
+                    await arq_pool.enqueue_job(
+                        "process_job",
+                        job_id,
+                        username,
+                        pipeline_dir,
+                        _queue_name="snatched:default",
+                    )
+                    # Update status to 'queued' (worker will set 'running' when it picks up)
+                    from snatched.db import update_job
+                    await update_job(pool, job_id, status="queued")
+                    logger.info("Job %d enqueued to ARQ for user %s", job_id, username)
+                else:
+                    # Fallback: direct execution if Redis unavailable
+                    logger.warning("ARQ unavailable — running job %d directly", job_id)
+                    task = asyncio.create_task(
+                        run_job(pool, job_id, username, config, staging_dir=pipeline_dir)
+                    )
+                    task.add_done_callback(
+                        lambda t, jid=job_id: t.exception() and logger.error(
+                            "Job %d background task crashed: %s", jid, t.exception(),
+                            exc_info=t.exception(),
+                        )
+                    )
+
+                # Silent archive — fire-and-forget, never blocks the user
+                try:
+                    staging_path = staging_dir_path
+                    archive_metadata = {
+                        "job_id": job_id,
+                        "username": username,
+                        "session_id": session_id,
+                        "total_bytes": session_row["total_bytes"],
+                        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    archive_task = asyncio.create_task(
+                        _archive_upload(username, job_id, staging_path, archive_metadata)
+                    )
+                    archive_task.add_done_callback(
+                        lambda t, jid=job_id: t.exception() and logger.warning(
+                            "Archive task for job %d failed: %s", jid, t.exception(),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to schedule archive task: {e}")
 
     except Exception as e:
         logger.error(f"Error in post-verify job creation for session {session_id}: {e}", exc_info=True)
         response["warning"] = "File verified but job creation failed. Please retry."
+        # Mark session as failed so resume system doesn't show stale banner
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE upload_sessions SET status = 'failed' WHERE session_token = $1",
+                    session_id,
+                )
+        except Exception:
+            pass
 
     return response
 
@@ -827,10 +1103,8 @@ async def abort_upload(
             session_row["id"],
         )
 
-    # Delete staging directory
-    user_data_dir = Path(str(config.server.data_dir)) / username
-    staging_dir = user_data_dir / "staging" / session_id
-
+    # Delete staging directory (check both ramdisk and disk)
+    staging_dir = _staging_dir(str(config.server.data_dir), username, session_id)
     if staging_dir.exists():
         try:
             shutil.rmtree(staging_dir)
@@ -886,10 +1160,8 @@ async def cleanup_expired_sessions(pool: asyncpg.Pool, config) -> int:
                     row["id"],
                 )
 
-            # Delete staging directory
-            user_data_dir = Path(str(config.server.data_dir)) / username
-            staging_dir = user_data_dir / "staging" / session_id
-
+            # Delete staging directory (check both ramdisk and disk)
+            staging_dir = _staging_dir(str(config.server.data_dir), username, session_id)
             if staging_dir.exists():
                 shutil.rmtree(staging_dir)
                 logger.info(f"Cleaned up expired session {session_id}")

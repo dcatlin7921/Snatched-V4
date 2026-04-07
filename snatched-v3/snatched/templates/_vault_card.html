@@ -1,0 +1,46 @@
+{% if vaults %}
+{% for v in vaults %}
+<div class="vault-card">
+    <div class="vault-card-header">
+        <h3 class="vault-card-title uppercase italic tracking-tight">
+            <span class="vault-ghost">&#x1F47B;</span>
+            {{ v.snap_username or (v.snap_account_uid[:8] + '...' if v.snap_account_uid else 'Unknown') }}
+        </h3>
+        <span class="vault-import-badge">{{ v.import_count }} import{{ 's' if v.import_count != 1 else '' }}</span>
+    </div>
+
+    <div class="vault-stats-row">
+        <div class="vault-stat-item">
+            <span class="vault-stat-num">{{ "{:,}".format(v.total_memories or 0) }}</span>
+            <span class="vault-stat-lbl">memories</span>
+        </div>
+        <div class="vault-stat-item">
+            <span class="vault-stat-num">{{ "{:,}".format(v.total_assets or 0) }}</span>
+            <span class="vault-stat-lbl">assets</span>
+        </div>
+        <div class="vault-stat-item">
+            <span class="vault-stat-num">{{ v.gps_pct | default(0) }}%</span>
+            <span class="vault-stat-lbl">GPS</span>
+        </div>
+        <div class="vault-stat-item">
+            <span class="vault-stat-num">{{ "{:,}".format(v.total_friends or 0) }}</span>
+            <span class="vault-stat-lbl">friends</span>
+        </div>
+    </div>
+
+    {% if v.last_import_at %}
+    <div class="vault-card-meta">
+        Last import: {{ v.last_import_at.strftime('%Y-%m-%d') if v.last_import_at else 'Never' }}
+    </div>
+    {% endif %}
+
+    <div class="vault-card-actions">
+        <a href="/vault/{{ v.id }}" class="btn-primary btn-sm">View Vault &rarr;</a>
+    </div>
+</div>
+{% endfor %}
+{% else %}
+<div class="empty-state" style="padding: 1rem;">
+    <p class="text-muted" style="font-size: 0.8rem;">No vaults yet. Complete a job to create one.</p>
+</div>
+{% endif %}

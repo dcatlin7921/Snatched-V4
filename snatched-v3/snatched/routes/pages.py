@@ -15,8 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from snatched.auth import (
-    get_current_user, get_optional_user, DEV_MODE, create_dev_jwt,
-    create_jwt, hash_password, verify_password,
+    get_current_user, get_optional_user, DEV_MODE, REQUIRE_HTTPS,
+    create_jwt, hash_password, verify_password, require_admin_db,
 )
 from snatched import tags as tags_module
 
@@ -24,20 +24,50 @@ logger = logging.getLogger("snatched.routes.pages")
 router = APIRouter()
 
 
+def _cookie_params() -> dict:
+    """Common cookie parameters for auth_token. Secure=True only with HTTPS."""
+    return {
+        "httponly": True,
+        "max_age": 86400,
+        "samesite": "lax",
+        "secure": REQUIRE_HTTPS,
+    }
+
+
+# WU-17: Admin gate — shared from auth.py
+_require_admin = require_admin_db
+
+
+# ---------------------------------------------------------------------------
+# Per-job path helpers (WU-1 data isolation)
+# ---------------------------------------------------------------------------
+
+def _job_dir(config, username: str, job_id: int) -> Path:
+    """Return /data/{username}/jobs/{job_id}/ — the isolated directory for a single job."""
+    return Path(str(config.server.data_dir)) / username / "jobs" / str(job_id)
+
+
+def _job_db_path(config, username: str, job_id: int) -> Path:
+    """Return the SQLite proc.db path for a specific job."""
+    return _job_dir(config, username, job_id) / "proc.db"
+
+
+def _job_output_dir(config, username: str, job_id: int) -> Path:
+    """Return the output/ directory path for a specific job."""
+    return _job_dir(config, username, job_id) / "output"
+
+
 async def _load_tier_info(pool, username: str) -> dict:
     """Load user's tier info for template context. Returns empty dict if user not found."""
-    from snatched.tiers import get_tier_limits, TIER_LIMITS, TIER_ORDER
+    from snatched.tiers import get_tier_limits_async, get_all_tiers_async
     async with pool.acquire() as conn:
         tier = await conn.fetchval(
             "SELECT tier FROM users WHERE username = $1", username
         )
     if not tier:
         tier = "free"
-    limits = get_tier_limits(tier)
-    all_tiers = [
-        {"tier": t, **TIER_LIMITS[t]}
-        for t in TIER_ORDER
-    ]
+    limits = await get_tier_limits_async(pool, tier)
+    all_tiers = await get_all_tiers_async(pool)
     return {
         "tier": tier,
         "label": limits["label"],
@@ -46,21 +76,6 @@ async def _load_tier_info(pool, username: str) -> dict:
         "all_tiers": all_tiers,
     }
 
-
-@router.get("/dev-login")
-async def dev_login(request: Request, username: str = "dave"):
-    """GET /dev-login — Dev mode auto-login.
-
-    Sets a JWT cookie and redirects to landing page.
-    Only works when SNATCHED_DEV_MODE=1.
-    """
-    if not DEV_MODE:
-        raise HTTPException(404, "Not found")
-    token = create_dev_jwt(username)
-    response = RedirectResponse(url="/", status_code=302)
-    response.set_cookie("auth_token", token, httponly=True, max_age=86400, samesite="lax")
-    logger.info(f"Dev login: set JWT cookie for '{username}'")
-    return response
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -72,8 +87,14 @@ async def login_page(request: Request):
         return RedirectResponse(url="/dashboard", status_code=302)
     templates = request.app.state.templates
     error = request.query_params.get("error")
+    next_url = request.query_params.get("next", "")
+    # Show a hint if they were redirected from a protected page
+    info = ""
+    if next_url and not error:
+        info = "Sign in to continue."
     return templates.TemplateResponse("login.html", {
         "request": request, "title": "Login — SNATCHED", "error": error,
+        "next": next_url, "info": info,
     })
 
 
@@ -84,6 +105,11 @@ async def login_submit(request: Request):
     form = await request.form()
     username = (form.get("username") or "").strip().lower()
     password = form.get("password") or ""
+    next_url = (form.get("next") or "").strip()
+
+    # Validate next_url is a safe relative path
+    if next_url and (not next_url.startswith("/") or next_url.startswith("//")):
+        next_url = ""
 
     if not username or not password:
         return RedirectResponse(url="/login?error=Missing+username+or+password", status_code=302)
@@ -105,9 +131,10 @@ async def login_submit(request: Request):
         await conn.execute("UPDATE users SET last_seen = NOW() WHERE id = $1", row["id"])
 
     token = create_jwt(username)
-    response = RedirectResponse(url="/dashboard", status_code=302)
-    response.set_cookie("auth_token", token, httponly=True, max_age=86400, samesite="lax")
-    logger.info(f"Login: {username}")
+    redirect_to = next_url or "/dashboard"
+    response = RedirectResponse(url=redirect_to, status_code=302)
+    response.set_cookie("auth_token", token, **_cookie_params())
+    logger.info(f"Login: {username} -> {redirect_to}")
     return response
 
 
@@ -119,8 +146,10 @@ async def register_page(request: Request):
         return RedirectResponse(url="/dashboard", status_code=302)
     templates = request.app.state.templates
     error = request.query_params.get("error")
+    next_url = request.query_params.get("next", "")
     return templates.TemplateResponse("register.html", {
         "request": request, "title": "Register — SNATCHED", "error": error,
+        "next": next_url,
     })
 
 
@@ -133,6 +162,11 @@ async def register_submit(request: Request):
     email = (form.get("email") or "").strip().lower() or None
     password = form.get("password") or ""
     confirm = form.get("confirm_password") or ""
+    next_url = (form.get("next") or "").strip()
+
+    # Validate next_url is a safe relative path
+    if next_url and (not next_url.startswith("/") or next_url.startswith("//")):
+        next_url = ""
 
     if not username or not password:
         return RedirectResponse(url="/register?error=Username+and+password+required", status_code=302)
@@ -164,9 +198,11 @@ async def register_submit(request: Request):
         )
 
     token = create_jwt(username)
-    response = RedirectResponse(url="/dashboard", status_code=302)
-    response.set_cookie("auth_token", token, httponly=True, max_age=86400, samesite="lax")
-    logger.info(f"Registered new user: {username}")
+    # New users go to upload by default (their first action), unless next_url specified
+    redirect_to = next_url or "/upload"
+    response = RedirectResponse(url=redirect_to, status_code=302)
+    response.set_cookie("auth_token", token, **_cookie_params())
+    logger.info(f"Registered new user: {username} -> {redirect_to}")
     return response
 
 
@@ -203,9 +239,49 @@ async def landing(request: Request):
                 if job_count > 0:
                     return RedirectResponse("/dashboard", status_code=302)
 
+    # Platform stats for social proof (live totals minus resettable baselines)
+    platform_stats = {"files": 0, "gps": 0, "users": 0}
+    try:
+        pool = request.app.state.db_pool
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT
+                    COALESCE(SUM(e.file_count), 0)::bigint AS total_files,
+                    COALESCE(SUM((e.stats_json->>'gps_tagged')::int), 0)::bigint AS total_gps,
+                    (SELECT COUNT(DISTINCT user_id) FROM processing_jobs
+                     WHERE status = 'completed')::bigint AS total_users
+                FROM exports e
+                WHERE e.status = 'completed'
+            """)
+            baselines = {}
+            for key in ("stats_baseline_files", "stats_baseline_gps", "stats_baseline_users"):
+                val = await conn.fetchval(
+                    "SELECT value FROM system_config WHERE key = $1", key
+                )
+                baselines[key] = int(val) if val else 0
+            if row:
+                platform_stats["files"] = max(0, row["total_files"] - baselines["stats_baseline_files"])
+                platform_stats["gps"] = max(0, row["total_gps"] - baselines["stats_baseline_gps"])
+                platform_stats["users"] = max(0, row["total_users"] - baselines["stats_baseline_users"])
+    except Exception:
+        pass  # Stats are best-effort, never block the landing page
+
     return templates.TemplateResponse("landing.html", {
         "request": request,
         "username": username,
+        "platform_stats": platform_stats,
+    })
+
+
+@router.get("/help", response_class=HTMLResponse)
+async def help_page(request: Request):
+    """GET /help — How to download your Snapchat data (public, no auth required)."""
+    templates = request.app.state.templates
+    username = await get_optional_user(request)
+    return templates.TemplateResponse("help.html", {
+        "request": request,
+        "title": "Help — SNATCHED",
+        "username": username or "",
     })
 
 
@@ -217,7 +293,7 @@ async def upload_page(request: Request, username: str = Depends(get_current_user
     Loads user preferences to pre-populate checkboxes.
     Loads tier info for upload size limit display and enforcement (Feature #29).
     """
-    from snatched.tiers import get_tier_limits
+    from snatched.tiers import get_tier_limits_async
 
     pool = request.app.state.db_pool
     templates = request.app.state.templates
@@ -232,7 +308,8 @@ async def upload_page(request: Request, username: str = Depends(get_current_user
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT burn_overlays, dark_mode_pngs, exif_enabled, xmp_enabled, gps_window_seconds
+            SELECT burn_overlays, dark_mode_pngs, exif_enabled, xmp_enabled, gps_window_seconds,
+                   folder_style, gps_precision, hide_sent_to, chat_timestamps, chat_cover_pages
             FROM user_preferences up
             JOIN users u ON up.user_id = u.id
             WHERE u.username = $1
@@ -249,7 +326,7 @@ async def upload_page(request: Request, username: str = Depends(get_current_user
     if tier_row:
         tier = tier_row["tier"]
 
-    limits = get_tier_limits(tier)
+    limits = await get_tier_limits_async(pool, tier)
     tier_info = {
         "tier": tier,
         "label": limits["label"],
@@ -275,7 +352,7 @@ async def dashboard(request: Request, username: str = Depends(get_current_user))
     Shows active jobs (polling every 2s via htmx) and job history.
     Passes tier info and slot data for Features #30 and #31.
     """
-    from snatched.tiers import get_tier_limits
+    from snatched.tiers import get_tier_limits_async
 
     pool = request.app.state.db_pool
     templates = request.app.state.templates
@@ -302,13 +379,13 @@ async def dashboard(request: Request, username: str = Depends(get_current_user))
         )
         tier = tier_row["tier"] if tier_row else "free"
 
-        # Feature #31: count active jobs (running + pending) for this user
+        # Feature #31: count active jobs (running + pending + queued) for this user
         active_row = await conn.fetchrow(
             """
             SELECT COUNT(*) as active_count
             FROM processing_jobs pj
             JOIN users u ON pj.user_id = u.id
-            WHERE u.username = $1 AND pj.status IN ('running', 'pending')
+            WHERE u.username = $1 AND pj.status IN ('running', 'pending', 'queued')
             """,
             username,
         )
@@ -321,7 +398,7 @@ async def dashboard(request: Request, username: str = Depends(get_current_user))
         # among all pending jobs system-wide for this user's oldest pending job).
         queued_jobs_count = 0
         queue_position = None
-        tier_limits = get_tier_limits(tier)
+        tier_limits = await get_tier_limits_async(pool, tier)
         max_slots = tier_limits.get("concurrent_jobs")  # None = unlimited
 
         if max_slots is not None and active_jobs_count >= max_slots:
@@ -392,12 +469,16 @@ async def job_canvas(
     job_id: int,
     username: str = Depends(get_current_user),
 ):
-    """GET /job/{job_id} — The Living Canvas: single evolving job screen.
+    """GET /job/{job_id} — Redirects to /snatchedmemories/{job_id}."""
+    return RedirectResponse(url=f"/snatchedmemories/{job_id}", status_code=302)
 
-    Renders differently based on job state (pending/running/scanned/matched/
-    enriched/completed/failed/cancelled). Replaces the separate progress,
-    configure, and results pages.
-    """
+# -- Legacy job_canvas kept below for reference but no longer routed --
+async def _job_canvas_legacy(
+    request: Request,
+    job_id: int,
+    username: str = Depends(get_current_user),
+):
+    """Legacy Living Canvas — replaced by /snatchedmemories/{job_id}."""
     pool = request.app.state.db_pool
     templates = request.app.state.templates
 
@@ -420,7 +501,7 @@ async def job_canvas(
     # 3=enrich done/exporting, 4=completed
     status = job["status"]
     phase_map = {
-        'pending': 0, 'running': 0, 'scanned': 1,
+        'pending': 0, 'queued': 0, 'running': 0, 'scanned': 1,
         'matched': 2, 'enriched': 3, 'completed': 4,
         'failed': -1, 'cancelled': -1,
     }
@@ -445,6 +526,19 @@ async def job_canvas(
     stats = collections.defaultdict(lambda: None, raw_stats)
 
     tier_info = await _load_tier_info(pool, username)
+    processing_mode = job["processing_mode"] or "speed_run"
+
+    # Check vault merge status
+    is_merged = False
+    merge_date = None
+    async with pool.acquire() as conn:
+        vi_row = await conn.fetchrow(
+            "SELECT created_at FROM vault_imports WHERE job_id = $1 LIMIT 1", job_id
+        )
+        if vi_row:
+            is_merged = True
+            merge_date = vi_row["created_at"].strftime("%b %d, %Y") if vi_row["created_at"] else None
+
     return templates.TemplateResponse("job.html", {
         "request": request,
         "username": username,
@@ -452,6 +546,9 @@ async def job_canvas(
         "stats": stats,
         "phase_idx": phase_idx,
         "tier_info": tier_info,
+        "processing_mode": processing_mode,
+        "is_merged": is_merged,
+        "merge_date": merge_date,
     })
 
 
@@ -461,11 +558,8 @@ async def job_progress(
     job_id: int,
     username: str = Depends(get_current_user),
 ):
-    """GET /jobs/{job_id} — Legacy route: redirects to /job/{job_id}.
-
-    Kept for backward compatibility (bookmarks, existing SSE streams).
-    """
-    return RedirectResponse(url=f"/job/{job_id}", status_code=301)
+    """GET /jobs/{job_id} — Legacy route: redirects to /snatchedmemories/{job_id}."""
+    return RedirectResponse(url=f"/snatchedmemories/{job_id}", status_code=301)
 
 
 @router.get("/results/{job_id}", response_class=HTMLResponse)
@@ -498,7 +592,7 @@ async def results(
     # Guard: redirect non-completed jobs to the Living Canvas page
     job_status = job["status"]
     if job_status in ("running", "pending", "scanned", "matched", "enriched"):
-        return RedirectResponse(f"/job/{job_id}", status_code=302)
+        return RedirectResponse(f"/snatchedmemories/{job_id}", status_code=302)
     if job_status == "cancelled":
         return RedirectResponse("/dashboard", status_code=302)
 
@@ -544,7 +638,7 @@ async def asset_detail(
         raise HTTPException(404, "Job not found")
 
     # Load asset row from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
 
     loop = asyncio.get_running_loop()
 
@@ -567,7 +661,7 @@ async def asset_detail(
     # Resolve the output file path
     output_path = asset.get("output_path") or asset.get("path") or ""
     if output_path and not os.path.isabs(output_path):
-        output_dir = Path(str(config.server.data_dir)) / username / "output"
+        output_dir = _job_output_dir(config, username, job_id)
         full_output_path = str(output_dir / output_path)
     else:
         full_output_path = output_path
@@ -592,7 +686,7 @@ async def asset_detail(
     xmp_path = asset.get("xmp_path") or ""
     if xmp_path:
         if not os.path.isabs(xmp_path):
-            output_dir = Path(str(config.server.data_dir)) / username / "output"
+            output_dir = _job_output_dir(config, username, job_id)
             full_xmp_path = str(output_dir / xmp_path)
         else:
             full_xmp_path = xmp_path
@@ -631,17 +725,9 @@ async def asset_detail(
 
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, username: str = Depends(get_current_user)):
-    """GET /settings — Account & preferences page.
-
-    Shows account info, storage usage, and editable processing preferences.
-    """
+    """GET /settings — Account info page."""
     pool = request.app.state.db_pool
     templates = request.app.state.templates
-
-    prefs = {
-        "burn_overlays": True, "dark_mode_pngs": False, "exif_enabled": True,
-        "xmp_enabled": False, "gps_window_seconds": 300,
-    }
 
     async with pool.acquire() as conn:
         user = await conn.fetchrow(
@@ -669,39 +755,25 @@ async def settings_page(request: Request, username: str = Depends(get_current_us
             user["id"],
         )
 
-        row = await conn.fetchrow(
-            """
-            SELECT burn_overlays, dark_mode_pngs, exif_enabled, xmp_enabled, gps_window_seconds
-            FROM user_preferences up
-            JOIN users u ON up.user_id = u.id
-            WHERE u.username = $1
-            """,
-            username,
-        )
-    if row:
-        prefs = dict(row)
-
     # Compute human-readable storage values
     storage_used_gb = round((storage_used or 0) / (1024 ** 3), 2)
     quota_bytes = user["storage_quota_bytes"] or 0
     quota_gb = round(quota_bytes / (1024 ** 3), 1) if quota_bytes else None
     storage_pct = min(100, round((storage_used or 0) / quota_bytes * 100)) if quota_bytes else 0
 
-    # Load tier info for nav badge + Plan & Tier section
+    # Load tier info for nav badge
     tier_info = await _load_tier_info(pool, username)
-    all_tiers = tier_info.pop("all_tiers", [])
+    tier_info.pop("all_tiers", None)
 
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "username": username,
         "user": dict(user),
-        "prefs": prefs,
         "storage_used_gb": storage_used_gb,
         "quota_gb": quota_gb,
         "storage_pct": storage_pct,
         "job_count": job_count,
         "tier_info": tier_info,
-        "all_tiers": all_tiers,
     })
 
 
@@ -780,8 +852,8 @@ async def friends_page(request: Request, username: str = Depends(get_current_use
 
     latest_job_id = latest_job["id"] if latest_job else None
 
-    # Load friends + message counts from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    # Load friends + message counts from the most recent job's SQLite
+    db_path = _job_db_path(config, username, latest_job_id) if latest_job_id else Path("/nonexistent")
     loop = asyncio.get_running_loop()
 
     def _load_friends():
@@ -975,10 +1047,15 @@ async def download_page(
     job_id: int,
     username: str = Depends(get_current_user),
 ):
-    """GET /download/{job_id} — Download manager page.
+    """GET /download/{job_id} — Redirects to /snatchedmemories/{job_id}."""
+    return RedirectResponse(url=f"/snatchedmemories/{job_id}", status_code=302)
 
-    Shows file tree for /data/{username}/output/ plus output stats.
-    """
+async def _download_page_legacy(
+    request: Request,
+    job_id: int,
+    username: str = Depends(get_current_user),
+):
+    """Legacy download page — replaced by /snatchedmemories/{job_id}."""
     config = request.app.state.config
     pool = request.app.state.db_pool
     templates = request.app.state.templates
@@ -997,27 +1074,251 @@ async def download_page(
     if not job:
         raise HTTPException(404, "Job not found")
 
-    # Count files and sum sizes in the output directory
-    output_dir = Path(str(config.server.data_dir)) / username / "output"
-    file_count = 0
-    total_size = 0
-    if output_dir.exists():
-        for dirpath, dirnames, filenames in os.walk(str(output_dir)):
-            for f in filenames:
-                file_count += 1
-                total_size += os.path.getsize(os.path.join(dirpath, f))
+    job_dict = dict(job)
+    processing_mode = job_dict.get("processing_mode") or "speed_run"
 
-    total_size_mb = round(total_size / (1024 * 1024), 1)
+    # Fetch all exports for this job
+    async with pool.acquire() as conn:
+        export_rows = await conn.fetch(
+            "SELECT * FROM exports WHERE job_id = $1 ORDER BY created_at",
+            job_id,
+        )
+
+    exports = [dict(row) for row in export_rows]
+
+    # Parse stats_json for upsell card data
+    raw_stats = job_dict.get("stats_json") or {}
+    if isinstance(raw_stats, str):
+        raw_stats = json.loads(raw_stats)
+    upsell_chat_count = raw_stats.get("chat_count", 0) or 0
+    upsell_story_count = raw_stats.get("story_count", 0) or 0
+    upsell_conversation_count = raw_stats.get("conversation_count", 0) or 0
+    upsell_snap_count = raw_stats.get("snap_count", 0) or 0
+    upsell_friend_count = raw_stats.get("friend_count", 0) or 0
+
+    # Show upsell when mode is quick_rescue and there's ANY additional data
+    # Show upsell for free-tier jobs (or legacy quick_rescue) with more data available
+    _job_tier = job_dict.get("job_tier") or "free"
+    show_upsell = (
+        (_job_tier == "free" or processing_mode == "quick_rescue")
+        and (upsell_chat_count > 0 or upsell_story_count > 0 or upsell_snap_count > 0)
+    )
+
+    # Check if any export is completed (for injection protocol card)
+    has_completed_export = any(e["status"] == "completed" for e in exports)
 
     tier_info = await _load_tier_info(pool, username)
+
     return templates.TemplateResponse("download.html", {
         "request": request,
         "username": username,
         "job_id": job_id,
-        "job": dict(job),
-        "file_count": file_count,
-        "total_size_mb": total_size_mb,
+        "job": job_dict,
+        "exports": exports,
+        "show_upsell": show_upsell,
+        "upsell_chat_count": upsell_chat_count,
+        "upsell_story_count": upsell_story_count,
+        "upsell_conversation_count": upsell_conversation_count,
+        "upsell_snap_count": upsell_snap_count,
+        "upsell_friend_count": upsell_friend_count,
+        "has_completed_export": has_completed_export,
+        "processing_mode": processing_mode,
         "tier_info": tier_info,
+    })
+
+
+def _query_proc_db_stats(proc_db_path: str) -> dict:
+    """Query proc.db for accurate export-level statistics.
+
+    Returns photo/video counts, GPS coverage, and date range for
+    assets that were actually exported (output_path IS NOT NULL).
+    Runs synchronously — call via asyncio.to_thread().
+    """
+    try:
+        db = sqlite3.connect(
+            f"file:{proc_db_path}?mode=ro", uri=True, check_same_thread=False
+        )
+        db.row_factory = sqlite3.Row
+        try:
+            exported = db.execute(
+                "SELECT COUNT(*) FROM assets WHERE output_path IS NOT NULL"
+            ).fetchone()[0]
+            photos = db.execute(
+                "SELECT COUNT(*) FROM assets WHERE output_path IS NOT NULL AND is_video = 0"
+            ).fetchone()[0]
+            videos = db.execute(
+                "SELECT COUNT(*) FROM assets WHERE output_path IS NOT NULL AND is_video = 1"
+            ).fetchone()[0]
+            gps_tagged = db.execute(
+                """SELECT COUNT(DISTINCT a.id)
+                   FROM assets a
+                   JOIN matches m ON a.id = m.asset_id
+                   WHERE a.output_path IS NOT NULL
+                     AND m.matched_lat IS NOT NULL
+                     AND m.is_best = 1"""
+            ).fetchone()[0]
+            date_row = db.execute(
+                """SELECT MIN(m.matched_date) AS min_date,
+                          MAX(m.matched_date) AS max_date
+                   FROM assets a
+                   JOIN matches m ON a.id = m.asset_id
+                   WHERE a.output_path IS NOT NULL
+                     AND m.is_best = 1
+                     AND m.matched_date IS NOT NULL"""
+            ).fetchone()
+            min_date = date_row["min_date"] if date_row else None
+            max_date = date_row["max_date"] if date_row else None
+
+            return {
+                "exported": exported,
+                "photos": photos,
+                "videos": videos,
+                "gps_tagged": gps_tagged,
+                "min_date": min_date,
+                "max_date": max_date,
+            }
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("Failed to query proc.db stats at %s: %s", proc_db_path, exc)
+        return {}
+
+
+@router.get("/snatchedmemories/{job_id}", response_class=HTMLResponse)
+async def snatched_memories(
+    request: Request,
+    job_id: int,
+    username: str = Depends(get_current_user),
+):
+    """GET /snatchedmemories/{job_id} — Unified Quick Rescue results page.
+
+    Combines job stats + export downloads into a single two-column view.
+    Handles processing state (SSE) and completed state (download cards).
+    """
+    config = request.app.state.config
+    pool = request.app.state.db_pool
+    templates = request.app.state.templates
+
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow(
+            """
+            SELECT pj.*, u.username AS owner_username
+            FROM processing_jobs pj
+            JOIN users u ON pj.user_id = u.id
+            WHERE pj.id = $1 AND u.username = $2
+            """,
+            job_id, username,
+        )
+
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    job_dict = dict(job)
+    processing_mode = job_dict.get("processing_mode") or "speed_run"
+
+    # Phase index for step indicators
+    status = job_dict["status"]
+    phase_map = {
+        'pending': 0, 'queued': 0, 'running': 0, 'scanned': 1,
+        'matched': 2, 'enriched': 3, 'completed': 4,
+        'failed': -1, 'cancelled': -1,
+    }
+    phase_idx = phase_map.get(status, 0)
+    if status == 'running' and job_dict.get('current_phase'):
+        cp = job_dict['current_phase']
+        if cp == 'ingest': phase_idx = 0
+        elif cp == 'match': phase_idx = 1
+        elif cp == 'enrich': phase_idx = 2
+        elif cp == 'export': phase_idx = 3
+
+    # Stats
+    raw_stats = job_dict.get("stats_json") or {}
+    if isinstance(raw_stats, str):
+        raw_stats = json.loads(raw_stats)
+    stats = collections.defaultdict(lambda: None, raw_stats)
+
+    # Exports
+    async with pool.acquire() as conn:
+        export_rows = await conn.fetch(
+            "SELECT * FROM exports WHERE job_id = $1 ORDER BY created_at",
+            job_id,
+        )
+    exports = [dict(row) for row in export_rows]
+
+    # Upsell data
+    upsell_chat_count = raw_stats.get("chat_count", 0) or 0
+    upsell_story_count = raw_stats.get("story_count", 0) or 0
+    upsell_conversation_count = raw_stats.get("conversation_count", 0) or 0
+    upsell_snap_count = raw_stats.get("snap_count", 0) or 0
+    upsell_friend_count = raw_stats.get("friend_count", 0) or 0
+    # Show upsell for free-tier jobs (or legacy quick_rescue) with more data available
+    _job_tier = job_dict.get("job_tier") or "free"
+    show_upsell = (
+        (_job_tier == "free" or processing_mode == "quick_rescue")
+        and (upsell_chat_count > 0 or upsell_story_count > 0 or upsell_snap_count > 0)
+    )
+    has_completed_export = any(e["status"] == "completed" for e in exports)
+
+    # Compute accurate export-level stats from proc.db for completed jobs.
+    export_stats = {}
+    if status == "completed":
+        data_dir = Path(str(config.server.data_dir))
+        proc_db_path = data_dir / username / "jobs" / str(job_id) / "proc.db"
+        if proc_db_path.exists():
+            export_stats = await asyncio.to_thread(
+                _query_proc_db_stats, str(proc_db_path)
+            )
+        # Add total download size from completed exports.
+        total_zip_bytes = sum(
+            e.get("zip_total_bytes", 0) or 0
+            for e in exports if e["status"] == "completed"
+        )
+        export_stats["total_zip_bytes"] = total_zip_bytes
+
+    tier_info = await _load_tier_info(pool, username)
+    phase_durations = raw_stats.get("phase_durations") or {}
+
+    # Fetch upload session options for this job (processing settings chosen at upload/configure time)
+    async with pool.acquire() as conn:
+        session_row = await conn.fetchrow(
+            "SELECT options_json FROM upload_sessions WHERE job_id = $1 LIMIT 1",
+            job_id,
+        )
+    upload_options = dict(session_row["options_json"]) if session_row and session_row["options_json"] else {}
+
+    # Check vault merge status for this job
+    is_merged = False
+    merge_date = None
+    async with pool.acquire() as conn:
+        vi_row = await conn.fetchrow(
+            "SELECT created_at FROM vault_imports WHERE job_id = $1 LIMIT 1", job_id
+        )
+        if vi_row:
+            is_merged = True
+            merge_date = vi_row["created_at"].strftime("%b %d, %Y") if vi_row["created_at"] else None
+
+    return templates.TemplateResponse("snatchedmemories.html", {
+        "request": request,
+        "username": username,
+        "job_id": job_id,
+        "job": job_dict,
+        "stats": stats,
+        "export_stats": export_stats,
+        "phase_idx": phase_idx,
+        "phase_durations": phase_durations,
+        "exports": exports,
+        "show_upsell": show_upsell,
+        "upsell_chat_count": upsell_chat_count,
+        "upsell_story_count": upsell_story_count,
+        "upsell_conversation_count": upsell_conversation_count,
+        "upsell_snap_count": upsell_snap_count,
+        "upsell_friend_count": upsell_friend_count,
+        "has_completed_export": has_completed_export,
+        "processing_mode": processing_mode,
+        "tier_info": tier_info,
+        "upload_options": upload_options,
+        "is_merged": is_merged,
+        "merge_date": merge_date,
     })
 
 
@@ -1061,7 +1362,7 @@ async def gps_correction(
     user_id = row["user_id"]
 
     # Load per-user SQLite data
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_sqlite_data():
@@ -1250,7 +1551,7 @@ async def redaction_page(
         redaction_log.append(d)
 
     # Query assets + match GPS/creator info from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_assets():
@@ -1290,16 +1591,14 @@ async def redaction_page(
     })
 
 
-@router.get("/schemas", response_class=HTMLResponse)
+# FUTURE FEATURE: Custom schemas — commented out pending pipeline integration
+# @router.get("/schemas", response_class=HTMLResponse)
 async def schemas_page(request: Request, username: str = Depends(get_current_user)):
-    """GET /schemas — Custom Metadata Schemas management page.
-
-    Lists user's custom XMP namespace schemas (namespace_prefix, namespace_uri, fields).
-    Provides create/edit/delete via client-side JS calling the /api/schemas endpoints.
-    """
+    """GET /schemas — Custom Metadata Schemas management page. DISABLED — future feature."""
     import json as _json
 
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
     templates = request.app.state.templates
 
     async with pool.acquire() as conn:
@@ -1418,7 +1717,7 @@ async def match_config(
         presets.append(d)
 
     # Load match stats from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_match_stats():
@@ -1564,7 +1863,7 @@ async def dry_run_page(
             job_dict[dt_field] = job_dict[dt_field].isoformat()
 
     # Load match stats and export tree from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_dry_run_data():
@@ -1764,7 +2063,7 @@ async def timestamp_correction(
         raise HTTPException(404, "Job not found")
 
     # Load assets joined with best matches from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_assets():
@@ -1982,7 +2281,7 @@ async def memory_browser(
         raise HTTPException(404, "Job not found")
 
     # Load initial stats from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_stats():
@@ -2068,7 +2367,7 @@ async def conversation_browser(
         raise HTTPException(404, "Job not found")
 
     # Load conversation list from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_conversations():
@@ -2145,7 +2444,7 @@ async def timeline_page(request: Request, job_id: int, username: str = Depends(g
         raise HTTPException(404, "Job not found")
 
     # Load aggregated timeline stats from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_timeline_summary():
@@ -2239,7 +2538,7 @@ async def map_page(request: Request, job_id: int, username: str = Depends(get_cu
         raise HTTPException(404, "Job not found")
 
     # Load GPS summary stats from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_map_summary():
@@ -2313,7 +2612,7 @@ async def duplicates_page(
     if not job:
         raise HTTPException(404, "Job not found")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_dup_stats():
@@ -2471,7 +2770,7 @@ async def quota_page(request: Request, username: str = Depends(get_current_user)
     retention info, and enriches with SQLite asset breakdown when proc.db exists.
     All blocking I/O (os.walk, sqlite3) is offloaded via run_in_executor.
     """
-    from snatched.tiers import get_tier_limits, TIER_LIMITS, TIER_ORDER
+    from snatched.tiers import get_tier_limits_async, get_all_tiers_async
 
     config = request.app.state.config
     pool = request.app.state.db_pool
@@ -2490,7 +2789,7 @@ async def quota_page(request: Request, username: str = Depends(get_current_user)
 
     user_id = user_row["id"]
     tier = user_row["tier"] or "free"
-    limits = get_tier_limits(tier)
+    limits = await get_tier_limits_async(pool, tier)
     tier_label = limits["label"]
     tier_color = limits["color"]
 
@@ -2569,28 +2868,41 @@ async def quota_page(request: Request, username: str = Depends(get_current_user)
 
     total_bytes, lane_bytes, lane_count = await loop.run_in_executor(None, _scan_disk)
 
-    # ── 4. Optionally enrich lane breakdown from SQLite asset table ──────────
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    # ── 4. Optionally enrich lane breakdown from SQLite asset tables ─────────
+    # Aggregate across all per-job proc.db files
+    user_jobs_dir = Path(str(config.server.data_dir)) / username / "jobs"
 
     def _load_sqlite_lanes():
-        if not db_path.exists():
-            return {}
+        """Aggregate asset_type counts across all per-job proc.db files."""
+        aggregated: dict[str, dict] = {}
+        if not user_jobs_dir.exists():
+            return aggregated
         try:
-            conn_sq = sqlite3.connect(str(db_path))
-            conn_sq.row_factory = sqlite3.Row
-            rows = conn_sq.execute(
-                """
-                SELECT asset_type,
-                       COUNT(*) AS file_count,
-                       SUM(COALESCE(file_size, 0)) AS size_bytes
-                FROM assets
-                GROUP BY asset_type
-                """
-            ).fetchall()
-            conn_sq.close()
-            return {r["asset_type"]: dict(r) for r in rows}
+            for job_db in user_jobs_dir.glob("*/proc.db"):
+                try:
+                    conn_sq = sqlite3.connect(str(job_db))
+                    conn_sq.row_factory = sqlite3.Row
+                    rows = conn_sq.execute(
+                        """
+                        SELECT asset_type,
+                               COUNT(*) AS file_count,
+                               SUM(COALESCE(file_size, 0)) AS size_bytes
+                        FROM assets
+                        GROUP BY asset_type
+                        """
+                    ).fetchall()
+                    conn_sq.close()
+                    for r in rows:
+                        at = r["asset_type"]
+                        if at not in aggregated:
+                            aggregated[at] = {"file_count": 0, "size_bytes": 0}
+                        aggregated[at]["file_count"] += r["file_count"]
+                        aggregated[at]["size_bytes"] += r["size_bytes"] or 0
+                except Exception:
+                    pass
         except Exception:
-            return {}
+            pass
+        return aggregated
 
     sqlite_lanes = await loop.run_in_executor(None, _load_sqlite_lanes)
 
@@ -2649,11 +2961,7 @@ async def quota_page(request: Request, username: str = Depends(get_current_user)
     warn_over_quota = usage_pct >= 100.0
 
     # ── 8. All-tiers list for comparison table ───────────────────────────────
-    all_tiers = []
-    for t_key in TIER_ORDER:
-        t = dict(TIER_LIMITS[t_key])
-        t["key"] = t_key
-        all_tiers.append(t)
+    all_tiers = await get_all_tiers_async(pool)
 
     return templates.TemplateResponse("quota.html", {
         "request": request,
@@ -2746,28 +3054,21 @@ async def job_group_page(
 
 @router.get("/api-keys", response_class=HTMLResponse)
 async def api_keys_page(request: Request, username: str = Depends(get_current_user)):
-    """GET /api-keys — API Access Key management page.
+    """GET /api-keys — API Access Key management page. Admin only.
 
     Loads the user's tier info and all api_keys rows. Tier gate: free users
     see a locked message. Pro+ users see the full CRUD UI (Feature #33).
     """
-    from snatched.tiers import get_tier_limits
-
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
     templates = request.app.state.templates
 
     tier_info = await _load_tier_info(pool, username)
     tier = tier_info["tier"]
-    limits = get_tier_limits(tier)
+    limits = tier_info["limits"]
 
-    # Determine tier limits for API keys
-    _API_KEY_LIMITS = {
-        "free":      {"max_keys": 0,    "rate_limit_rpm": 0},
-        "pro":       {"max_keys": 3,    "rate_limit_rpm": 60},
-    }
-    key_limits = _API_KEY_LIMITS.get(tier, _API_KEY_LIMITS["free"])
-    max_keys = key_limits["max_keys"]
-    rate_limit_rpm = key_limits["rate_limit_rpm"]
+    max_keys = limits.get("max_api_keys", 0)
+    rate_limit_rpm = limits.get("api_key_rate_limit_rpm", 0)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -2807,27 +3108,17 @@ async def api_keys_page(request: Request, username: str = Depends(get_current_us
     })
 
 
-# --- Feature #34: Webhook Notifications ---
+# --- Feature #34: Webhook Notifications --- REMOVED (2026-03-10)
 
-@router.get("/webhooks", response_class=HTMLResponse)
+# @router.get("/webhooks", response_class=HTMLResponse)
 async def webhooks_page(request: Request, username: str = Depends(get_current_user)):
-    """GET /webhooks — Webhook notification configuration page.
-
-    Shows all webhooks registered by the user, tier gate, and CRUD controls.
-    """
+    """GET /webhooks — REMOVED. Webhook feature discontinued."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
     templates = request.app.state.templates
 
     tier_info = await _load_tier_info(pool, username)
-
-    # Determine max webhooks allowed for this tier (no max_webhooks in TIER_LIMITS,
-    # so we map tier name directly per spec)
-    tier_key = tier_info.get("tier", "free")
-    _max_webhooks_map = {
-        "free": 0,
-        "pro": 3,
-    }
-    max_webhooks = _max_webhooks_map.get(tier_key, 0)
+    max_webhooks = tier_info["limits"].get("max_webhooks", 0)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -2870,25 +3161,19 @@ async def webhooks_page(request: Request, username: str = Depends(get_current_us
 
 # --- P6-SLOT-SCHEDULES: Scheduled exports page ---
 
-_SCHEDULE_LIMITS = {
-    "free":      0,
-    "pro":       2,
-}
-
-
 @router.get("/schedules", response_class=HTMLResponse)
 async def schedules_page(request: Request, username: str = Depends(get_current_user)):
-    """GET /schedules — Scheduled / recurring exports management page.
+    """GET /schedules — Scheduled / recurring exports management page. Admin only.
 
     Loads the user's tier info and all schedules rows. Tier gate: free users
     see a locked message. Pro+ users see the full CRUD UI (Feature #36).
     """
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
     templates = request.app.state.templates
 
     tier_info = await _load_tier_info(pool, username)
-    tier = tier_info["tier"]
-    max_schedules = _SCHEDULE_LIMITS.get(tier, 0)
+    max_schedules = tier_info["limits"].get("max_schedules", 0)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -2938,11 +3223,11 @@ async def configure_page(
     job_id: int,
     username: str = Depends(get_current_user),
 ):
-    """GET /configure/{job_id} — Configuration page after ingest scan.
+    """GET /configure/{job_id} — Intelligence Report + Tier Selection.
 
-    Shows scan results (counts by lane) and allows user to select lanes
-    and configure processing options before starting remaining phases.
-    Only available if job status is 'scanned'.
+    Shows scan results (counts by lane) and presents tier/a-la-carte
+    pricing options. User selects a package, then either downloads free
+    or proceeds to Stripe Checkout for paid tiers.
     """
     pool = request.app.state.db_pool
     templates = request.app.state.templates
@@ -2952,7 +3237,7 @@ async def configure_page(
         job_row = await conn.fetchrow(
             """
             SELECT pj.id, pj.status, pj.upload_filename, pj.created_at, pj.upload_size_bytes,
-                   pj.stats_json
+                   pj.stats_json, pj.job_tier, pj.payment_status
             FROM processing_jobs pj
             JOIN users u ON pj.user_id = u.id
             WHERE pj.id = $1 AND u.username = $2
@@ -2963,21 +3248,26 @@ async def configure_page(
     if not job_row:
         raise HTTPException(404, "Job not found")
 
-    # Living Canvas handles all states now — redirect non-scanned/completed to /job/{id}
-    if job_row["status"] in ("running", "pending", "matched", "enriched"):
-        return RedirectResponse(f"/job/{job_id}", status_code=302)
-    if job_row["status"] not in ("scanned", "completed"):
-        raise HTTPException(
-            400,
-            f"Configuration only available for scanned jobs (current: {job_row['status']})"
-        )
+    # Redirect post-configure states to the job page
+    if job_row["status"] in ("running", "queued", "pending", "matched", "enriched", "exporting", "completed"):
+        return RedirectResponse(f"/snatchedmemories/{job_id}", status_code=302)
 
-    # Fetch scan results (asset counts)
-    # This would normally come from /api/jobs/{job_id}/scan-results
-    # but for template rendering, we call the API directly or query SQLite
+    # Only scanned jobs can be configured (the post-scan decision point)
+    if job_row["status"] not in ("scanned",):
+        return RedirectResponse(f"/snatchedmemories/{job_id}", status_code=302)
+
+    # If returning from cancelled Stripe checkout, reset payment_status to unpaid
+    # so the user can freely choose a different tier or retry
+    if request.query_params.get("payment") == "cancelled" and job_row.get("payment_status") == "pending":
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE processing_jobs SET payment_status = 'unpaid' WHERE id = $1",
+                job_id,
+            )
+
+    # Fetch scan results from per-job SQLite
     config = request.app.state.config
-    data_dir = Path(str(config.server.data_dir)) / username
-    db_path = data_dir / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
 
     scan_results = {
         "memories": 0,
@@ -2995,7 +3285,6 @@ async def configure_page(
             db = sqlite3.connect(str(db_path))
             db.row_factory = sqlite3.Row
 
-            # Count and size by type
             memory_main = db.execute(
                 "SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM assets WHERE asset_type = 'memory_main'"
             ).fetchone()
@@ -3027,30 +3316,9 @@ async def configure_page(
         except sqlite3.Error:
             pass  # Use defaults if DB query fails
 
-    # Load user preferences as defaults
-    prefs = {
-        "burn_overlays": True,
-        "dark_mode_pngs": False,
-        "exif_enabled": True,
-        "xmp_enabled": False,
-        "gps_window_seconds": 300,
-    }
+    # Check if Stripe payments are configured
+    from snatched.routes.payment import STRIPE_ENABLED
 
-    async with pool.acquire() as conn:
-        pref_row = await conn.fetchrow(
-            """
-            SELECT burn_overlays, dark_mode_pngs, exif_enabled, xmp_enabled, gps_window_seconds
-            FROM user_preferences up
-            JOIN users u ON up.user_id = u.id
-            WHERE u.username = $1
-            """,
-            username,
-        )
-
-    if pref_row:
-        prefs = dict(pref_row)
-
-    tier_info = await _load_tier_info(pool, username)
     return templates.TemplateResponse("configure.html", {
         "request": request,
         "username": username,
@@ -3058,6 +3326,289 @@ async def configure_page(
         "upload_filename": job_row["upload_filename"],
         "created_at": job_row["created_at"].isoformat() if job_row["created_at"] else None,
         "scan_results": scan_results,
-        "prefs": prefs,
+        "stripe_enabled": STRIPE_ENABLED,
+    })
+
+
+# ============================================================================
+# Admin: Tier Plans editor
+# ============================================================================
+
+@router.get("/admin/tiers", response_class=HTMLResponse)
+async def admin_tiers_page(request: Request, username: str = Depends(get_current_user)):
+    """GET /admin/tiers — Editable tier plan table. Admin only."""
+    from snatched.tiers import get_all_tiers_async
+
+    pool = request.app.state.db_pool
+    await _require_admin(pool, username)
+    templates = request.app.state.templates
+    tier_info = await _load_tier_info(pool, username)
+
+    all_tiers = await get_all_tiers_async(pool)
+
+    return templates.TemplateResponse("admin_tiers.html", {
+        "request": request,
+        "username": username,
+        "title": "Tier Plans — SNATCHED Admin",
         "tier_info": tier_info,
+        "tiers": all_tiers,
+    })
+
+
+# ============================================================================
+# Admin: System Config editor
+# ============================================================================
+
+@router.get("/admin/system", response_class=HTMLResponse)
+async def admin_system_page(request: Request, username: str = Depends(get_current_user)):
+    """GET /admin/system — System config key-value editor. Admin only."""
+    from snatched.tiers import get_system_config
+
+    pool = request.app.state.db_pool
+    await _require_admin(pool, username)
+    templates = request.app.state.templates
+    tier_info = await _load_tier_info(pool, username)
+
+    sys_config = await get_system_config(pool)
+
+    # Also fetch raw rows for description + value_type display
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT key, value, value_type, description, updated_at FROM system_config ORDER BY key"
+        )
+
+    config_rows = [
+        {
+            "key": r["key"],
+            "value": r["value"],
+            "value_type": r["value_type"],
+            "description": r["description"],
+            "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+        }
+        for r in rows
+    ]
+
+    return templates.TemplateResponse("admin_system.html", {
+        "request": request,
+        "username": username,
+        "title": "System Config — SNATCHED Admin",
+        "tier_info": tier_info,
+        "config_rows": config_rows,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Vault detail + manage pages
+# ---------------------------------------------------------------------------
+
+
+async def _query_available_jobs(pool, config, username: str, user_id: int, vault=None) -> list:
+    """Query completed jobs not yet merged into the vault, with preview stats and fingerprint."""
+    from snatched.processing.vault import get_mergeable_job_stats, check_vault_fingerprint, validate_vault_seed
+
+    data_dir = Path(str(config.server.data_dir))
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT pj.id, pj.upload_filename, pj.original_filename, pj.created_at,
+                   pj.completed_at, pj.stats_json, pj.snap_account_uid, pj.snap_username,
+                   us.options_json
+            FROM processing_jobs pj
+            LEFT JOIN vault_imports vi ON vi.job_id = pj.id
+            LEFT JOIN upload_sessions us ON us.job_id = pj.id
+            WHERE pj.user_id = $1 AND pj.status = 'completed' AND vi.id IS NULL
+            ORDER BY pj.completed_at DESC
+        """, user_id)
+
+    vault_db = data_dir / username / "vault" / "vault.db"
+
+    available_jobs = []
+    for row in rows:
+        job = dict(row)
+
+        # Resolve original filenames from upload session options
+        orig_names = None
+        if job.get("options_json"):
+            opts = job["options_json"]
+            if isinstance(opts, str):
+                opts = json.loads(opts)
+            orig_names = opts.get("original_filenames", [])
+        job["original_filenames"] = orig_names or [job.get("upload_filename") or "Unknown"]
+
+        # Preview stats from proc.db
+        proc_db = data_dir / username / "jobs" / str(job["id"]) / "proc.db"
+        if proc_db.exists():
+            try:
+                job["preview_stats"] = get_mergeable_job_stats(proc_db)
+            except Exception:
+                job["preview_stats"] = None
+        else:
+            job["preview_stats"] = None
+
+        # Fingerprint check
+        if vault and vault_db.is_file():
+            fp = check_vault_fingerprint(
+                vault_db,
+                job.get("snap_account_uid"),
+                job.get("snap_username"),
+            )
+            if fp["ok"]:
+                # Determine if verified vs partial vs no_data
+                if job.get("snap_account_uid") or job.get("snap_username"):
+                    fp["status"] = "verified"
+                else:
+                    fp["status"] = "no_data"
+            else:
+                reason = fp.get("reason", "")
+                if "mismatch" in reason:
+                    fp["status"] = "mismatch"
+                elif reason == "no_fingerprint":
+                    fp["status"] = "partial"
+                else:
+                    fp["status"] = "no_data"
+        else:
+            # No vault yet — first import
+            if job.get("snap_account_uid") or job.get("snap_username"):
+                fp = {"ok": True, "status": "first_import"}
+            else:
+                fp = {"ok": False, "status": "no_data", "reason": "no_fingerprint"}
+
+        job["fingerprint"] = fp
+
+        # Seed check — only relevant when no vault exists yet (first import)
+        if not vault and proc_db.exists():
+            try:
+                job["seed_check"] = validate_vault_seed(proc_db, snap_account_uid=job.get("snap_account_uid"))
+            except Exception:
+                job["seed_check"] = None
+        else:
+            job["seed_check"] = None
+
+        available_jobs.append(job)
+
+    return available_jobs
+
+
+@router.get("/vault/manage", response_class=HTMLResponse)
+async def vault_manage(
+    request: Request,
+    username: str = Depends(get_current_user),
+):
+    """GET /vault/manage — Vault management page. Redirects to vault detail if vault exists."""
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+
+    async with pool.acquire() as conn:
+        user = await conn.fetchrow("SELECT id FROM users WHERE username=$1", username)
+        if not user:
+            raise HTTPException(404, "User not found")
+        vault = await conn.fetchrow(
+            "SELECT * FROM vaults WHERE user_id=$1 LIMIT 1", user["id"]
+        )
+
+    if vault:
+        return RedirectResponse(f"/vault/{vault['id']}", status_code=302)
+
+    # No vault yet — show vault page with available jobs
+    available_jobs = await _query_available_jobs(pool, config, username, user["id"], vault=None)
+    tier_info = await _load_tier_info(pool, username)
+
+    return request.app.state.templates.TemplateResponse("vault.html", {
+        "request": request,
+        "username": username,
+        "title": "Vault Manager — SNATCHED",
+        "tier_info": tier_info,
+        "vault": None,
+        "vault_name": "New Vault",
+        "stats": {
+            "total_assets": 0, "total_memories": 0, "total_locations": 0,
+            "total_friends": 0, "total_chat_messages": 0, "total_snap_messages": 0,
+            "import_count": 0, "date_range": {"min": None, "max": None},
+            "gps_coverage": {"memories_with_gps": 0, "memories_total": 0, "pct": 0.0},
+        },
+        "imports": [],
+        "available_jobs": available_jobs,
+    })
+
+
+@router.get("/vault/{vault_id}", response_class=HTMLResponse)
+async def vault_detail(
+    request: Request,
+    vault_id: int,
+    username: str = Depends(get_current_user),
+):
+    """GET /vault/{vault_id} — Vault detail page with stats, imports, and available jobs."""
+    from snatched.processing.vault import get_vault_stats
+
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+    templates = request.app.state.templates
+
+    async with pool.acquire() as conn:
+        # Fetch vault record (verify ownership)
+        vault = await conn.fetchrow(
+            """
+            SELECT v.* FROM vaults v
+            JOIN users u ON v.user_id = u.id
+            WHERE v.id = $1 AND u.username = $2
+            """,
+            vault_id, username,
+        )
+        if not vault:
+            raise HTTPException(404, "Vault not found")
+
+        user = await conn.fetchrow("SELECT id FROM users WHERE username=$1", username)
+
+        # Fetch import history
+        imports = await conn.fetch(
+            """
+            SELECT * FROM vault_imports
+            WHERE vault_id = $1
+            ORDER BY created_at DESC
+            """,
+            vault_id,
+        )
+
+    # Resolve display name
+    vault_name = vault["snap_username"] or (
+        vault["snap_account_uid"][:8] + "..." if vault["snap_account_uid"] else "Unknown"
+    )
+
+    # Get stats from vault.db on disk
+    vault_path = vault["vault_path"]
+    if vault_path and Path(vault_path).is_file():
+        stats = get_vault_stats(Path(vault_path))
+    else:
+        stats = {
+            "total_assets": vault["total_assets"] or 0,
+            "total_memories": 0,
+            "total_locations": vault["total_locations"] or 0,
+            "total_friends": vault["total_friends"] or 0,
+            "total_chat_messages": 0,
+            "total_snap_messages": 0,
+            "import_count": vault["import_count"] or 0,
+            "date_range": {"min": None, "max": None},
+            "gps_coverage": {"memories_with_gps": 0, "memories_total": 0, "pct": 0.0},
+        }
+
+    # Available jobs for merge
+    available_jobs = await _query_available_jobs(pool, config, username, user["id"], vault=vault)
+
+    tier_info = await _load_tier_info(pool, username)
+
+    return templates.TemplateResponse("vault.html", {
+        "request": request,
+        "username": username,
+        "title": "Vault Manager — SNATCHED",
+        "tier_info": tier_info,
+        "vault": vault,
+        "vault_name": vault_name,
+        "stats": stats if not stats.get("error") else {
+            "total_assets": 0, "total_memories": 0, "total_locations": 0,
+            "total_friends": 0, "total_chat_messages": 0, "total_snap_messages": 0,
+            "import_count": 0, "date_range": {"min": None, "max": None},
+            "gps_coverage": {"memories_with_gps": 0, "memories_total": 0, "pct": 0.0},
+        },
+        "imports": imports,
+        "available_jobs": available_jobs,
     })

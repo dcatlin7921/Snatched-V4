@@ -17,6 +17,9 @@ class JobStatus(str, Enum):
     """Job lifecycle status values."""
     PENDING = "pending"
     RUNNING = "running"
+    SCANNED = "scanned"
+    MATCHED = "matched"
+    ENRICHED = "enriched"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -53,8 +56,12 @@ class JobEventType(str, Enum):
     PHASE_START = "phase_start"
     PROGRESS = "progress"
     MATCH_FOUND = "match_found"
+    SCANNED = "scanned"
+    MATCHED = "matched"
+    ENRICHED = "enriched"
     ERROR = "error"
     COMPLETE = "complete"
+    CANCELLED = "cancelled"
 
 
 class JobEvent(BaseModel):
@@ -112,3 +119,36 @@ class UploadResponse(BaseModel):
     upload_filename: str
     message: str
     redirect_url: str   # e.g., '/dashboard?job_id=123'
+
+
+class Vault(BaseModel):
+    """Persistent per-account vault for accumulating Snapchat data."""
+    id: int
+    user_id: int
+    snap_account_uid: str | None = None
+    snap_username: str | None = None
+    vault_path: str
+    import_count: int = 0
+    total_assets: int = 0
+    total_locations: int = 0
+    total_friends: int = 0
+    stats_json: dict | None = None
+    last_import_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class VaultImport(BaseModel):
+    """Record of a single import into a vault."""
+    id: int
+    vault_id: int
+    job_id: int | None = None
+    original_filename: str | None = None
+    import_type: str = "full"
+    assets_added: int = 0
+    assets_skipped: int = 0
+    locations_added: int = 0
+    friends_added: int = 0
+    gps_rematched: int = 0
+    stats_json: dict | None = None
+    created_at: datetime

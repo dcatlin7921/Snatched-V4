@@ -1,0 +1,685 @@
+================================================================================
+SNATCHED v3 FEATURE MATRIX & ENDPOINT CATALOG
+Quick Reference Guide
+================================================================================
+
+TABLE 1: FEATURE → ENDPOINTS → TEMPLATES
+================================================================================
+
+UPLOAD & INGEST
+  Endpoints: /upload/init (POST), /upload/chunk (PUT), /upload/verify (POST),
+             /upload/status (GET), /upload/abort (DELETE)
+  Templates: upload.html (1,181 L)
+  Wiring: COMPLETE
+  Entry: Primary nav → Upload
+
+JOB MANAGEMENT
+  Endpoints: /jobs (GET), /jobs/html (GET), /jobs/{job_id} (GET),
+             /jobs/{job_id}/stream (GET), /jobs/{job_id}/cancel (POST),
+             /jobs/{job_id}/delete (DELETE), /jobs/{job_id}/retry (POST),
+             /jobs/{job_id}/reprocess (POST), /jobs/{job_id}/report (GET)
+  Templates: job.html (470 L), job_progress.html (212 L), dashboard.html (133 L)
+  Wiring: COMPLETE
+  Entry: Primary nav → Dashboard
+
+ASSET VIEWING
+  Endpoints: /assets (GET), /assets/html (GET), /assets/{asset_id} (implied)
+  Templates: asset_detail.html (313 L), _asset_rows.html (146 L)
+  Wiring: COMPLETE
+  Entry: Job canvas → Gallery tab
+
+TAGGING
+  Endpoints: /assets/{asset_id}/tags (GET/PUT), /assets/batch-tags/preview (POST),
+             /assets/batch-tags (POST)
+  Templates: asset_detail.html (313 L), _batch_edit_modal.html (283 L)
+  Wiring: COMPLETE
+  Entry: Asset detail → tag editor or results → tools → batch edit
+
+TAG PRESETS
+  Endpoints: /presets (GET/POST), /presets/{preset_id} (PUT/DELETE),
+             /assets/{asset_id}/apply-preset (POST),
+             /assets/batch-apply-preset (POST)
+  Templates: presets.html (660 L)
+  Wiring: COMPLETE
+  Entry: Job canvas tools → Tag Presets or settings
+
+XMP/METADATA
+  Endpoints: /assets/{asset_id}/xmp (GET/PUT)
+  Templates: _xmp_viewer.html (472 L), asset_detail.html (313 L)
+  Wiring: PARTIAL (component-only)
+  Entry: Asset detail → metadata section
+
+GPS CORRECTION
+  Endpoints: /assets/{asset_id}/gps (PUT), /assets/batch-gps (POST),
+             /saved-locations (GET/POST), /saved-locations/{location_id} (DELETE),
+             /assets/snap-to-location (POST)
+  Templates: gps_correction.html (802 L)
+  Wiring: COMPLETE
+  Entry: Job canvas tools → GPS Correction or results tools
+
+TIMESTAMP CORRECTION
+  Endpoints: /jobs/{job_id}/timestamps (GET), /assets/{asset_id}/timestamp (PUT),
+             /assets/batch-timeshift (POST), /assets/batch-timezone (POST)
+  Templates: timestamp_correction.html (802 L)
+  Wiring: COMPLETE
+  Entry: Job canvas tools → Timestamp Fixes or results tools
+
+FRIEND MATCHING
+  Endpoints: /friends (GET), /friends/alias (POST/DELETE),
+             /friends/apply (POST), /friends/merge (POST)
+  Templates: friends.html (603 L)
+  Wiring: COMPLETE
+  Entry: Job canvas tools → Friends & Aliases or main nav
+
+REDACTION
+  Endpoints: /redaction-profiles (GET/POST/PUT/DELETE),
+             /assets/redact/preview (POST), /assets/redact/apply (POST)
+  Templates: redaction.html (681 L)
+  Wiring: COMPLETE
+  Entry: Results tools → Redact
+
+DUPLICATES
+  Endpoints: /jobs/{job_id}/duplicates (GET/html),
+             /jobs/{job_id}/duplicates/resolve (POST)
+  Templates: duplicates.html (228 L)
+  Wiring: MOSTLY COMPLETE
+  Entry: Job canvas tools → Duplicates or results tools
+
+ALBUMS
+  Endpoints: /jobs/{job_id}/albums/generate (POST), /jobs/{job_id}/albums (GET),
+             /albums/{album_id} (PUT/DELETE), /albums/{album_id}/items (GET)
+  Templates: albums.html (315 L)
+  Wiring: MOSTLY COMPLETE
+  Entry: Job canvas tools → Albums or results tools
+
+MATCH CONFIGURATION
+  Endpoints: /jobs/{job_id}/match-config (GET), /match-preferences (PUT),
+             /pipeline-configs (POST/GET/DELETE)
+  Templates: match_config.html (678 L)
+  Wiring: MOSTLY COMPLETE
+  Entry: Results tools → Match Config
+
+DRY RUN / PREVIEW
+  Endpoints: /jobs/{job_id}/dry-run-summary (GET), /jobs/{job_id}/promote (POST)
+  Templates: dry_run.html (306 L)
+  Wiring: MOSTLY COMPLETE
+  Entry: Results → DRY RUN ANALYSIS button
+
+SCHEMAS (CUSTOM METADATA)
+  Endpoints: /schemas (GET/POST), /schemas/{schema_id} (PUT/DELETE)
+  Templates: schemas.html (530 L)
+  Wiring: PARTIAL (no clear entry point)
+  Entry: Direct URL /schemas only
+
+EXPORT SETTINGS
+  Endpoints: /export-settings (GET/PUT),
+             /export-settings/preview-paths (POST)
+  Templates: export_config.html (471 L)
+  Wiring: MOSTLY COMPLETE
+  Entry: Job canvas tools → Export Config
+
+GALLERY VIEW
+  Endpoints: /jobs/{job_id}/gallery (GET/html)
+  Templates: job.html gallery tab (htmx-loaded)
+  Wiring: COMPLETE
+  Entry: Job canvas → Gallery tab (default)
+
+TIMELINE VIEW
+  Endpoints: /jobs/{job_id}/timeline-data (GET)
+  Templates: timeline.html (407 L)
+  Wiring: MOSTLY COMPLETE
+  Entry: Job canvas → Timeline tab (after Match)
+
+MAP VIEW
+  Endpoints: /jobs/{job_id}/map-data (GET)
+  Templates: map.html (392 L)
+  Wiring: MOSTLY COMPLETE
+  Entry: Job canvas → Map tab (after Enrich)
+
+CONVERSATION BROWSER
+  Endpoints: /jobs/{job_id}/conversations (GET/html),
+             /jobs/{job_id}/conversations/{conversation_id}/messages (GET/html)
+  Templates: conversation_browser.html (498 L)
+  Wiring: MOSTLY COMPLETE
+  Entry: Job canvas → Conversations tab (after Enrich) or results tools
+
+MEMORY BROWSER
+  Endpoints: /browse/{job_id} (GET)
+  Templates: memory_browser.html (173 L)
+  Wiring: ORPHANED (not linked)
+  Entry: Results tools → Browse Files
+
+REPORTS
+  Endpoints: /jobs/{job_id}/report (JSON/CSV),
+             /jobs/{job_id}/match-report (JSON/CSV),
+             /jobs/{job_id}/asset-report (JSON/CSV)
+  Templates: results.html (373 L) report download UI
+  Wiring: COMPLETE
+  Entry: Results page → Reports section
+
+DOWNLOAD
+  Endpoints: /download/tree (GET), /download/all (GET),
+             /download/{path:path} (GET), /api/download/all (GET)
+  Templates: download.html (96 L)
+  Wiring: PARTIAL (API used, UI minimal/orphaned)
+  Entry: Job canvas → Download All (when completed) or /download/{job_id}
+
+AUTHENTICATION
+  Endpoints: /login (GET/POST), /register (GET/POST), /logout (GET),
+             /dev-login (GET)
+  Templates: login.html (47 L), register.html (55 L), landing.html (91 L)
+  Wiring: COMPLETE
+  Entry: Public pages
+
+USER SETTINGS
+  Endpoints: /preferences (POST), /settings (page)
+  Templates: settings.html (298 L)
+  Wiring: COMPLETE
+  Entry: Primary nav → Settings
+
+QUOTA & TIER
+  Endpoints: /tier (GET), /quota (GET), /quota/upload-history (GET),
+             /upload-limits (GET), /jobs/{job_id}/extend-retention (POST),
+             /jobs/{job_id}/retention (GET)
+  Templates: quota.html (360 L)
+  Wiring: COMPLETE
+  Entry: Settings → quota link or direct URL
+
+API KEYS
+  Endpoints: /keys (GET/POST), /keys/{key_id} (DELETE)
+  Templates: api_keys.html (390 L)
+  Wiring: COMPLETE
+  Entry: Direct URL /api-keys (not linked in nav)
+
+WEBHOOKS
+  Endpoints: /webhooks (GET/POST), /webhooks/{webhook_id} (PUT/DELETE),
+             /webhooks/{webhook_id}/test (POST)
+  Templates: webhooks.html (794 L)
+  Wiring: COMPLETE
+  Entry: Direct URL /webhooks (not linked in nav)
+
+SCHEDULES
+  Endpoints: /schedules (GET/POST), /schedules/{schedule_id} (PUT/DELETE)
+  Templates: schedules.html (517 L)
+  Wiring: COMPLETE
+  Entry: Direct URL /schedules (not linked in nav)
+
+JOB GROUPS
+  Endpoints: /job-groups (GET), /job-groups/{group_id} (GET)
+  Templates: job_group.html (110 L)
+  Wiring: PARTIAL (minimal UI)
+  Entry: Unknown
+
+MATCH STATISTICS
+  Endpoints: /jobs/{job_id}/match-stats (GET/html)
+  Templates: _match_stats.html (61 L, component only)
+  Wiring: PARTIAL (component-only)
+  Entry: Results page match stats tab
+
+================================================================================
+TABLE 2: ROUTE SUMMARY BY METHOD
+================================================================================
+
+GET Routes (60 total)
+-----
+General Info:
+  - /jobs (list_jobs)
+  - /summary (user_summary)
+  - /tier (get_tier)
+  - /health (health)
+  - /slots (get_slots)
+
+Jobs:
+  - /jobs/html (list_jobs_html)
+  - /jobs/{job_id} (job_detail)
+  - /jobs/{job_id}/stream (stream_job)
+  - /jobs/{job_id}/report (job_report)
+  - /jobs/{job_id}/match-stats (match_stats)
+  - /jobs/{job_id}/match-stats/html (match_stats_html)
+  - /jobs/{job_id}/match-config (get_match_config)
+  - /jobs/{job_id}/dry-run-summary (dry_run_summary)
+  - /jobs/{job_id}/scan-results (get_scan_results)
+  - /jobs/{job_id}/timestamps (get_timestamps)
+  - /jobs/{job_id}/retention (get_retention)
+  - /jobs/{job_id}/gallery (gallery_json)
+  - /jobs/{job_id}/gallery/html (gallery_html)
+  - /jobs/{job_id}/conversations (list_conversations)
+  - /jobs/{job_id}/conversations/html (list_conversations_html)
+  - /jobs/{job_id}/conversations/{conversation_id}/messages (get_conversation_messages)
+  - /jobs/{job_id}/conversations/{conversation_id}/messages/html (get_conversation_messages_html)
+  - /jobs/{job_id}/timeline-data (timeline_data)
+  - /jobs/{job_id}/map-data (map_data)
+  - /jobs/{job_id}/duplicates (get_duplicates)
+  - /jobs/{job_id}/duplicates/html (get_duplicates_html)
+  - /jobs/{job_id}/albums (list_job_albums)
+  - /jobs/{job_id}/match-report (job_match_report)
+  - /jobs/{job_id}/asset-report (job_asset_report)
+  - /job-groups (list_job_groups)
+  - /job-groups/{group_id} (get_job_group)
+
+Assets:
+  - /assets (list_assets)
+  - /assets/html (list_assets_html)
+  - /matches (list_matches)
+  - /matches/html (list_matches_html)
+  - /assets/{asset_id}/tags (get_asset_tags)
+  - /assets/{asset_id}/xmp (get_xmp)
+
+Download:
+  - /download/tree (download_tree)
+  - /download/all (download_all)
+  - /download/{path:path} (download_file)
+
+Locations & Settings:
+  - /saved-locations (list_saved_locations)
+  - /friends (list_friends)
+  - /presets (list_presets)
+  - /schemas (list_schemas)
+  - /redaction-profiles (list_redaction_profiles)
+  - /pipeline-configs (list_pipeline_configs)
+  - /export-settings (get_export_settings)
+  - /quota (quota_api)
+  - /quota/upload-history (quota_upload_history)
+  - /upload-limits (upload_limits)
+  - /keys (list_api_keys)
+  - /webhooks (list_webhooks)
+  - /schedules (list_schedules)
+
+Upload Status:
+  - /upload/status/{session_id} (upload_status)
+
+POST Routes (45 total)
+------
+Configuration & Control:
+  - /jobs/{job_id}/cancel (cancel)
+  - /jobs/{job_id}/retry (retry_job)
+  - /jobs/{job_id}/reprocess (reprocess)
+  - /jobs/{job_id}/configure (configure_and_start)
+  - /jobs/{job_id}/start-enrich (start_enrich)
+  - /jobs/{job_id}/start-export (start_export)
+  - /jobs/{job_id}/promote (promote_dry_run)
+  - /jobs/{job_id}/extend-retention (extend_retention)
+  - /jobs/{job_id}/duplicates/resolve (resolve_duplicate)
+  - /jobs/{job_id}/albums/generate (generate_albums)
+
+Asset Operations:
+  - /assets/batch-tags/preview (batch_edit_preview)
+  - /assets/batch-tags (batch_edit_tags)
+  - /assets/{asset_id}/apply-preset (apply_preset)
+  - /assets/batch-apply-preset (batch_apply_preset)
+  - /assets/batch-gps (batch_update_gps)
+  - /assets/batch-timeshift (batch_timeshift)
+  - /assets/batch-timezone (batch_timezone)
+  - /assets/redact/preview (redact_preview)
+  - /assets/redact/apply (apply_redaction)
+  - /assets/snap-to-location (snap_to_location)
+
+Creation & Configuration:
+  - /presets (create_preset)
+  - /schemas (create_schema)
+  - /redaction-profiles (create_redaction_profile)
+  - /pipeline-configs (create_pipeline_config)
+  - /saved-locations (create_saved_location)
+  - /friends/alias (upsert_friend_alias)
+  - /friends/apply (apply_friend_names)
+  - /friends/merge (merge_friends)
+  - /export-settings/preview-paths (preview_export_paths)
+
+Admin & Access:
+  - /keys (create_api_key)
+  - /webhooks (create_webhook)
+  - /webhooks/{webhook_id}/test (test_webhook)
+  - /schedules (create_schedule)
+  - /preferences (save_preferences)
+
+Upload:
+  - /upload/init (init_upload)
+  - /upload/verify/{session_id}/{file_index} (verify_file)
+
+PUT Routes (10 total)
+-----
+Asset Updates:
+  - /assets/{asset_id}/tags (update_asset_tags)
+  - /assets/{asset_id}/xmp (update_xmp)
+  - /assets/{asset_id}/gps (update_asset_gps)
+  - /assets/{asset_id}/timestamp (update_timestamp)
+
+Management Updates:
+  - /presets/{preset_id} (update_preset)
+  - /schemas/{schema_id} (update_schema)
+  - /redaction-profiles/{profile_id} (update_redaction_profile)
+  - /albums/{album_id} (update_album)
+  - /webhooks/{webhook_id} (update_webhook)
+  - /schedules/{schedule_id} (update_schedule)
+  - /match-preferences (save_match_preferences)
+  - /export-settings (put_export_settings)
+
+Upload:
+  - /upload/chunk/{session_id}/{file_index} (receive_chunk)
+
+DELETE Routes (17 total)
+------
+Cleanup & Removal:
+  - /jobs/{job_id} (delete_job)
+  - /albums/{album_id} (delete_album)
+  - /presets/{preset_id} (delete_preset)
+  - /schemas/{schema_id} (delete_schema)
+  - /redaction-profiles/{profile_id} (delete_redaction_profile)
+  - /pipeline-configs/{config_id} (delete_pipeline_config)
+  - /saved-locations/{location_id} (delete_saved_location)
+  - /friends/alias/{alias_id} (delete_friend_alias)
+  - /keys/{key_id} (revoke_api_key)
+  - /webhooks/{webhook_id} (delete_webhook)
+  - /schedules/{schedule_id} (delete_schedule)
+
+Upload:
+  - /upload/abort/{session_id} (abort_upload)
+
+================================================================================
+TABLE 3: PAGES vs API ENDPOINTS BRIDGE
+================================================================================
+
+Landing Page
+  Route: GET / (pages.py)
+  Template: landing.html (91 L)
+  Auth: None (public)
+  Purpose: Public homepage, login/register CTA
+
+Login/Register
+  Routes: GET/POST /login, GET/POST /register, GET /dev-login (pages.py)
+  Templates: login.html (47 L), register.html (55 L)
+  Auth: None (public) / User (dev-login)
+  Purpose: Authentication flow
+
+Dashboard
+  Route: GET /dashboard (pages.py)
+  Template: dashboard.html (133 L)
+  API: GET /jobs/html, GET /jobs, GET /summary
+  Auth: Required
+  Purpose: Job list, quick stats
+
+Upload
+  Route: GET /upload (pages.py)
+  Template: upload.html (1,181 L)
+  API: POST/PUT/POST/GET/DELETE /upload/*
+  Auth: Required
+  Purpose: File upload interface
+
+Job Canvas
+  Route: GET /job/{job_id} (pages.py)
+  Template: job.html (470 L)
+  API: GET /jobs/{job_id}/stream, /jobs/{job_id}/gallery/html,
+       POST /jobs/{job_id}/configure, /jobs/{job_id}/start-enrich, /jobs/{job_id}/start-export
+  Auth: Required
+  Purpose: Main processing interface
+
+Job Progress (alternative)
+  Route: GET /jobs/{job_id} (pages.py)
+  Template: job_progress.html (212 L)
+  API: Same as Job Canvas
+  Auth: Required
+  Purpose: Alternative progress view
+
+Asset Detail
+  Route: GET /assets/{job_id}/{asset_id} (pages.py)
+  Template: asset_detail.html (313 L)
+  API: GET/PUT /assets/{asset_id}/tags, /assets/{asset_id}/xmp
+  Auth: Required
+  Purpose: Single asset viewer + editor
+
+Results Page
+  Route: GET /results/{job_id} (pages.py)
+  Template: results.html (373 L)
+  API: GET /jobs/{job_id}/report, /jobs/{job_id}/match-report, /jobs/{job_id}/asset-report,
+       POST /jobs/{job_id}/reprocess
+  Auth: Required
+  Purpose: Results summary, tool access, reports
+
+Friends
+  Route: GET /friends (pages.py)
+  Template: friends.html (603 L)
+  API: GET/POST/DELETE /friends/*, POST /friends/apply, /friends/merge
+  Auth: Required
+  Purpose: Person matching & aliasing
+
+Presets
+  Route: GET /presets (pages.py)
+  Template: presets.html (660 L)
+  API: GET/POST/PUT/DELETE /presets/*, POST /assets/{asset_id}/apply-preset
+  Auth: Required
+  Purpose: Tag template management
+
+GPS Correction
+  Route: GET /gps/{job_id} (pages.py)
+  Template: gps_correction.html (802 L)
+  API: PUT /assets/{asset_id}/gps, POST /assets/batch-gps,
+       GET/POST/DELETE /saved-locations/*, POST /assets/snap-to-location
+  Auth: Required
+  Purpose: Location editing & correction
+
+Timestamp Correction
+  Route: GET /timestamps/{job_id} (pages.py)
+  Template: timestamp_correction.html (802 L)
+  API: GET /jobs/{job_id}/timestamps, PUT /assets/{asset_id}/timestamp,
+       POST /assets/batch-timeshift, /assets/batch-timezone
+  Auth: Required
+  Purpose: Date/time editing
+
+Redaction
+  Route: GET /redact/{job_id} (pages.py)
+  Template: redaction.html (681 L)
+  API: GET/POST/PUT/DELETE /redaction-profiles/*,
+       POST /assets/redact/preview, /assets/redact/apply
+  Auth: Required
+  Purpose: Privacy masking
+
+Schemas
+  Route: GET /schemas (pages.py)
+  Template: schemas.html (530 L)
+  API: GET/POST/PUT/DELETE /schemas/*
+  Auth: Required
+  Purpose: Custom metadata field definitions
+
+Match Config
+  Route: GET /match-config/{job_id} (pages.py)
+  Template: match_config.html (678 L)
+  API: GET /jobs/{job_id}/match-config, PUT /match-preferences,
+       POST/GET/DELETE /pipeline-configs/*
+  Auth: Required
+  Purpose: Match algorithm tuning
+
+Dry Run
+  Route: GET /dry-run/{job_id} (pages.py)
+  Template: dry_run.html (306 L)
+  API: GET /jobs/{job_id}/dry-run-summary, POST /jobs/{job_id}/promote
+  Auth: Required
+  Purpose: Export preview & validation
+
+Export Config
+  Route: GET /export-config (pages.py)
+  Template: export_config.html (471 L)
+  API: GET/PUT /export-settings/*, POST /export-settings/preview-paths
+  Auth: Required
+  Purpose: Export path & format configuration
+
+Browse (Files)
+  Route: GET /browse/{job_id} (pages.py)
+  Template: memory_browser.html (173 L)
+  API: Unknown (file tree endpoint?)
+  Auth: Required
+  Purpose: File system navigation
+
+Browse (Chats)
+  Route: GET /browse/chats/{job_id} (pages.py)
+  Template: conversation_browser.html (498 L)
+  API: GET /jobs/{job_id}/conversations/html, /conversations/{id}/messages/html
+  Auth: Required
+  Purpose: Chat message browsing
+
+Timeline
+  Route: GET /timeline/{job_id} (pages.py)
+  Template: timeline.html (407 L)
+  API: GET /jobs/{job_id}/timeline-data
+  Auth: Required
+  Purpose: Chronological timeline view
+
+Map
+  Route: GET /map/{job_id} (pages.py)
+  Template: map.html (392 L)
+  API: GET /jobs/{job_id}/map-data
+  Auth: Required
+  Purpose: Location map visualization
+
+Duplicates
+  Route: GET /duplicates/{job_id} (pages.py)
+  Template: duplicates.html (228 L)
+  API: GET /jobs/{job_id}/duplicates*, POST /jobs/{job_id}/duplicates/resolve
+  Auth: Required
+  Purpose: Duplicate detection & resolution
+
+Albums
+  Route: GET /albums/{job_id} (pages.py)
+  Template: albums.html (315 L)
+  API: POST /jobs/{job_id}/albums/generate, GET /jobs/{job_id}/albums,
+       PUT/DELETE /albums/{album_id}, GET /albums/{album_id}/items
+  Auth: Required
+  Purpose: Album management
+
+Quota
+  Route: GET /quota (pages.py)
+  Template: quota.html (360 L)
+  API: GET /tier, /quota, /quota/upload-history, /upload-limits,
+       POST /jobs/{job_id}/extend-retention, GET /jobs/{job_id}/retention
+  Auth: Required
+  Purpose: Usage & billing dashboard
+
+Job Group
+  Route: GET /job-group/{group_id} (pages.py)
+  Template: job_group.html (110 L)
+  API: GET /job-groups/{group_id}, GET /job-groups
+  Auth: Required
+  Purpose: Multi-job operations
+
+Settings
+  Route: GET /settings (pages.py)
+  Template: settings.html (298 L)
+  API: POST /preferences, GET /tier, GET /quota
+  Auth: Required
+  Purpose: User preferences & account info
+
+API Keys
+  Route: GET /api-keys (pages.py)
+  Template: api_keys.html (390 L)
+  API: GET/POST /keys/*, DELETE /keys/{key_id}
+  Auth: Required
+  Purpose: API key management
+
+Webhooks
+  Route: GET /webhooks (pages.py)
+  Template: webhooks.html (794 L)
+  API: GET/POST /webhooks/*, PUT /webhooks/{id}, DELETE /webhooks/{id},
+       POST /webhooks/{id}/test
+  Auth: Required
+  Purpose: Webhook management
+
+Schedules
+  Route: GET /schedules (pages.py)
+  Template: schedules.html (517 L)
+  API: GET/POST /schedules/*, PUT /schedules/{id}, DELETE /schedules/{id}
+  Auth: Required
+  Purpose: Job scheduling
+
+Configure (Job Setup)
+  Route: GET /configure/{job_id} (pages.py)
+  Template: configure.html (303 L)
+  API: POST /jobs/{job_id}/configure (same endpoint triggers match)
+  Auth: Required
+  Purpose: Job lane & option configuration before processing
+
+Download
+  Route: GET /download/{job_id} (pages.py)
+  Template: download.html (96 L)
+  API: GET /download/*, /api/download/all
+  Auth: Required
+  Purpose: File download manager
+
+================================================================================
+TABLE 4: CATEGORIZATION BY COMPLEXITY
+================================================================================
+
+ULTRA-COMPLEX (800+ lines)
+  - upload.html (1,181 L)
+  - gps_correction.html (802 L)
+  - timestamp_correction.html (802 L)
+
+VERY COMPLEX (700-800 lines)
+  - webhooks.html (794 L)
+
+COMPLEX (600-700 lines)
+  - match_config.html (678 L)
+  - redaction.html (681 L)
+  - presets.html (660 L)
+
+MODERATELY COMPLEX (500-600 lines)
+  - friends.html (603 L)
+  - schemas.html (530 L)
+  - schedules.html (517 L)
+
+MEDIUM (400-500 lines)
+  - conversation_browser.html (498 L)
+  - export_config.html (471 L)
+  - job.html (470 L)
+
+MEDIUM-SMALL (300-400 lines)
+  - results.html (373 L)
+  - quota.html (360 L)
+  - api_keys.html (390 L)
+  - map.html (392 L)
+
+SMALL (200-300 lines)
+  - timeline.html (407 L)
+  - dry_run.html (306 L)
+  - configure.html (303 L)
+  - settings.html (298 L)
+  - _batch_edit_modal.html (283 L)
+
+MINIMAL (100-200 lines)
+  - duplicates.html (228 L)
+  - job_progress.html (212 L)
+  - _job_cards.html (195 L)
+  - memory_browser.html (173 L)
+  - _asset_rows.html (146 L)
+
+VERY MINIMAL (<100 lines)
+  - dashboard.html (133 L)
+  - job_group.html (110 L)
+  - download.html (96 L)
+  - landing.html (91 L)
+  - base.html (75 L)
+  - register.html (55 L)
+  - _match_stats.html (61 L)
+  - login.html (47 L)
+  - _match_rows.html (44 L)
+  - error.html (25 L)
+
+================================================================================
+ENDPOINT ACCESS MATRIX
+================================================================================
+
+Publicly Accessible (no auth required)
+  - GET / (landing)
+  - GET /login, POST /login (login)
+  - GET /register, POST /register (registration)
+  - GET /dev-login (dev login)
+
+Authenticated Only (all others)
+  - 152 total routes (35 pages + 5 upload + 111 API + 1 config)
+
+Admin/Power User Only (inferred)
+  - /schemas/* (complex power-user feature)
+  - /pipeline-configs/* (system configuration)
+  - /webhooks/* (integration endpoints)
+  - /schedules/* (automation)
+  - /keys/* (API access)
+
+================================================================================

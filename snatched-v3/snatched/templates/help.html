@@ -1,0 +1,562 @@
+{% extends "base.html" %}
+{% block robots %}index, follow{% endblock %}
+
+{% block content %}
+<!-- Hero -->
+<section class="hero-section" style="padding-bottom: 1.5rem;">
+    <div class="badge">Step-by-Step Guide</div>
+    <h1 class="hero-h1">
+        How to <span class="text-yellow">Rescue Your Memories</span>
+    </h1>
+    <p class="hero-subtitle">
+        Snatched restores the real dates, locations, and filters that Snapchat strips from your exported photos and videos.<br>
+        Before we can work our magic, you need your Snapchat data export. This guide walks you through every step.
+    </p>
+</section>
+
+<!-- Urgency Banner -->
+<div class="help-urgency-banner" role="alert">
+    <span class="material-symbols-outlined">warning</span>
+    <div>
+        <strong>September 2026 Deadline</strong> &mdash;
+        Snapchat caps free Memories at <strong>5 GB</strong>. Excess is <strong>permanently deleted, newest first</strong>.
+        No recovery. <a href="#deadline">Read more below.</a>
+    </div>
+</div>
+
+<!-- Table of Contents -->
+<nav class="help-toc" aria-label="Table of contents">
+    <div class="section-label">
+        <span class="section-label-text">Quick Navigation</span>
+        <span class="section-label-line"></span>
+    </div>
+    <ol class="help-toc-list">
+        <li><a href="#what-you-get">What You'll Get</a></li>
+        <li><a href="#step-by-step">Step-by-Step Guide</a></li>
+        <li><a href="#configure-export">Configure Your Export</a></li>
+        <li><a href="#date-range">Choose a Date Range</a></li>
+        <li><a href="#submit">Submit &amp; Download</a></li>
+        <li><a href="#use-with-snatched">Upload to Snatched</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#checklist">Quick Checklist</a></li>
+        <li><a href="#deadline">The September 2026 Deadline</a></li>
+    </ol>
+</nav>
+
+<!-- Section: What You'll Get -->
+<section class="help-section" id="what-you-get">
+    <div class="section-label">
+        <span class="section-label-text">What You Get</span>
+        <span class="section-label-line"></span>
+    </div>
+    <h2>What You'll Get</h2>
+    <p>Your export arrives as one or more <strong>ZIP files</strong> containing:</p>
+
+    <div class="help-grid-cards">
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">photo_library</span>
+            <p class="help-card-title">Memories</p>
+            <p>Every saved photo and video from your Memories</p>
+        </div>
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">chat</span>
+            <p class="help-card-title">Chat Media</p>
+            <p>Photos and videos sent/received in DMs</p>
+        </div>
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">group</span>
+            <p class="help-card-title">Shared Stories</p>
+            <p>Story media you contributed to shared stories</p>
+        </div>
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">data_object</span>
+            <p class="help-card-title">Hidden Data Files</p>
+            <p>Timestamps, GPS locations, friend lists, and chat logs (stored as JSON files)</p>
+        </div>
+    </div>
+
+    <!-- What Snapchat DOESN'T include -->
+    <div class="help-warning-box">
+        <p class="help-warning-title"><span class="material-symbols-outlined">visibility_off</span> What Snapchat Does NOT Include</p>
+        <ul>
+            <li><strong>Snapchat strips all date and location data from your photos.</strong> Every exported file shows the <em>download date</em> — not when it was taken. The real dates and GPS coordinates are hidden in separate data files. <strong>This is exactly why Snatched exists.</strong></li>
+            <li><strong>Overlays are separate.</strong> Filters, stickers, text, and drawings are exported as separate PNG files — NOT baked into your photos. Snatched automatically merges them back together.</li>
+            <li><strong>Expired and deleted Snaps are gone.</strong> Only content saved to Memories is exportable.</li>
+            <li><strong>Chat media is limited.</strong> The chat export includes text logs and some media, but not every image/video ever sent.</li>
+        </ul>
+    </div>
+</section>
+
+<!-- Section: Step-by-Step -->
+<section class="help-section" id="step-by-step">
+    <div class="section-label">
+        <span class="section-label-text">Getting Started</span>
+        <span class="section-label-line"></span>
+    </div>
+    <h2>Getting to "My Data"</h2>
+
+    <div class="help-two-col">
+        <div class="help-method-card">
+            <h4><span class="material-symbols-outlined">phone_iphone</span> From the Snapchat App</h4>
+            <ol>
+                <li>Open Snapchat and tap your <strong>profile icon / Bitmoji</strong> (top-left)</li>
+                <li>Tap the <strong>gear icon</strong> (top-right) to open Settings</li>
+                <li>Scroll to <strong>Privacy Controls</strong></li>
+                <li>Tap <strong>"My Data"</strong></li>
+                <li>This opens <a href="https://accounts.snapchat.com" target="_blank" rel="noopener" style="color: var(--snap-yellow);"><code>accounts.snapchat.com</code></a> in your browser</li>
+                <li>Log in again if prompted</li>
+            </ol>
+        </div>
+        <div class="help-method-card">
+            <h4><span class="material-symbols-outlined">computer</span> From a Computer</h4>
+            <ol>
+                <li>Go to <a href="https://accounts.snapchat.com" target="_blank" rel="noopener" style="color: var(--snap-yellow);"><strong>accounts.snapchat.com</strong></a></li>
+                <li>Log in with your Snapchat credentials (+ 2FA if enabled)</li>
+                <li>Click <strong>"My Data"</strong> from the menu</li>
+            </ol>
+            <p class="help-hint">We recommend using a computer for the download — ZIP files can be several gigabytes.</p>
+        </div>
+    </div>
+
+    <div class="help-callout">
+        <span class="material-symbols-outlined">schedule</span>
+        <strong>First-time notice:</strong> If this is the first time accessing My Data from a new device,
+        Snapchat may impose a <strong>72-hour security hold</strong> before processing your request. Plan ahead.
+    </div>
+</section>
+
+<!-- Section: Configure Export -->
+<section class="help-section" id="configure-export">
+    <div class="section-label">
+        <span class="section-label-text">Important Settings</span>
+        <span class="section-label-line"></span>
+    </div>
+    <h2>Configure Your Export</h2>
+    <p>For the best results with Snatched, <strong>enable everything</strong>.</p>
+
+    <!-- Top toggles -->
+    <h3>Top Toggles <span class="help-tag help-tag--critical">REQUIRED</span></h3>
+    <div class="help-table-wrap">
+    <table class="help-table">
+        <thead>
+            <tr><th>Toggle</th><th>What It Does</th><th>Required?</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Export your Memories</strong></td>
+                <td>Includes your saved photos/videos + <code>memories_history.json</code></td>
+                <td><span class="help-tag help-tag--critical">ESSENTIAL</span></td>
+            </tr>
+            <tr>
+                <td><strong>Export JSON Files</strong></td>
+                <td>Includes all metadata (timestamps, GPS, friends, chat logs)</td>
+                <td><span class="help-tag help-tag--critical">ESSENTIAL</span></td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+
+    <div class="help-callout help-callout--danger">
+        <span class="material-symbols-outlined">block</span>
+        <strong>Do NOT click "Request Only Memories"</strong> — that shortcut skips all other data categories.
+        You want the full export.
+    </div>
+
+    <!-- Data categories -->
+    <h3>Data Categories <span class="help-tag help-tag--critical">SELECT ALL</span></h3>
+    <p><strong style="color: var(--snap-yellow);">Check every single box.</strong> All of them. Don't skip any. The highlighted ones are critical for Snatched, but the rest ensure a complete backup of your data.</p>
+    <div class="help-category-grid">
+        <div class="help-cat-item help-cat--critical">
+            <span class="help-cat-num">1</span>
+            <div>
+                <strong>User Information</strong>
+                <small>Login history, profile, friends list, Bitmoji</small>
+            </div>
+        </div>
+        <div class="help-cat-item help-cat--critical">
+            <span class="help-cat-num">2</span>
+            <div>
+                <strong>Chat History</strong>
+                <small>Snap history, chat logs, talk history</small>
+            </div>
+        </div>
+        <div class="help-cat-item help-cat--critical">
+            <span class="help-cat-num">3</span>
+            <div>
+                <strong>Spotlight</strong>
+                <small>Shared stories, spotlight replies, story history</small>
+            </div>
+        </div>
+        <div class="help-cat-item">
+            <span class="help-cat-num">4</span>
+            <div>
+                <strong>Shopping</strong>
+                <small>Purchase history, subscriptions</small>
+            </div>
+        </div>
+        <div class="help-cat-item">
+            <span class="help-cat-num">5</span>
+            <div>
+                <strong>Support History</strong>
+                <small>Support tickets, surveys</small>
+            </div>
+        </div>
+        <div class="help-cat-item help-cat--critical">
+            <span class="help-cat-num">6</span>
+            <div>
+                <strong>Ranking And Location</strong>
+                <small>GPS location history, Snap Map places</small>
+            </div>
+        </div>
+        <div class="help-cat-item">
+            <span class="help-cat-num">7</span>
+            <div>
+                <strong>Other Media</strong>
+                <small>Custom sounds, custom stickers</small>
+            </div>
+        </div>
+        <div class="help-cat-item">
+            <span class="help-cat-num">8</span>
+            <div>
+                <strong>Other</strong>
+                <small>Search history, lenses, Snap AI</small>
+            </div>
+        </div>
+        <div class="help-cat-item">
+            <span class="help-cat-num">9</span>
+            <div>
+                <strong>My AI</strong>
+                <small>My AI conversations</small>
+            </div>
+        </div>
+        <div class="help-cat-item help-cat--critical">
+            <span class="help-cat-num">10</span>
+            <div>
+                <strong>Export Shared Stories</strong>
+                <small>Shared story media files</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom toggle -->
+    <h3>Bottom Toggle</h3>
+    <div class="help-table-wrap">
+    <table class="help-table">
+        <thead>
+            <tr><th>Toggle</th><th>What It Does</th><th>Required?</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Export Chat Media</strong></td>
+                <td>Includes actual photos/videos from DM conversations</td>
+                <td><span class="help-tag">YES</span></td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+</section>
+
+<!-- Section: Date Range -->
+<section class="help-section" id="date-range">
+    <div class="section-label">
+        <span class="section-label-text">Time Window</span>
+        <span class="section-label-line"></span>
+    </div>
+    <h2>Choose a Date Range</h2>
+
+    <div class="help-table-wrap">
+    <table class="help-table">
+        <thead>
+            <tr><th>Option</th><th>What It Means</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Toggle OFF (All Time)</strong></td>
+                <td>Everything from account creation to now — <span class="text-yellow">RECOMMENDED</span></td>
+            </tr>
+            <tr><td>Last Year</td><td>Only the past 12 months</td></tr>
+            <tr><td>Last Week</td><td>Only the past 7 days</td></tr>
+            <tr><td>Custom Range</td><td>Pick specific start and end dates</td></tr>
+        </tbody>
+    </table>
+    </div>
+
+    <div class="help-callout">
+        <span class="material-symbols-outlined">tips_and_updates</span>
+        <strong>We strongly recommend "All Time."</strong>
+        Yes, it's counterintuitive — turning the date range toggle <em>OFF</em> means you get <em>all</em> your data. That's what you want.
+        Get everything in one request. You can always filter later in Snatched.
+    </div>
+</section>
+
+<!-- Section: Submit & Download -->
+<section class="help-section" id="submit">
+    <div class="section-label">
+        <span class="section-label-text">Submit & Download</span>
+        <span class="section-label-line"></span>
+    </div>
+    <h2>Submit &amp; Download</h2>
+
+    <div class="help-two-col">
+        <div class="help-method-card">
+            <h4><span class="material-symbols-outlined">send</span> Submitting</h4>
+            <ol>
+                <li>Confirm your <strong>email address</strong></li>
+                <li>Click <strong>"Submit"</strong></li>
+                <li>Snapchat begins preparing your export</li>
+            </ol>
+            <div class="help-timing-grid">
+                <div><strong>Small</strong><br><small>metadata only</small><br>15–30 min</div>
+                <div><strong>Medium</strong><br><small>under 5 GB</small><br>hours to 24h</div>
+                <div><strong>Large</strong><br><small>5+ GB</small><br>24–48h+</div>
+            </div>
+        </div>
+        <div class="help-method-card">
+            <h4><span class="material-symbols-outlined">download</span> Downloading</h4>
+            <ol>
+                <li>Go to <code>accounts.snapchat.com</code> &gt; <strong>My Data</strong></li>
+                <li>Click <strong>"See exports"</strong> or look for "Data available"</li>
+                <li>Click <strong>"Download"</strong></li>
+            </ol>
+            <div class="help-callout help-callout--danger" style="margin-top: 1rem;">
+                <span class="material-symbols-outlined">timer</span>
+                <strong>Links expire after 72 hours.</strong> Download immediately when notified.
+            </div>
+        </div>
+    </div>
+
+    <h3>Saving Your Files</h3>
+    <ul>
+        <li>Save the ZIP file(s) to your computer</li>
+        <li><strong>Do NOT unzip them</strong> — Snatched accepts the raw ZIP files directly</li>
+        <li>Keep the original ZIPs as a backup even after processing</li>
+    </ul>
+    <p class="help-hint">
+        <strong>Phone users:</strong> Check your Downloads folder. We recommend transferring to a computer for upload — phone uploads over cellular can be unreliable for multi-gigabyte files.
+    </p>
+</section>
+
+<!-- Section: Use With Snatched -->
+<section class="help-section" id="use-with-snatched">
+    <div class="section-label">
+        <span class="section-label-text">Using Snatched</span>
+        <span class="section-label-line"></span>
+    </div>
+    <h2>Upload to Snatched</h2>
+
+    <!-- OLD 4-step flow:
+    <div class="steps-grid">
+        <div class="step-item"><div class="step-number-circle step-active">1</div><h4>Log In</h4><p>Sign in or create an account</p></div>
+        <div class="step-item"><div class="step-number-circle step-outline">2</div><h4>Upload</h4><p>Drag and drop your ZIP file</p></div>
+        <div class="step-item"><div class="step-number-circle step-outline">3</div><h4>Watch</h4><p>Reading files → Matching → Restoring → Packaging</p></div>
+        <div class="step-item"><div class="step-number-circle step-outline">4</div><h4>Download</h4><p>Get your restored archive</p></div>
+    </div>
+    -->
+    <div class="steps-grid">
+        <div class="step-item">
+            <div class="step-number-circle step-active">1</div>
+            <h4>Log In</h4>
+            <p><a href="/login" style="color: var(--snap-yellow);">Sign in</a> or <a href="/register" style="color: var(--snap-yellow);">create a free account</a></p>
+        </div>
+        <div class="step-item">
+            <div class="step-number-circle step-outline">2</div>
+            <h4>Upload &amp; Scan</h4>
+            <p>Drop your ZIP — we scan it and show you what's inside</p>
+        </div>
+        <div class="step-item">
+            <div class="step-number-circle step-outline">3</div>
+            <h4>Choose Package</h4>
+            <p>Free dates, or add GPS &amp; more from $4.99</p>
+        </div>
+        <div class="step-item">
+            <div class="step-number-circle step-outline">4</div>
+            <h4>Download</h4>
+            <p>Camera-roll ready files with metadata restored</p>
+        </div>
+    </div>
+
+    <h3>What Snatched Does With Your Export</h3>
+    <div class="help-grid-cards">
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">data_object</span>
+            <p class="help-card-title">Reads Your Data</p>
+            <p>Finds the original dates, GPS locations, and friend names hidden in your export files</p>
+        </div>
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">radar</span>
+            <p class="help-card-title">Matches Everything</p>
+            <p>Connects each photo and video to its real info using 6 different matching strategies</p>
+        </div>
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">pin_drop</span>
+            <p class="help-card-title">Finds Your Locations</p>
+            <p>Uses your location history to figure out where photos were taken, even if GPS was missing</p>
+        </div>
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">layers</span>
+            <p class="help-card-title">Rebuilds Filters</p>
+            <p>Puts your filters, stickers, and text overlays back onto your photos</p>
+        </div>
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">image</span>
+            <p class="help-card-title">Fixes Photo Dates</p>
+            <p>Embeds the correct date and location into each file so your gallery app shows the right info</p>
+        </div>
+        <div class="help-info-card">
+            <span class="material-symbols-outlined">forum</span>
+            <p class="help-card-title">Saves Your Chats</p>
+            <p>Turns chat conversations into high-resolution images you can keep forever</p>
+        </div>
+    </div>
+
+    <p class="help-hint">
+        Snatched accepts ZIP files up to <strong>5 GB</strong> per upload. If your export was split into multiple ZIPs, upload them as separate jobs.
+    </p>
+</section>
+
+<!-- Section: Troubleshooting -->
+<section class="help-section" id="troubleshooting">
+    <div class="section-label">
+        <span class="section-label-text">Troubleshooting</span>
+        <span class="section-label-line"></span>
+    </div>
+    <h2>Common Issues</h2>
+
+    <div class="help-faq-list">
+        <details class="help-faq-item" open>
+            <summary>"I never got the email"</summary>
+            <p>Check your spam/junk folder. You don't need the email — go directly to
+            <code>accounts.snapchat.com</code> &gt; My Data &gt; See exports to download.</p>
+        </details>
+
+        <details class="help-faq-item" open>
+            <summary>"The download link expired"</summary>
+            <p>Request a new export (same steps). Download immediately next time — links expire after 72 hours.
+            This is why we recommend requesting ALL data in one export.</p>
+        </details>
+
+        <details class="help-faq-item">
+            <summary>"My export is missing Memories / no photos or videos"</summary>
+            <p>Make sure <strong>"Export your Memories"</strong> was toggled ON at the top of the page.
+            If you only see JSON files and chat media, you exported without the Memories toggle.</p>
+        </details>
+
+        <details class="help-faq-item">
+            <summary>"Snatched says no metadata found"</summary>
+            <p>Make sure <strong>"Export JSON Files"</strong> was toggled ON.
+            Without this, you only get raw media — Snatched needs the JSON files to restore dates and locations.</p>
+        </details>
+
+        <details class="help-faq-item">
+            <summary>"I hit the daily request limit"</summary>
+            <p>Snapchat limits export requests per day. Wait 24 hours and try again.
+            Select ALL categories and ALL date ranges in one request to avoid this.</p>
+        </details>
+
+        <details class="help-faq-item">
+            <summary>"Snapchat says try again in 72 hours"</summary>
+            <p>This is a security measure for new/unrecognized devices. Wait the 72 hours and try from the same device.</p>
+        </details>
+
+        <details class="help-faq-item">
+            <summary>"The ZIP is huge and my upload is slow"</summary>
+            <p>Large exports (5+ GB) take time. Use a wired connection if possible.
+            Snatched shows upload progress. Consider uploading from a computer rather than a phone.</p>
+        </details>
+
+        <details class="help-faq-item">
+            <summary>"My photos all show today's date in my gallery"</summary>
+            <p>This is exactly the problem Snatched solves. Snapchat strips original dates — they only exist in JSON metadata.
+            Upload to Snatched and it embeds the correct dates back via EXIF.</p>
+        </details>
+
+        <details class="help-faq-item">
+            <summary>"My exported photos are smaller/lower quality than my camera roll originals"</summary>
+            <p>This is a Snapchat limitation, not Snatched. Snapchat's data export delivers photos at
+            <strong>lower quality than the originals</strong> saved to your camera roll (DCIM/Snapchat).
+            Files from Snapchat's servers are pre-compressed at JPEG quality 61&ndash;80 — significantly lower
+            than the Q90+ originals your phone saved at capture time.</p>
+            <p>Worse, <strong>data has been shown to shrink over time</strong> as Snapchat re-encodes stored media
+            on their servers. The longer you wait to export, the more quality you may lose.</p>
+            <p>Snatched preserves every byte Snapchat gives us. Photos without overlays are copied byte-for-byte
+            (only EXIF metadata is added). Photos with overlays are re-composited at quality 95 to minimize loss.
+            We never downgrade your files.</p>
+        </details>
+    </div>
+</section>
+
+<!-- Section: Checklist -->
+<section class="help-section" id="checklist">
+    <div class="section-label">
+        <span class="section-label-text">Checklist</span>
+        <span class="section-label-line"></span>
+    </div>
+    <h2>Quick Reference Checklist</h2>
+
+    <div class="help-checklist" id="help-checklist">
+        <label><input type="checkbox" data-ck="0"> <strong>Export your Memories</strong> — ON</label>
+        <label><input type="checkbox" data-ck="1"> <strong>Export JSON Files</strong> — ON</label>
+        <label><input type="checkbox" data-ck="2"> <strong>All data categories</strong> — checked (every single one)</label>
+        <label><input type="checkbox" data-ck="3"> <strong>Export Chat Media</strong> — ON</label>
+        <label><input type="checkbox" data-ck="4"> <strong>Export Shared Stories</strong> — ON</label>
+        <label><input type="checkbox" data-ck="5"> <strong>Date range</strong> — set to <strong>All Time</strong> (toggle OFF)</label>
+        <label><input type="checkbox" data-ck="6"> <strong>Email address</strong> — correct and accessible</label>
+    </div>
+    <script>
+    (function(){
+        var KEY='snatched_help_checklist';
+        var saved=JSON.parse(localStorage.getItem(KEY)||'{}');
+        document.querySelectorAll('#help-checklist input[data-ck]').forEach(function(cb){
+            var k=cb.getAttribute('data-ck');
+            if(saved[k]) cb.checked=true;
+            cb.addEventListener('change',function(){
+                saved[k]=cb.checked;
+                localStorage.setItem(KEY,JSON.stringify(saved));
+            });
+        });
+    })();
+    </script>
+
+    <p class="help-center-muted">
+        <strong>Then:</strong> Submit &rarr; Wait for email &rarr; Download immediately &rarr; Upload to Snatched
+    </p>
+</section>
+
+<!-- Section: Deadline -->
+<section class="help-section" id="deadline">
+    <div class="section-label">
+        <span class="section-label-text">Countdown</span>
+        <span class="section-label-line"></span>
+    </div>
+    <h2>The September 2026 Deadline</h2>
+
+    <div class="help-deadline-box">
+        <div class="help-deadline-icon">
+            <span class="material-symbols-outlined">alarm</span>
+        </div>
+        <div class="help-deadline-content">
+            <ul>
+                <li>Free accounts limited to <strong>5 GB</strong> of Memories storage</li>
+                <li>12-month grace period started September 2025</li>
+                <li>Excess Memories are <strong>permanently deleted</strong> after the deadline</li>
+                <li>Snapchat deletes your <strong>newest Memories first</strong></li>
+                <li>There is <strong>no recovery</strong> for deleted Memories</li>
+                <li>Canceling a paid plan while over 5 GB gives only <strong>48 hours</strong> before deletion</li>
+            </ul>
+        </div>
+    </div>
+</section>
+
+<!-- Footer CTA -->
+<div class="cta-card-landing">
+    <!-- OLD: <h2>Don't wait. Rescue your memories now.</h2> -->
+    <h2>Got your export? Let's go.</h2>
+    <p class="cta-urgency">Free scan shows you exactly what's inside. Dates recovered free. GPS &amp; full archive from $4.99.</p>
+    <a href="/upload" class="btn-primary">UPLOAD &amp; SCAN FREE</a>
+</div>
+
+<p class="help-disclaimer">
+    Snatched is not affiliated with Snap Inc. This guide is based on Snapchat's official data export process as of 2026.<br>
+    Source: <a href="https://help.snapchat.com/hc/en-us/articles/7012305371156" target="_blank" rel="noopener">Snapchat Help — How do I download my data?</a>
+</p>
+{% endblock %}

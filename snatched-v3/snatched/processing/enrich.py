@@ -113,7 +113,9 @@ def enrich_gps(
     t0 = time.time()
 
     if progress_cb:
-        progress_cb("Enriching GPS coordinates...")
+        progress_cb("Enriching GPS coordinates...", {
+            "verb": "FINDING WHERE YOU WERE", "errors": 0,
+        })
 
     # Pass 1: GPS from memory metadata
     mem_updates = db.execute("""
@@ -143,6 +145,24 @@ def enrich_gps(
             "WHERE id=?", batch)
     db.commit()
 
+    # GPS showstopper: emit a sample memory location for the terminal display
+    if mem_gps_count > 0 and progress_cb:
+        sample = db.execute("""
+            SELECT mem.lat, mem.lon, mem.location_raw
+            FROM matches m
+            JOIN memories mem ON m.memory_id = mem.id
+            WHERE m.is_best = 1 AND mem.lat IS NOT NULL
+              AND mem.location_raw IS NOT NULL AND mem.location_raw != ''
+            LIMIT 1
+        """).fetchone()
+        if sample:
+            progress_cb(f"GPS: {mem_gps_count} from memory metadata", {
+                "verb": "FINDING WHERE YOU WERE",
+                "gps_lat": sample[0], "gps_lon": sample[1],
+                "location_name": sample[2],
+                "current": mem_gps_count, "errors": 0,
+            })
+
     # Pass 2: GPS from location history (binary search)
     loc_gps_count = 0
     if timestamps:
@@ -166,6 +186,13 @@ def enrich_gps(
                 lat, lon = result
                 batch.append((lat, lon, 'location_history', match_id))
                 loc_gps_count += 1
+                # GPS showstopper: emit coords every 50 finds
+                if loc_gps_count % 50 == 0 and progress_cb:
+                    progress_cb(f"GPS: {mem_gps_count + loc_gps_count} tagged", {
+                        "verb": "FINDING WHERE YOU WERE",
+                        "gps_lat": lat, "gps_lon": lon,
+                        "current": mem_gps_count + loc_gps_count, "errors": 0,
+                    })
                 if len(batch) >= BATCH_SIZE:
                     db.executemany(
                         "UPDATE matches SET matched_lat=?, matched_lon=?, "
@@ -191,9 +218,12 @@ def enrich_gps(
     )
 
     if progress_cb:
+        total_gps = mem_gps_count + loc_gps_count
         progress_cb(
             f"GPS: {mem_gps_count} from metadata, "
-            f"{loc_gps_count} from location history, {no_gps} without"
+            f"{loc_gps_count} from location history, {no_gps} without",
+            {"verb": "FINDING WHERE YOU WERE",
+             "current": total_gps, "total": total_gps + no_gps, "errors": 0},
         )
 
     return {
@@ -257,8 +287,13 @@ def build_chat_folder_map(db: sqlite3.Connection) -> dict[str, str]:
         friends[row[0]] = row[1] if row[1] else None
 
     conversations = db.execute("""
-        SELECT DISTINCT conversation_id, conversation_title
-        FROM chat_messages
+        SELECT conversation_id, MAX(conversation_title) AS conversation_title
+        FROM (
+            SELECT conversation_id, conversation_title FROM chat_messages
+            UNION ALL
+            SELECT conversation_id, conversation_title FROM snap_messages
+        )
+        GROUP BY conversation_id
         ORDER BY conversation_id
     """).fetchall()
 
@@ -269,12 +304,13 @@ def build_chat_folder_map(db: sqlite3.Connection) -> dict[str, str]:
         messages = db.execute("""
             SELECT from_user, media_type, content, created, created_ms,
                    is_sender, conversation_title
-            FROM chat_messages
-            WHERE conversation_id = ?
-            ORDER BY
-                CASE WHEN created_ms IS NOT NULL THEN created_ms ELSE 0 END ASC,
-                created ASC
-        """, (conv_id,)).fetchall()
+            FROM chat_messages WHERE conversation_id = ?
+            UNION ALL
+            SELECT from_user, media_type, NULL AS content, created, created_ms,
+                   is_sender, conversation_title
+            FROM snap_messages WHERE conversation_id = ?
+            ORDER BY created_ms ASC NULLS LAST, created ASC
+        """, (conv_id, conv_id)).fetchall()
 
         if not messages:
             continue
@@ -392,7 +428,9 @@ def enrich_display_names(
     t0 = time.time()
 
     if progress_cb:
-        progress_cb("Resolving display names...")
+        progress_cb("Resolving display names...", {
+            "verb": "REMEMBERING WHO YOU WERE WITH", "errors": 0,
+        })
 
     friends = {}
     for row in db.execute("SELECT username, display_name FROM friends"):
@@ -466,7 +504,10 @@ def enrich_display_names(
     logger.info(f"Display names: {resolved} resolved ({elapsed:.1f}s)")
 
     if progress_cb:
-        progress_cb(f"Display names: {resolved} files matched to contact names")
+        progress_cb(f"Display names: {resolved} files matched to contact names", {
+            "verb": "REMEMBERING WHO YOU WERE WITH",
+            "current": resolved, "total": resolved, "errors": 0,
+        })
 
     return {'resolved': resolved, 'elapsed': elapsed}
 
@@ -493,7 +534,15 @@ def enrich_output_paths(
     t0 = time.time()
 
     if progress_cb:
-        progress_cb("Computing output paths...")
+        progress_cb("Computing output paths...", {
+            "verb": "ORGANIZING YOUR MEMORIES", "errors": 0,
+        })
+
+    # Determine folder style from config
+    mem_lane = config.lanes.get('memories')
+    folder_style = mem_lane.folder_pattern if mem_lane else 'year_month'
+    if folder_style not in ('year_month', 'year', 'flat', 'type'):
+        folder_style = 'year_month'
 
     # Build conversation folder map for chat assets
     chat_folder_map = build_chat_folder_map(db)
@@ -542,7 +591,14 @@ def enrich_output_paths(
             date_str = 'Unknown'
 
         if asset_type in ('memory_main', 'memory_overlay'):
-            subdir = f"memories/{yyyy}/{mm}"
+            if folder_style == 'flat':
+                subdir = "memories"
+            elif folder_style == 'year':
+                subdir = f"memories/{yyyy}"
+            elif folder_style == 'type':
+                subdir = "memories/Photos" if not (real_ext and real_ext.lower() in ('.mp4', '.mov', '.avi')) else "memories/Videos"
+            else:  # year_month
+                subdir = f"memories/{yyyy}/{mm}"
             base = f"Snap_Memory_{date_str}_{time_str}"
 
         elif asset_type == 'chat':
@@ -566,7 +622,14 @@ def enrich_output_paths(
                 base = f"Snap_Chat_{orig_filename.rsplit('.', 1)[0]}"
 
         elif asset_type == 'story':
-            subdir = "stories"
+            if folder_style == 'year_month':
+                subdir = f"stories/{yyyy}/{mm}"
+            elif folder_style == 'year':
+                subdir = f"stories/{yyyy}"
+            elif folder_style == 'type':
+                subdir = "stories"
+            else:  # flat
+                subdir = "stories"
             base = f"Snap_Story_{date_str}_{time_str}"
 
         else:
@@ -607,7 +670,10 @@ def enrich_output_paths(
     logger.info(f"Output paths: {computed} computed ({elapsed:.1f}s)")
 
     if progress_cb:
-        progress_cb(f"Output paths: {computed} computed")
+        progress_cb(f"Output paths: {computed} computed", {
+            "verb": "ORGANIZING YOUR MEMORIES",
+            "current": computed, "total": computed, "errors": 0,
+        })
 
     return {'computed': computed, 'elapsed': elapsed}
 
@@ -631,7 +697,14 @@ def enrich_exif_tags(
     t0 = time.time()
 
     if progress_cb:
-        progress_cb("Building EXIF metadata tags...")
+        progress_cb("Building EXIF metadata tags...", {
+            "verb": "STAMPING YOUR MEMORIES", "errors": 0,
+        })
+
+    # Read GPS precision and hide_sent_to from config
+    _any_lane = config.lanes.get('memories') or config.lanes.get('chats') or config.lanes.get('stories')
+    gps_precision = _any_lane.gps_precision if _any_lane else 'exact'
+    hide_sent_to = _any_lane.hide_sent_to if _any_lane else False
 
     rows = db.execute("""
         SELECT m.id, m.matched_date, m.matched_lat, m.matched_lon,
@@ -639,11 +712,27 @@ def enrich_exif_tags(
                m.conversation, m.memory_id, m.chat_message_id,
                m.snap_message_id, m.story_id,
                a.asset_type, a.is_video, a.ext, a.real_ext,
-               a.memory_uuid, a.file_id
+               a.memory_uuid, a.file_id,
+               mem.location_raw
         FROM matches m
         JOIN assets a ON m.asset_id = a.id
+        LEFT JOIN memories mem ON m.memory_id = mem.id
         WHERE m.is_best = 1
     """).fetchall()
+
+    # Build accuracy cache: for location_history GPS, find nearest accuracy_m
+    accuracy_cache = {}
+    try:
+        acc_rows = db.execute(
+            "SELECT timestamp_unix, accuracy_m FROM locations "
+            "WHERE accuracy_m IS NOT NULL ORDER BY timestamp_unix"
+        ).fetchall()
+        if acc_rows:
+            _acc_ts = [r[0] for r in acc_rows]
+            _acc_vals = [r[1] for r in acc_rows]
+            accuracy_cache = {'ts': _acc_ts, 'vals': _acc_vals}
+    except Exception:
+        pass
 
     # Caches for subsecond lookups
     chat_us_cache = {}
@@ -656,7 +745,8 @@ def enrich_exif_tags(
         (match_id, matched_date, matched_lat, matched_lon,
          gps_source, display_name, creator_str, direction,
          conversation, memory_id, chat_msg_id, snap_msg_id, story_id,
-         asset_type, is_video_flag, ext, real_ext, memory_uuid, file_id) = row
+         asset_type, is_video_flag, ext, real_ext, memory_uuid, file_id,
+         location_raw) = row
 
         vid = bool(is_video_flag)
         tags = {}
@@ -698,17 +788,44 @@ def enrich_exif_tags(
             tags.update(date_tags(dt, is_video=vid, subsec_ms=subsec_ms))
 
         # GPS tags
-        if matched_lat is not None and matched_lon is not None:
-            tags.update(gps_tags(matched_lat, matched_lon, is_video=vid, dt=dt))
+        if matched_lat is not None and matched_lon is not None and gps_precision != 'none':
+            _lat = matched_lat
+            _lon = matched_lon
+            if gps_precision == 'city':
+                _lat = round(matched_lat, 2)
+                _lon = round(matched_lon, 2)
+            tags.update(gps_tags(_lat, _lon, is_video=vid, dt=dt))
+
+            # GPS accuracy (from location_history source)
+            if gps_source == 'location_history' and accuracy_cache and dt:
+                target_unix = dt.timestamp()
+                _ts = accuracy_cache['ts']
+                idx = bisect_left(_ts, target_unix)
+                best_acc = None
+                for ci in (idx - 1, idx):
+                    if 0 <= ci < len(_ts):
+                        if abs(_ts[ci] - target_unix) <= 300:
+                            acc = accuracy_cache['vals'][ci]
+                            if best_acc is None or abs(_ts[ci] - target_unix) < abs(_ts[best_acc[1]] - target_unix):
+                                best_acc = (acc, ci)
+                if best_acc:
+                    tags['GPSHPositioningError'] = str(best_acc[0])
+
+            # Location name (human-readable place from Snapchat)
+            if location_raw:
+                tags['IPTC:City'] = location_raw
+                tags['XMP-photoshop:City'] = location_raw
+        else:
+            tags['UserComment'] = 'GPS: no coordinates found in Snapchat location history'
 
         # Chat-specific tags
         if asset_type == 'chat' and (chat_msg_id or snap_msg_id):
-            if creator_str:
+            if creator_str and not hide_sent_to:
                 tags['XMP:Creator'] = creator_str
-            if direction:
+            if direction and not hide_sent_to:
                 desc = 'Sent' if direction == 'sent' else 'Received'
                 tags['XMP:Description'] = desc
-            if conversation:
+            if conversation and not hide_sent_to:
                 tags['XMP:Subject'] = conversation
             if file_id:
                 tags['ImageUniqueID'] = file_id
@@ -752,7 +869,10 @@ def enrich_exif_tags(
     )
 
     if progress_cb:
-        progress_cb(f"EXIF tags: {built} prepared ({with_gps} with GPS)")
+        progress_cb(f"EXIF tags: {built} prepared ({with_gps} with GPS)", {
+            "verb": "STAMPING YOUR MEMORIES",
+            "current": built, "total": built, "errors": 0,
+        })
 
     return {
         'built': built,

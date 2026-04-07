@@ -1,0 +1,900 @@
+{% extends "base.html" %}
+{% block title %}Snatched Memories — Job #{{ job.id }}{% endblock %}
+{% block content %}
+
+
+{% set show_buildlog = job.status not in ('completed', 'failed', 'cancelled') or (job.status == 'completed' and not has_completed_export) %}
+
+<div class="sm-page">
+
+    <!-- Hero -->
+    <div class="sm-hero">
+        {% if job.status == 'completed' and has_completed_export %}
+        <h1 class="sm-hero-title" id="sm-hero-title"><span class="text-yellow">Snatched.</span></h1>
+        <p class="sm-hero-sub" id="sm-hero-sub">Your memories have been rescued.</p>
+        {% if job.job_tier and job.job_tier != 'free' %}
+        <span style="
+            display: inline-block; margin-top: 0.3rem;
+            padding: 0.15rem 0.6rem;
+            font-size: 0.6rem; font-weight: 900; text-transform: uppercase;
+            letter-spacing: 0.1em; font-family: 'JetBrains Mono', monospace;
+            color: #000; background: var(--snap-yellow);
+        ">{{ job.job_tier | replace('_', ' ') | title }} Package</span>
+        {% elif job.job_tier == 'free' %}
+        <span style="
+            display: inline-block; margin-top: 0.3rem;
+            padding: 0.15rem 0.6rem;
+            font-size: 0.6rem; font-weight: 900; text-transform: uppercase;
+            letter-spacing: 0.1em; font-family: 'JetBrains Mono', monospace;
+            color: #4ade80; border: 1px solid #4ade80;
+        ">Free — Memories + Dates</span>
+        {% endif %}
+        {% elif job.status == 'failed' %}
+        <h1 class="sm-hero-title" id="sm-hero-title">Something went wrong.</h1>
+        <p class="sm-hero-sub" id="sm-hero-sub">{{ job.error_message or 'An unexpected error occurred.' }}</p>
+        {% else %}
+        <!-- OLD: <h1>Rescuing Memories...</h1> -->
+        <h1 class="sm-hero-title" id="sm-hero-title">Processing <span class="text-yellow">Your Export</span>...</h1>
+        <p class="sm-hero-sub" id="sm-hero-sub">Sit tight — matching dates, enriching metadata, building your download.</p>
+        {% endif %}
+    </div>
+
+    <!-- Unified Pipeline Buildlog (Phase 1: Analysis + Phase 2: Packaging) -->
+    <div class="sm-buildlog {% if not show_buildlog %}hidden{% endif %}" id="sm-pipeline-log">
+        <div class="sm-buildlog-title" id="sm-buildlog-title">Processing Your Memories</div>
+        <div class="sm-buildlog-timer" id="sm-master-timer">Elapsed: 0:00</div>
+
+        <!-- Phase 1: Analysis -->
+        <div id="sm-phase1-steps">
+            <div class="sm-step {% if phase_idx >= 1 %}sm-step--done{% elif phase_idx == 0 %}sm-step--active{% else %}sm-step--pending{% endif %}" id="pl-step-ingest">
+                <span class="sm-step-icon">{% if phase_idx >= 1 %}&#10003;{% elif phase_idx == 0 %}&#9679;{% else %}&#9675;{% endif %}</span>
+                <div class="sm-step-text">
+                    <span class="sm-step-label">Scanning files</span>
+                    <span class="sm-step-desc">Reading your Snapchat export</span>
+                </div>
+            </div>
+            <div class="sm-step {% if phase_idx >= 2 %}sm-step--done{% elif phase_idx == 1 %}sm-step--active{% else %}sm-step--pending{% endif %}" id="pl-step-match">
+                <span class="sm-step-icon">{% if phase_idx >= 2 %}&#10003;{% elif phase_idx == 1 %}&#9679;{% else %}&#9675;{% endif %}</span>
+                <div class="sm-step-text">
+                    <span class="sm-step-label">Matching memories</span>
+                    <span class="sm-step-desc">Connecting media to metadata</span>
+                </div>
+            </div>
+            <div class="sm-step {% if phase_idx >= 3 %}sm-step--done{% elif phase_idx == 2 %}sm-step--active{% else %}sm-step--pending{% endif %}" id="pl-step-enrich">
+                <span class="sm-step-icon">{% if phase_idx >= 3 %}&#10003;{% elif phase_idx == 2 %}&#9679;{% else %}&#9675;{% endif %}</span>
+                <div class="sm-step-text">
+                    <span class="sm-step-label">Enriching metadata</span>
+                    <span class="sm-step-desc">Recovering GPS, dates & locations</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Phase 1 completion divider (hidden until Phase 1 done) -->
+        {% set analysis_done = job.status in ('scanned', 'matched', 'enriched', 'completed') %}
+        {% if analysis_done and job.completed_at and job.started_at %}
+            {% set elapsed_secs = (job.completed_at - job.started_at).total_seconds() | int %}
+            {% set elapsed_m = elapsed_secs // 60 %}
+            {% set elapsed_s = elapsed_secs % 60 %}
+        <div class="sm-phase-divider" id="sm-phase1-divider">
+            <span class="sm-phase-label">Analysis Complete</span>
+            <span class="sm-phase-time" id="sm-phase1-time">{{ elapsed_m }}:{{ "%02d" | format(elapsed_s) }}</span>
+        </div>
+        {% else %}
+        <div class="sm-phase-divider hidden" id="sm-phase1-divider">
+            <span class="sm-phase-label">Analysis Complete</span>
+            <span class="sm-phase-time" id="sm-phase1-time"></span>
+        </div>
+        {% endif %}
+
+        <!-- Phase 2 header divider (hidden until transition) -->
+        <div class="sm-phase-divider hidden" id="sm-phase2-header">
+            <span class="sm-phase-label">Packaging</span>
+        </div>
+
+        <!-- Phase 2: Export steps (populated by JS) -->
+        <div id="sm-export-steps" class="hidden"></div>
+    </div>
+
+    <!-- Failed state -->
+    {% if job.status == 'failed' %}
+    <div class="sm-failed">
+        <span class="material-symbols-outlined">error</span>
+        <h2>Processing Failed</h2>
+        <p>{{ job.error_message or 'An unexpected error occurred.' }}</p>
+        <a href="/dashboard" class="btn-outline" style="margin-top: 1rem;">Back to Dashboard</a>
+    </div>
+    {% endif %}
+
+    <!-- Vault Merge Status Banner -->
+    {% if job.status == 'completed' %}
+    {% if is_merged %}
+    <div style="border-left: 3px solid var(--success); padding: 0.75rem 1rem; margin: 0 auto 0.75rem; max-width: 720px; background: rgba(76,175,80,0.06); font-size: 0.85rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; border-radius: 0 4px 4px 0;">
+        <span class="material-symbols-outlined" style="color: var(--success); font-size: 1.1rem;">check_circle</span>
+        <span>Merged into vault{% if merge_date %} on {{ merge_date }}{% endif %}.</span>
+        <a href="/vault/manage" style="font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: var(--snap-yellow); text-decoration: none;">View Vault</a>
+    </div>
+    {% else %}
+    <div style="border-left: 3px solid var(--snap-yellow); padding: 0.75rem 1rem; margin: 0 auto 0.75rem; max-width: 720px; background: rgba(255,252,0,0.04); font-size: 0.85rem; border-radius: 0 4px 4px 0;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+            <span class="material-symbols-outlined" style="color: var(--snap-yellow); font-size: 1.1rem;">info</span>
+            <span>This job is ready but not in your vault yet.</span>
+            <a href="/vault/manage" style="font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #000; background: var(--snap-yellow); padding: 0.3rem 0.8rem; text-decoration: none; border-radius: 3px;">Go to Vault Manager</a>
+        </div>
+        <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.35rem; padding-left: 2rem;">Merge it to make this data permanent and deduplicated across all your uploads.</div>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    <!-- Download Panel -->
+    <div class="sm-columns" id="sm-columns">
+        <div class="sm-download{% if not has_completed_export %} sm-download--building{% endif %}" id="sm-download">
+            {% if has_completed_export %}
+                {% for export in exports %}
+                {% if export.status == 'completed' %}
+                <div class="sm-export-card">
+                    <!-- Left: Download -->
+                    <div class="sm-export-dl">
+                        <div class="sm-section-label" style="margin-bottom: 0.25rem;">
+                            {% if export.export_type == 'free' %}
+                            Download &mdash; Memories + Dates
+                            {% elif export.export_type == 'rescue' %}
+                            Download &mdash; Memory Rescue
+                            {% elif export.export_type == 'quick_rescue' %}
+                            <!-- legacy --> Download &mdash; Quick Rescue
+                            {% else %}
+                            Download &mdash; Complete Archive
+                            {% endif %}
+                        </div>
+                        <div class="sm-parts">
+                            {% if (export.zip_part_count or 1) == 1 %}
+                            <a href="/api/exports/{{ export.id }}/download?part=1" class="sm-part-btn sm-part-btn--single">
+                                <span class="material-symbols-outlined">folder_zip</span>
+                                Download ZIP
+                                {% if export.zip_total_bytes %}
+                                <span class="sm-part-size">{{ "%.1f" | format(export.zip_total_bytes / (1024 * 1024)) }} MB</span>
+                                {% endif %}
+                            </a>
+                            {% else %}
+                            {% for part_num in range(1, (export.zip_part_count or 1) + 1) %}
+                            <a href="/api/exports/{{ export.id }}/download?part={{ part_num }}" class="sm-part-btn">
+                                <span class="material-symbols-outlined">folder_zip</span>
+                                Part {{ part_num }}
+                                {% if export.zip_total_bytes and export.zip_part_count %}
+                                <span class="sm-part-size">~{{ "%.0f" | format(export.zip_total_bytes / (export.zip_part_count * 1024 * 1024)) }} MB</span>
+                                {% endif %}
+                            </a>
+                            {% endfor %}
+                            {% endif %}
+                        </div>
+                        <div style="font-size: 0.58rem; color: var(--text-dim); margin-top: 0.15rem;">
+                            {{ export.created_at.strftime('%Y-%m-%d %H:%M') if export.created_at else '' }}
+                        </div>
+                    </div>
+
+                    <!-- Right: Export info -->
+                    <div class="sm-export-info">
+                        <div class="sm-download-meta">
+                            <span>
+                                {% if export.export_type in ('free', 'quick_rescue') %}
+                                <span class="material-symbols-outlined">bolt</span>
+                                Memories + Dates
+                                {% elif export.export_type == 'rescue' %}
+                                <span class="material-symbols-outlined">my_location</span>
+                                Memories + GPS + Overlays
+                                {% else %}
+                                <span class="material-symbols-outlined">package_2</span>
+                                {{ export.lanes | join(', ') if export.lanes else 'Complete Archive' }}
+                                {% endif %}
+                            </span>
+                            {% if export.file_count %}
+                            <span>
+                                <span class="material-symbols-outlined">description</span>
+                                {{ "{:,}".format(export.file_count) }} files
+                            </span>
+                            {% endif %}
+                            {% if export.zip_total_bytes %}
+                            <span>
+                                <span class="material-symbols-outlined">hard_drive</span>
+                                {% if export.zip_total_bytes >= 1073741824 %}
+                                {{ "%.1f" | format(export.zip_total_bytes / (1024 * 1024 * 1024)) }} GB
+                                {% else %}
+                                {{ "%.0f" | format(export.zip_total_bytes / (1024 * 1024)) }} MB
+                                {% endif %}
+                            </span>
+                            {% endif %}
+                        </div>
+                        <!-- Settings tags -->
+                        <div class="sm-detail-tags" style="margin-top: 0.3rem;">
+                            {% if export.exif_enabled %}<span class="sm-tag sm-tag--on">EXIF</span>{% else %}<span class="sm-tag sm-tag--off">EXIF</span>{% endif %}
+                            {% if export.xmp_enabled %}<span class="sm-tag sm-tag--on">XMP</span>{% else %}<span class="sm-tag sm-tag--off">XMP</span>{% endif %}
+                            {% if export.burn_overlays %}<span class="sm-tag sm-tag--on">Overlay</span>{% else %}<span class="sm-tag sm-tag--off">Overlay</span>{% endif %}
+                            <span class="sm-tag">{{ (export.folder_style or 'year_month') | replace('_', '/') }}</span>
+                            <span class="sm-tag">GPS: {{ export.gps_precision or 'exact' }}</span>
+                            {% if export.lanes and 'chats' in export.lanes %}
+                            {% if export.chat_text %}<span class="sm-tag sm-tag--on">TXT</span>{% endif %}
+                            {% if export.chat_png %}<span class="sm-tag sm-tag--on">PNG</span>{% endif %}
+                            {% if export.dark_mode_pngs %}<span class="sm-tag sm-tag--on">Dark</span>{% endif %}
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                {% elif export.status == 'failed' %}
+                <div style="padding: 0.5rem; border: 1px solid var(--danger); background: rgba(255,0,0,0.05);">
+                    <div class="sm-section-label" style="color: var(--danger); margin-bottom: 0.25rem;">
+                        Export Failed
+                    </div>
+                    <p class="text-muted" style="font-size: 0.65rem; margin: 0;">
+                        {{ export.error_message or 'Unknown error' }}
+                    </p>
+                    <a href="/configure/{{ job_id }}?mode=remaining" style="font-size: 0.65rem; margin-top: 0.25rem; display: inline-block;">
+                        Try again
+                    </a>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+            {% elif not show_buildlog %}
+                <div class="sm-building" id="sm-building-wait">
+                    <span class="material-symbols-outlined" style="font-size: 2rem; color: var(--text-dim);">hourglass_top</span>
+                    <div class="sm-section-label" style="margin-top: 0.5rem;">Download</div>
+                    <p class="text-muted" style="font-size: 0.7rem; margin: 0;">
+                        Your download will appear here when processing completes
+                    </p>
+                </div>
+            {% endif %}
+        </div>
+
+    </div>
+
+    <!-- Upsell card -->
+    {% if show_upsell and has_completed_export %}
+    <div class="sm-upsell">
+        <div class="sm-upsell-title">Want the full picture?</div>
+        <p class="text-muted" style="font-size: 0.8rem; margin: 0 0 0.5rem;">
+            Your free export includes memories with dates. Upgrade to add GPS locations, overlay compositing, chat transcripts, and stories.
+        </p>
+        <div class="sm-upsell-stats">
+            {% if upsell_chat_count %}
+            <div class="sm-upsell-stat">
+                <span class="material-symbols-outlined">chat</span>
+                <div class="sm-upsell-stat-val">{{ "{:,}".format(upsell_chat_count) }}</div>
+                <div class="sm-upsell-stat-label">messages</div>
+            </div>
+            {% endif %}
+            {% if upsell_conversation_count %}
+            <div class="sm-upsell-stat">
+                <span class="material-symbols-outlined">forum</span>
+                <div class="sm-upsell-stat-val">{{ "{:,}".format(upsell_conversation_count) }}</div>
+                <div class="sm-upsell-stat-label">conversations</div>
+            </div>
+            {% endif %}
+            {% if upsell_snap_count %}
+            <div class="sm-upsell-stat">
+                <span class="material-symbols-outlined">photo_camera_front</span>
+                <div class="sm-upsell-stat-val">{{ "{:,}".format(upsell_snap_count) }}</div>
+                <div class="sm-upsell-stat-label">snaps</div>
+            </div>
+            {% endif %}
+            {% if upsell_story_count %}
+            <div class="sm-upsell-stat">
+                <span class="material-symbols-outlined">auto_stories</span>
+                <div class="sm-upsell-stat-val">{{ "{:,}".format(upsell_story_count) }}</div>
+                <div class="sm-upsell-stat-label">stories</div>
+            </div>
+            {% endif %}
+            {% if upsell_friend_count %}
+            <div class="sm-upsell-stat">
+                <span class="material-symbols-outlined">group</span>
+                <div class="sm-upsell-stat-val">{{ "{:,}".format(upsell_friend_count) }}</div>
+                <div class="sm-upsell-stat-label">friends</div>
+            </div>
+            {% endif %}
+        </div>
+        <!-- Pricing nudge -->
+        <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;">
+            <div style="flex: 1; padding: 0.4rem; border: 1px solid rgba(255, 252, 0, 0.2); text-align: center;">
+                <div style="font-weight: 900; color: var(--snap-yellow);">$4.99</div>
+                <div style="color: var(--text-dim); font-size: 0.6rem;">GPS + Overlays</div>
+            </div>
+            <div style="flex: 1; padding: 0.4rem; border: 1px solid var(--snap-yellow); background: rgba(255, 252, 0, 0.06); text-align: center;">
+                <div style="font-weight: 900; color: var(--snap-yellow);">$9.99</div>
+                <div style="color: var(--text-dim); font-size: 0.6rem;">Everything</div>
+            </div>
+        </div>
+        <!-- OLD: <a href="/configure/{{ job_id }}?mode=remaining">Create Full Export</a> -->
+        <div class="sm-part-btn sm-part-btn--single" style="margin-top: 0.4rem; opacity: 0.5; cursor: default;">
+            <span class="material-symbols-outlined">lock</span>
+            Upgrade — Coming Soon
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Job Summary -->
+    {% if has_completed_export and (export_stats.min_date or export_stats.exported) %}
+    <div class="sm-job-summary">
+        {% if export_stats.min_date or export_stats.max_date %}
+        <span class="sm-summary-item">
+            <span class="material-symbols-outlined">date_range</span>
+            {{ export_stats.min_date[:10] if export_stats.min_date else '?' }}
+            &mdash;
+            {{ export_stats.max_date[:10] if export_stats.max_date else '?' }}
+        </span>
+        {% endif %}
+        {% if export_stats.exported %}
+        <span class="sm-summary-item">
+            <span class="material-symbols-outlined">query_stats</span>
+            {{ "{:,}".format(export_stats.exported) }} files
+            ({{ "{:,}".format(export_stats.photos or 0) }} photos, {{ "{:,}".format(export_stats.videos or 0) }} videos)
+        </span>
+        {% endif %}
+        {% if export_stats.gps_tagged is not none and export_stats.exported %}
+        <span class="sm-summary-item">
+            <span class="material-symbols-outlined">location_on</span>
+            GPS: {{ "{:,}".format(export_stats.gps_tagged) }}/{{ "{:,}".format(export_stats.exported) }}
+            ({{ "%.0f" | format(export_stats.gps_tagged / export_stats.exported * 100) }}%)
+        </span>
+        {% endif %}
+        <span class="sm-summary-item">
+            <span class="material-symbols-outlined">tune</span>
+            {{ processing_mode | replace('_', ' ') | title }}
+            &middot; {{ job.lanes_requested | join(', ') if job.lanes_requested else 'All' }}
+        </span>
+    </div>
+    {% endif %}
+
+    <!-- Injection Protocol -->
+    {% if has_completed_export %}
+    <div class="sm-info" id="sm-info-panel">
+        <span class="material-symbols-outlined">terminal</span>
+        <div>
+            <div class="sm-info-title">Injection Protocol</div>
+            <p>
+                Your memories include full EXIF metadata.
+                Import the <code class="mono text-yellow">memories/</code> folder into
+                <strong>Immich</strong>, <strong>Apple Photos</strong>, <strong>Google Photos</strong>,
+                <strong>Lightroom</strong>, or <strong>Darktable</strong> to restore your timeline.
+            </p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Action buttons -->
+    <div class="sm-actions" id="sm-actions">
+        {% if has_completed_export %}
+        <a href="/configure/{{ job_id }}?mode=remaining" class="btn-outline">
+            <span class="material-symbols-outlined" style="font-size: 0.9rem;">add_circle</span>
+            New Export
+        </a>
+        {% endif %}
+        <a href="/upload" class="btn-outline">
+            <span class="material-symbols-outlined" style="font-size: 0.9rem;">upload</span>
+            New Upload
+        </a>
+        <a href="/dashboard" class="btn-outline">
+            <span class="material-symbols-outlined" style="font-size: 0.9rem;">dashboard</span>
+            Dashboard
+        </a>
+    </div>
+
+    <p class="sm-footer">
+        Files available for 30 days. Unlike Snapchat, we'll warn you first.
+    </p>
+
+</div>
+
+<!-- Unified SSE script (Phase 1 + Phase 2 state machine) -->
+{% if show_buildlog %}
+<script>
+(function() {
+    'use strict';
+
+    /* ── Constants ── */
+    var JOB_ID = {{ job.id }};
+    var PROCESSING_MODE = '{{ processing_mode }}';
+    var JOB_STATUS_INITIAL = '{{ job.status }}';
+    var HAS_COMPLETED_EXPORT = {{ 'true' if has_completed_export else 'false' }};
+    var JOB_STARTED_ISO = '{{ (job.started_at or job.created_at).isoformat() }}';
+    var JOB_COMPLETED_ISO = '{{ job.completed_at.isoformat() if job.completed_at else "" }}';
+    var PHASE_STEPS = ['ingest', 'match', 'enrich'];
+
+    /* ── State ── */
+    var jobStatus = JOB_STATUS_INITIAL;
+    var currentPhase = '{{ job.current_phase or "" }}';
+    var configureCalledOnce = false;
+    var phase1StartMs = new Date(JOB_STARTED_ISO).getTime();
+    var timerInterval = null;
+    var activeExportSSE = null;
+
+    /* ── DOM refs ── */
+    var heroTitle = document.getElementById('sm-hero-title');
+    var heroSub = document.getElementById('sm-hero-sub');
+    var buildlog = document.getElementById('sm-pipeline-log');
+    var buildlogTitle = document.getElementById('sm-buildlog-title');
+    var timerEl = document.getElementById('sm-master-timer');
+    var phase1Divider = document.getElementById('sm-phase1-divider');
+    var phase1Time = document.getElementById('sm-phase1-time');
+    var phase2Header = document.getElementById('sm-phase2-header');
+    var exportSteps = document.getElementById('sm-export-steps');
+    var downloadPanel = document.getElementById('sm-download');
+    var columnsPanel = document.getElementById('sm-columns');
+
+    /* ── Helpers ── */
+    function formatElapsed(ms) {
+        var secs = Math.max(0, Math.floor(ms / 1000));
+        var m = Math.floor(secs / 60);
+        var s = secs % 60;
+        return m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function startMasterTimer() {
+        if (timerInterval) return;
+        if (!timerEl) return;
+
+        // If job already has a completed_at, show fixed elapsed (no ticking)
+        if (JOB_COMPLETED_ISO) {
+            var completedMs = new Date(JOB_COMPLETED_ISO).getTime();
+            timerEl.textContent = 'Elapsed: ' + formatElapsed(completedMs - phase1StartMs);
+            return;
+        }
+
+        function tick() {
+            timerEl.textContent = 'Elapsed: ' + formatElapsed(Date.now() - phase1StartMs);
+        }
+        tick();
+        timerInterval = setInterval(tick, 1000);
+    }
+
+    /* ── Phase 1: Pipeline step management ── */
+    function setPipelineStep(phase, state, statsText) {
+        var el = document.getElementById('pl-step-' + phase);
+        if (!el) return;
+        var iconEl = el.querySelector('.sm-step-icon');
+        el.className = 'sm-step sm-step--' + state;
+        if (state === 'done') iconEl.textContent = '\u2713';
+        else if (state === 'active') iconEl.textContent = '\u25cf';
+        else iconEl.textContent = '\u25cb';
+        if (statsText) {
+            var statsEl = el.querySelector('.sm-step-stats');
+            if (!statsEl) {
+                statsEl = document.createElement('span');
+                statsEl.className = 'sm-step-stats';
+                el.appendChild(statsEl);
+            }
+            statsEl.textContent = statsText;
+        }
+    }
+
+    function activatePhase(phase) {
+        var idx = PHASE_STEPS.indexOf(phase);
+        PHASE_STEPS.forEach(function(p, i) {
+            if (i < idx) setPipelineStep(p, 'done');
+            else if (i === idx) setPipelineStep(p, 'active');
+        });
+    }
+
+    /* ── Phase 2: Export step rendering ── */
+    var STEP_LABELS = {
+        copy:      'Unzipping files',
+        overlays:  'Compositing overlays',
+        exif:      'Embedding metadata',
+        xmp:       'Writing XMP sidecars',
+        chat_text: 'Exporting chat transcripts',
+        chat_png:  'Rendering chat screenshots',
+        reports:   'Generating reports',
+        zips:      'Building ZIP archive'
+    };
+    var STEP_DESCRIPTIONS = {
+        copy:      'Extracting your original snaps from the archive',
+        overlays:  'Burning stickers, text & filters onto your snaps',
+        exif:      'Writing dates, GPS & camera data into each file',
+        xmp:       'Creating sidecar files for non-destructive metadata',
+        chat_text: 'Generating plain-text transcripts of conversations',
+        chat_png:  'Rendering visual chat screenshots with media',
+        reports:   'Compiling match stats, GPS coverage & audit logs',
+        zips:      'Packaging everything into downloadable archives'
+    };
+
+    function stepStats(key, stats) {
+        if (!stats || !stats[key]) return '';
+        var s = stats[key];
+        if (s.skipped) return 'skipped';
+        switch (key) {
+            case 'copy':      return s.copied != null ? s.copied.toLocaleString() + ' files' : '';
+            case 'overlays':  return s.burned != null ? s.burned.toLocaleString() + ' composed' : '';
+            case 'exif':      return s.written != null ? s.written.toLocaleString() + ' written' : '';
+            case 'xmp':       return s.written != null ? s.written.toLocaleString() + ' written' : '';
+            case 'chat_text': {
+                var parts = [];
+                if (s.conversations != null) parts.push(s.conversations + ' convos');
+                if (s.messages != null) parts.push(s.messages.toLocaleString() + ' msgs');
+                return parts.join(', ');
+            }
+            case 'chat_png': {
+                var parts = [];
+                if (s.conversations != null) parts.push(s.conversations + ' convos');
+                if (s.pages != null) parts.push(s.pages.toLocaleString() + ' pages');
+                return parts.join(', ');
+            }
+            default: return '';
+        }
+    }
+
+    function renderExportSteps(sj) {
+        var planned = sj.planned_steps || [];
+        var completed = {};
+        (sj.steps_completed || []).forEach(function(s) { completed[s] = true; });
+        var current = sj.current_step;
+        var html = '';
+        for (var i = 0; i < planned.length; i++) {
+            var step = planned[i];
+            var isCompleted = completed[step];
+            var isActive = step === current;
+            var isSkipped = isCompleted && sj[step] && sj[step].skipped;
+            var cls, icon;
+            if (isSkipped)        { cls = 'sm-step--skipped'; icon = '\u2014'; }
+            else if (isCompleted) { cls = 'sm-step--done';    icon = '\u2713'; }
+            else if (isActive)    { cls = 'sm-step--active';  icon = '\u25cf'; }
+            else                  { cls = 'sm-step--pending'; icon = '\u25cb'; }
+            var label = STEP_LABELS[step] || step;
+            var desc = STEP_DESCRIPTIONS[step] || '';
+            var stat = isCompleted && !isSkipped ? stepStats(step, sj) : (isActive ? 'processing...' : '');
+            html += '<div class="sm-step ' + cls + '">' +
+                '<span class="sm-step-icon">' + icon + '</span>' +
+                '<div class="sm-step-text">' +
+                    '<span class="sm-step-label">' + label + '</span>' +
+                    (desc ? '<span class="sm-step-desc">' + desc + '</span>' : '') +
+                '</div>' +
+                (stat ? '<span class="sm-step-stats">' + stat + '</span>' : '') +
+                '</div>';
+        }
+        exportSteps.innerHTML = html;
+    }
+
+    /* ── Transition: Phase 1 → Phase 2 (NO reload) ── */
+    function transitionToPackaging() {
+        // Mark all Phase 1 steps done
+        PHASE_STEPS.forEach(function(p) { setPipelineStep(p, 'done'); });
+
+        // Show Phase 1 completion divider with elapsed time
+        var phase1Elapsed = Date.now() - phase1StartMs;
+        if (phase1Divider) {
+            phase1Divider.classList.remove('hidden');
+            if (phase1Time) phase1Time.textContent = formatElapsed(phase1Elapsed);
+        }
+
+        // Show Phase 2 header + steps container
+        if (phase2Header) phase2Header.classList.remove('hidden');
+        if (exportSteps) exportSteps.classList.remove('hidden');
+
+        // Update buildlog title
+        if (buildlogTitle) buildlogTitle.textContent = 'Building Your Export';
+
+        // Update hero
+        if (heroSub) heroSub.textContent = 'Packaging your archive...';
+
+        // Fetch exports and connect SSE
+        fetchAndConnectExportSSE();
+    }
+
+    function fetchAndConnectExportSSE() {
+        fetch('/api/exports?job_id=' + JOB_ID)
+            .then(function(r) { return r.json(); })
+            .then(function(exports) {
+                if (!Array.isArray(exports)) return;
+                // Already completed?
+                if (exports.some(function(e) { return e.status === 'completed'; })) {
+                    showFinalComplete();
+                    return;
+                }
+                exports.forEach(function(exp) {
+                    if (exp.status === 'building' || exp.status === 'pending') {
+                        // Render initial state from stats_json
+                        if (exp.stats_json && exp.stats_json.planned_steps) {
+                            renderExportSteps(exp.stats_json);
+                        }
+                        connectExportSSE(exp.id);
+                    }
+                });
+            }).catch(function() {
+                // Fallback: retry after delay
+                setTimeout(fetchAndConnectExportSSE, 3000);
+            });
+    }
+
+    /* ── Export SSE connection ── */
+    function connectExportSSE(exportId) {
+        var evtSource = new EventSource('/api/exports/' + exportId + '/stream');
+        activeExportSSE = evtSource;
+
+        evtSource.addEventListener('export_step', function(e) {
+            var data = JSON.parse(e.data);
+            var stats = data.stats;
+            if (!stats) return;
+            if (stats.planned_steps) renderExportSteps(stats);
+        });
+
+        evtSource.addEventListener('export_progress', function(e) {
+            var data = JSON.parse(e.data);
+            var activeEl = exportSteps.querySelector('.sm-step--active .sm-step-stats');
+            if (activeEl && data.message) {
+                activeEl.textContent = data.message;
+            }
+        });
+
+        evtSource.addEventListener('export_done', function() {
+            evtSource.close();
+            activeExportSSE = null;
+            showFinalComplete();
+        });
+
+        evtSource.onerror = function() {
+            if (evtSource.readyState === EventSource.CLOSED) {
+                activeExportSSE = null;
+                // Fallback: check if done
+                setTimeout(function() {
+                    fetch('/api/exports?job_id=' + JOB_ID)
+                        .then(function(r) { return r.json(); })
+                        .then(function(exports) {
+                            if (exports.some(function(e) { return e.status === 'completed'; })) {
+                                showFinalComplete();
+                            } else {
+                                // Reconnect
+                                connectExportSSE(exportId);
+                            }
+                        }).catch(function() {});
+                }, 3000);
+            }
+        };
+    }
+
+    /* ── Final completion: DOM morph (NO reload) ── */
+    function showFinalComplete() {
+        if (timerInterval) clearInterval(timerInterval);
+
+        // Update hero
+        if (heroTitle) heroTitle.innerHTML = '<span class="text-yellow">Snatched.</span>';
+        if (heroSub) heroSub.textContent = 'Your memories have been rescued.';
+
+        // Buildlog completion state
+        if (buildlog) buildlog.classList.add('sm-buildlog--complete');
+
+        // Fetch completed export data and render download panel
+        fetch('/api/exports?job_id=' + JOB_ID)
+            .then(function(r) { return r.json(); })
+            .then(function(exports) {
+                var completed = exports.filter(function(e) { return e.status === 'completed'; });
+                if (!completed.length) {
+                    // Edge case: export says done but API hasn't caught up
+                    setTimeout(showFinalComplete, 2000);
+                    return;
+                }
+                renderDownloadPanel(completed[0]);
+                showPostCompletionUI();
+            }).catch(function() {
+                // If fetch fails, just reload as last resort
+                window.location.reload();
+            });
+    }
+
+    function renderDownloadPanel(exp) {
+        /* Map export_type to new tier labels (legacy quick_rescue mapped to free) */
+        var TYPE_MAP = {
+            'free': {name: 'Memories + Dates', icon: 'bolt', label: 'Memories + Dates'},
+            'quick_rescue': {name: 'Memories + Dates', icon: 'bolt', label: 'Memories + Dates'},
+            'rescue': {name: 'Memory Rescue', icon: 'my_location', label: 'Memories + GPS + Overlays'},
+            'full': {name: 'Complete Archive', icon: 'package_2', label: null},
+        };
+        var tm = TYPE_MAP[exp.export_type] || TYPE_MAP['full'];
+        var type = tm.name;
+        var icon = tm.icon;
+        var typeLabel = tm.label || (exp.lanes ? exp.lanes.join(', ') : 'Complete Archive');
+
+        var meta = '<span><span class="material-symbols-outlined">' + icon + '</span>' + typeLabel + '</span>';
+        if (exp.file_count) {
+            meta += '<span><span class="material-symbols-outlined">description</span>' +
+                exp.file_count.toLocaleString() + ' files</span>';
+        }
+        if (exp.zip_total_bytes) {
+            var size = exp.zip_total_bytes >= 1073741824
+                ? (exp.zip_total_bytes / (1024*1024*1024)).toFixed(1) + ' GB'
+                : Math.round(exp.zip_total_bytes / (1024*1024)) + ' MB';
+            meta += '<span><span class="material-symbols-outlined">hard_drive</span>' + size + '</span>';
+        }
+
+        var parts = exp.zip_part_count || 1;
+        var buttons = '';
+        if (parts === 1) {
+            var sizeStr = exp.zip_total_bytes
+                ? (exp.zip_total_bytes / (1024*1024)).toFixed(1) + ' MB' : '';
+            buttons = '<a href="/api/exports/' + exp.id + '/download?part=1" class="sm-part-btn sm-part-btn--single">' +
+                '<span class="material-symbols-outlined">folder_zip</span>Download ZIP' +
+                (sizeStr ? '<span class="sm-part-size">' + sizeStr + '</span>' : '') + '</a>';
+        } else {
+            if (exp.zip_total_bytes) {
+                meta += '<span><span class="material-symbols-outlined">content_copy</span>' + parts + ' parts</span>';
+            }
+            for (var i = 1; i <= parts; i++) {
+                var partSize = exp.zip_total_bytes
+                    ? '~' + Math.round(exp.zip_total_bytes / (parts * 1024 * 1024)) + ' MB' : '';
+                buttons += '<a href="/api/exports/' + exp.id + '/download?part=' + i + '" class="sm-part-btn">' +
+                    '<span class="material-symbols-outlined">folder_zip</span>Part ' + i +
+                    (partSize ? '<span class="sm-part-size">' + partSize + '</span>' : '') + '</a>';
+            }
+        }
+
+        if (downloadPanel) {
+            downloadPanel.className = 'sm-download';
+            downloadPanel.innerHTML =
+                '<div class="sm-section-label">Download &mdash; ' + type + '</div>' +
+                '<div class="sm-download-meta">' + meta + '</div>' +
+                '<div class="sm-parts">' + buttons + '</div>';
+        }
+    }
+
+    function showPostCompletionUI() {
+        // Show injection protocol info
+        var infoPanel = document.getElementById('sm-info-panel');
+        if (!infoPanel) {
+            var info = document.createElement('div');
+            info.className = 'sm-info';
+            info.id = 'sm-info-panel';
+            info.innerHTML = '<span class="material-symbols-outlined">terminal</span>' +
+                '<div><div class="sm-info-title">Injection Protocol</div>' +
+                '<p>Your memories include full EXIF metadata. ' +
+                'Import the <code class="mono text-yellow">memories/</code> folder into ' +
+                '<strong>Immich</strong>, <strong>Apple Photos</strong>, <strong>Google Photos</strong>, ' +
+                '<strong>Lightroom</strong>, or <strong>Darktable</strong> to restore your timeline.</p></div>';
+            columnsPanel.parentNode.insertBefore(info, columnsPanel.nextSibling);
+        }
+
+        // Add "New Export" button if not already present
+        var actions = document.getElementById('sm-actions');
+        if (actions && !actions.querySelector('[href*="configure"]')) {
+            var newExportBtn = document.createElement('a');
+            newExportBtn.href = '/configure/' + JOB_ID + '?mode=remaining';
+            newExportBtn.className = 'btn-outline';
+            newExportBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size: 0.9rem;">add_circle</span> New Export';
+            actions.insertBefore(newExportBtn, actions.firstChild);
+        }
+    }
+
+    /* ── Job SSE (Phase 1 processing) ── */
+    function connectJobSSE() {
+        if (['completed', 'failed', 'cancelled'].includes(jobStatus)) return;
+        if (['matched', 'enriched'].includes(jobStatus)) configureCalledOnce = true;
+
+        var evtSource = new EventSource('/api/jobs/' + JOB_ID + '/stream');
+        var staleTimer = null;
+
+        function resetStaleTimer() {
+            if (staleTimer) clearTimeout(staleTimer);
+            staleTimer = setTimeout(function() {
+                evtSource.close();
+                setTimeout(connectJobSSE, 1000);
+            }, 30000);
+        }
+        resetStaleTimer();
+        evtSource.onopen = function() { resetStaleTimer(); };
+        evtSource.onmessage = function() { resetStaleTimer(); };
+
+        evtSource.addEventListener('progress', function(e) {
+            resetStaleTimer();
+            var data = JSON.parse(e.data);
+            if (data.message === 'Ingest complete' && data.total_files) {
+                var parts = [data.total_files.toLocaleString() + ' files'];
+                if (data.total_memories) parts.push(data.total_memories.toLocaleString() + ' memories');
+                setPipelineStep('ingest', 'done', parts.join(', '));
+            }
+            if (data.message === 'Match complete' && data.matched_count !== undefined) {
+                var parts = [data.matched_count.toLocaleString() + ' matched'];
+                if (data.match_rate != null) parts.push(Math.round(data.match_rate * 100) + '%');
+                setPipelineStep('match', 'done', parts.join(', '));
+            }
+            if (data.message === 'Enrich complete' && data.gps_count !== undefined) {
+                var parts = [data.gps_count.toLocaleString() + ' GPS'];
+                if (data.gps_coverage != null) parts.push(Math.round(data.gps_coverage * 100) + '% coverage');
+                setPipelineStep('enrich', 'done', parts.join(', '));
+            }
+        });
+
+        evtSource.addEventListener('phase_start', function(e) {
+            resetStaleTimer();
+            var data = JSON.parse(e.data);
+            if (data.phase) {
+                currentPhase = data.phase;
+                activatePhase(data.phase);
+            }
+        });
+
+        evtSource.addEventListener('scanned', function(e) {
+            resetStaleTimer();
+            if (configureCalledOnce) return;
+            configureCalledOnce = true;
+            jobStatus = 'scanned';
+            setPipelineStep('ingest', 'done');
+            // Redirect to Intelligence Report / tier selection page
+            evtSource.close();
+            if (timerInterval) clearInterval(timerInterval);
+            window.location.href = '/configure/' + JOB_ID;
+        });
+
+        evtSource.addEventListener('matched', function() {
+            resetStaleTimer();
+            jobStatus = 'matched';
+        });
+        evtSource.addEventListener('enriched', function() {
+            resetStaleTimer();
+            jobStatus = 'enriched';
+        });
+
+        evtSource.addEventListener('complete', function() {
+            if (staleTimer) clearTimeout(staleTimer);
+            evtSource.close();
+            jobStatus = 'completed';
+            // Seamless transition — no reload!
+            transitionToPackaging();
+        });
+
+        evtSource.addEventListener('error', function() {
+            if (staleTimer) clearTimeout(staleTimer);
+            if (evtSource.readyState === EventSource.CLOSED) return;
+            evtSource.close();
+            setTimeout(connectJobSSE, 3000);
+        });
+
+        evtSource.addEventListener('cancelled', function() {
+            if (staleTimer) clearTimeout(staleTimer);
+            evtSource.close();
+            window.location.href = '/dashboard';
+        });
+    }
+
+    /* ── Init on DOMContentLoaded ── */
+    document.addEventListener('DOMContentLoaded', function() {
+        if (JOB_STATUS_INITIAL === 'completed' && !HAS_COMPLETED_EXPORT) {
+            // Job done, export building — skip to Phase 2 directly
+            startMasterTimer();
+            transitionToPackaging();
+            return;
+        }
+
+        if (JOB_STATUS_INITIAL === 'completed') {
+            // Fully done — nothing to do (server rendered)
+            return;
+        }
+        if (JOB_STATUS_INITIAL === 'failed') return;
+
+        // Processing — start Phase 1
+        startMasterTimer();
+        if (currentPhase) activatePhase(currentPhase);
+
+        if (JOB_STATUS_INITIAL === 'scanned') {
+            // If payment=success in URL, don't redirect — webhook is processing
+            if (new URLSearchParams(window.location.search).get('payment') === 'success') {
+                // Show waiting state — webhook will transition job to queued/running
+                var heroTitle = document.getElementById('sm-hero-title');
+                var heroSub = document.getElementById('sm-hero-sub');
+                if (heroTitle) heroTitle.innerHTML = 'Payment received! <span class="text-yellow">Starting...</span>';
+                if (heroSub) heroSub.textContent = 'Your export is being queued for processing. This page will update automatically.';
+                // Poll every 2s until status changes from scanned
+                var pollInterval = setInterval(function() {
+                    fetch('/api/jobs/' + JOB_ID).then(function(r) { return r.json(); }).then(function(data) {
+                        if (data.status !== 'scanned') { clearInterval(pollInterval); window.location.reload(); }
+                    }).catch(function() {});
+                }, 2000);
+                return;
+            }
+            window.location.href = '/configure/' + JOB_ID;
+            return;
+        }
+
+        if (['pending', 'queued', 'running', 'matched', 'enriched'].includes(JOB_STATUS_INITIAL)) {
+            connectJobSSE();
+        }
+    });
+})();
+</script>
+{% endif %}
+
+{% endblock %}

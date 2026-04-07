@@ -16,19 +16,55 @@ from pathlib import Path
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from snatched.auth import get_current_user
-from snatched.jobs import cancel_job, create_processing_job, job_stream, run_job, _make_progress_cb
+from snatched.auth import get_current_user, require_admin_db
+from snatched.db import create_export, get_export, list_exports, delete_export, update_export
+from snatched.jobs import cancel_job, create_processing_job, job_stream, run_job, _make_progress_cb, _job_tasks
+from snatched.processing.export_worker import run_export
 from snatched.routes import uploads as uploads_module
 from snatched import tags as tags_module
 
 logger = logging.getLogger("snatched.routes.api")
 router = APIRouter()
 
+
+def _log_task_result(task: asyncio.Task, job_id: int) -> None:
+    """Done callback for fire-and-forget tasks — log crashes instead of swallowing them."""
+    if task.cancelled():
+        logger.warning("Job %d background task was cancelled", job_id)
+    elif task.exception():
+        logger.error(
+            "Job %d background task crashed: %s",
+            job_id, task.exception(), exc_info=task.exception(),
+        )
+
+
+# WU-17: Admin gate — shared from auth.py
+_require_admin = require_admin_db
+
 # Include chunked upload routes under /upload prefix
 router.include_router(uploads_module.router, prefix="/upload", tags=["upload"])
+
+
+# ---------------------------------------------------------------------------
+# Per-job path helpers (WU-1 data isolation)
+# ---------------------------------------------------------------------------
+
+def _job_dir(config, username: str, job_id: int) -> Path:
+    """Return /data/{username}/jobs/{job_id}/ — the isolated directory for a single job."""
+    return Path(str(config.server.data_dir)) / username / "jobs" / str(job_id)
+
+
+def _job_db_path(config, username: str, job_id: int) -> Path:
+    """Return the SQLite proc.db path for a specific job."""
+    return _job_dir(config, username, job_id) / "proc.db"
+
+
+def _job_output_dir(config, username: str, job_id: int) -> Path:
+    """Return the output/ directory path for a specific job."""
+    return _job_dir(config, username, job_id) / "output"
 
 
 @router.get("/jobs")
@@ -93,7 +129,8 @@ async def list_jobs_html(
             SELECT pj.id, pj.status, pj.progress_pct, pj.current_phase,
                    pj.upload_filename, pj.created_at, pj.completed_at,
                    pj.error_message, pj.stats_json, pj.upload_size_bytes,
-                   pj.retention_expires_at, u.tier
+                   pj.started_at, pj.retention_expires_at, pj.processing_mode, pj.lanes_requested,
+                   pj.job_tier, pj.payment_status, u.tier
             FROM processing_jobs pj
             JOIN users u ON pj.user_id = u.id
             WHERE u.username = $1 AND pj.status IN ({placeholders})
@@ -105,7 +142,8 @@ async def list_jobs_html(
             SELECT pj.id, pj.status, pj.progress_pct, pj.current_phase,
                    pj.upload_filename, pj.created_at, pj.completed_at,
                    pj.error_message, pj.stats_json, pj.upload_size_bytes,
-                   pj.retention_expires_at, u.tier
+                   pj.started_at, pj.retention_expires_at, pj.processing_mode, pj.lanes_requested,
+                   pj.job_tier, pj.payment_status, u.tier
             FROM processing_jobs pj
             JOIN users u ON pj.user_id = u.id
             WHERE u.username = $1
@@ -118,6 +156,18 @@ async def list_jobs_html(
 
     from datetime import datetime, timezone
     jobs = []
+
+    # Batch-check which completed jobs have a finished export
+    completed_ids = [r["id"] for r in rows if r["status"] == "completed"]
+    completed_with_export = set()
+    if completed_ids:
+        async with pool.acquire() as conn:
+            export_rows = await conn.fetch(
+                "SELECT DISTINCT job_id FROM exports WHERE job_id = ANY($1) AND status = 'completed'",
+                completed_ids,
+            )
+        completed_with_export = {r["job_id"] for r in export_rows}
+
     for row in rows:
         j = dict(row)
         # Compute retention_days_remaining for template
@@ -126,6 +176,7 @@ async def list_jobs_html(
             j["retention_days_remaining"] = max(0, delta.days)
         else:
             j["retention_days_remaining"] = None
+        j["has_completed_export"] = j["id"] in completed_with_export
         jobs.append(j)
     return templates.TemplateResponse("_job_cards.html", {"request": request, "jobs": jobs})
 
@@ -157,6 +208,32 @@ async def job_detail(
         raise HTTPException(404, "Job not found")
 
     return dict(row)
+
+
+@router.get("/jobs/{job_id}/events")
+async def get_job_events(
+    job_id: int,
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> list:
+    """GET /api/jobs/{job_id}/events — Return all events for a job."""
+    pool = request.app.state.db_pool
+    async with pool.acquire() as conn:
+        owner = await conn.fetchval(
+            "SELECT u.username FROM processing_jobs pj "
+            "JOIN users u ON pj.user_id = u.id WHERE pj.id = $1",
+            job_id,
+        )
+    if owner != username:
+        raise HTTPException(403, "Access denied")
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, event_type, message, data_json, created_at "
+            "FROM job_events WHERE job_id=$1 ORDER BY id",
+            job_id,
+        )
+    return [dict(r) for r in rows]
 
 
 @router.get("/jobs/{job_id}/stream")
@@ -253,28 +330,103 @@ async def delete_job(
             409, f"Cannot delete job in '{job['status']}' state. Cancel it first."
         )
 
-    # Delete events, then job
+    # Find linked upload session tokens BEFORE deleting the job
+    async with pool.acquire() as conn:
+        staging_tokens = await conn.fetch(
+            "SELECT session_token FROM upload_sessions WHERE job_id=$1",
+            job_id,
+        )
+
+    # Delete events, nullify vault_imports FK, then job; check if this is the last job for this user
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM job_events WHERE job_id=$1", job_id)
-        # Detach upload sessions referencing this job
+        await conn.execute(
+            "UPDATE vault_imports SET job_id=NULL WHERE job_id=$1", job_id
+        )
         await conn.execute(
             "UPDATE upload_sessions SET job_id=NULL WHERE job_id=$1", job_id
         )
         await conn.execute("DELETE FROM processing_jobs WHERE id=$1", job_id)
+        remaining = await conn.fetchval(
+            "SELECT COUNT(*) FROM processing_jobs WHERE user_id=$1", user_id
+        )
 
-    # Clean up user data directory
-    data_dir = Path(str(config.server.data_dir)) / username
-    if data_dir.exists():
-        # Remove proc.db and extracted dir if they exist
-        for item in ["proc.db", "extracted"]:
-            target = data_dir / item
-            if target.is_file():
-                target.unlink()
-            elif target.is_dir():
-                shutil.rmtree(target)
+    # Always clean up the per-job directory for this job
+    job_data_dir = _job_dir(config, username, job_id)
+    if job_data_dir.exists():
+        try:
+            shutil.rmtree(job_data_dir)
+        except Exception as cleanup_err:
+            logger.warning(f"Failed to clean up job dir {job_data_dir}: {cleanup_err}")
 
-    logger.info(f"Deleted job {job_id} for user {username}")
-    return {"deleted": True, "job_id": job_id}
+    # Clean up staging directories (ramdisk + disk) for linked upload sessions
+    data_dir = str(config.server.data_dir)
+    for row in staging_tokens:
+        token = row["session_token"]
+        for base in [Path("/ramdisk/staging") / username, Path(data_dir) / username / "staging"]:
+            staging = base / token
+            if staging.exists():
+                try:
+                    shutil.rmtree(staging)
+                    logger.info(f"Cleaned up staging dir: {staging}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean staging dir {staging}: {e}")
+        # Also clean extracted/ dirs (folder uploads)
+        for base in [Path("/ramdisk/staging") / username, Path(data_dir) / username / "staging"]:
+            extracted = base / "extracted" / token
+            if extracted.exists():
+                try:
+                    shutil.rmtree(extracted)
+                    logger.info(f"Cleaned up extracted dir: {extracted}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean extracted dir {extracted}: {e}")
+
+    logger.info(f"Deleted job {job_id} for user {username} (remaining jobs: {remaining})")
+    return {"deleted": True, "job_id": job_id, "vault_note": "Your vault data was not affected. Only the job and its exports were removed."}
+
+
+@router.get("/jobs/{job_id}/export-data")
+async def export_data_table(
+    job_id: int,
+    request: Request,
+    username: str = Depends(get_current_user),
+):
+    """GET /api/jobs/{job_id}/export-data — Download the enriched data table (proc.db).
+
+    Returns the per-job SQLite database containing all matched, enriched, and
+    tagged asset metadata. This is the full data table Snatched builds during
+    processing — timestamps, GPS coordinates, friend mappings, match confidence,
+    EXIF edits, and more. The actual media files are NOT included.
+    """
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+
+    async with pool.acquire() as conn:
+        job_row = await conn.fetchrow(
+            """
+            SELECT pj.id, pj.upload_filename FROM processing_jobs pj
+            JOIN users u ON pj.user_id = u.id
+            WHERE pj.id = $1 AND u.username = $2
+            """,
+            job_id, username,
+        )
+    if not job_row:
+        raise HTTPException(404, "Job not found")
+
+    db_path = _job_db_path(config, username, job_id)
+    if not db_path.exists():
+        raise HTTPException(404, "Data table not found — job may not have completed processing")
+
+    upload_name = job_row["upload_filename"] or f"job-{job_id}"
+    # Strip extension from upload filename for the download name
+    base_name = upload_name.rsplit(".", 1)[0] if "." in upload_name else upload_name
+    download_name = f"{base_name}-snatched-data.db"
+
+    return FileResponse(
+        path=str(db_path),
+        media_type="application/x-sqlite3",
+        filename=download_name,
+    )
 
 
 @router.post("/jobs/{job_id}/retry")
@@ -316,9 +468,10 @@ async def retry_job(
         processing_mode=row["processing_mode"] or "speed_run",
     )
 
-    asyncio.create_task(
+    task = asyncio.create_task(
         run_job(pool, new_job_id, username, request.app.state.config)
     )
+    task.add_done_callback(lambda t, jid=new_job_id: _log_task_result(t, jid))
 
     logger.info(f"Retry of job {job_id} started as new job {new_job_id} for user '{username}'")
     return {"new_job_id": new_job_id}
@@ -349,6 +502,13 @@ async def reprocess(
     if not row:
         raise HTTPException(404, "Job not found")
 
+    valid_phases = {"ingest", "match", "enrich", "export"}
+    valid_lanes = {"memories", "chats", "stories"}
+    if not phases or not all(p in valid_phases for p in phases):
+        raise HTTPException(400, f"Invalid phases. Must be subset of {sorted(valid_phases)}")
+    if not lanes or not all(ln in valid_lanes for ln in lanes):
+        raise HTTPException(400, f"Invalid lanes. Must be subset of {sorted(valid_lanes)}")
+
     new_job_id = await create_processing_job(
         pool,
         user_id=row["user_id"],
@@ -358,9 +518,10 @@ async def reprocess(
         lanes_requested=lanes,
     )
 
-    asyncio.create_task(
+    task = asyncio.create_task(
         run_job(pool, new_job_id, username, request.app.state.config)
     )
+    task.add_done_callback(lambda t, jid=new_job_id: _log_task_result(t, jid))
 
     return {"new_job_id": new_job_id, "message": "Reprocessing started"}
 
@@ -487,7 +648,7 @@ async def list_assets(
     # Read from per-user SQLite
     import sqlite3
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         return {"items": [], "total": 0, "page": page, "page_size": page_size, "total_pages": 0}
 
@@ -544,7 +705,7 @@ async def list_matches(
 
     import sqlite3
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         return {"items": [], "total": 0, "page": page, "page_size": page_size, "total_pages": 0}
 
@@ -607,7 +768,7 @@ async def download_tree(
     if owner != username:
         raise HTTPException(403, "Access denied")
 
-    output_dir = Path(str(config.server.data_dir)) / username / "output"
+    output_dir = _job_output_dir(config, username, job_id)
     if not output_dir.exists():
         return HTMLResponse("<p>No output files yet.</p>")
 
@@ -645,7 +806,11 @@ async def download_all(
     request: Request = None,
     username: str = Depends(get_current_user),
 ):
-    """GET /api/download/all?job_id=42 — Download all output files as ZIP."""
+    """GET /api/download/all?job_id=42 — Download all output files as ZIP.
+
+    Serves pre-built ZIP from export phase if available, otherwise falls
+    back to on-demand generation.
+    """
     config = request.app.state.config
     pool = request.app.state.db_pool
 
@@ -663,11 +828,39 @@ async def download_all(
     if owner != username:
         raise HTTPException(403, "Access denied")
 
-    output_dir = Path(str(config.server.data_dir)) / username / "output"
+    job_data_dir = _job_dir(config, username, job_id)
+    zip_path = job_data_dir / "output.zip"
+
+    # Prefer pre-built ZIP (created during export phase)
+    if zip_path.is_file():
+        return FileResponse(
+            str(zip_path),
+            media_type="application/zip",
+            filename=f"snatched-job-{job_id}.zip",
+        )
+
+    # Also check for split ZIPs (export-1.zip, export-2.zip, etc.)
+    split_zips = sorted(job_data_dir.glob("export-*.zip"))
+    if split_zips:
+        # If only one split ZIP, serve it directly
+        if len(split_zips) == 1:
+            return FileResponse(
+                str(split_zips[0]),
+                media_type="application/zip",
+                filename=f"snatched-job-{job_id}.zip",
+            )
+        # Multiple split ZIPs — return the first one; client should use /download/tree
+        return FileResponse(
+            str(split_zips[0]),
+            media_type="application/zip",
+            filename=split_zips[0].name,
+        )
+
+    # Fallback: build on-demand (power_user or legacy jobs without pre-built ZIP)
+    output_dir = _job_output_dir(config, username, job_id)
     if not output_dir.exists():
         raise HTTPException(404, "No output files found")
 
-    # Build ZIP in memory
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for dirpath, _, filenames in os.walk(str(output_dir)):
@@ -708,7 +901,7 @@ async def list_matches_html(
     import sqlite3
     from pathlib import Path
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         return templates.TemplateResponse("_match_rows.html", {
             "request": request, "items": [], "total": 0, "page": page, "total_pages": 0, "job_id": job_id
@@ -758,7 +951,7 @@ async def list_assets_html(
     import sqlite3
     from pathlib import Path
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         return templates.TemplateResponse("_asset_rows.html", {
             "request": request, "items": [], "total": 0, "page": page, "total_pages": 0, "job_id": job_id
@@ -809,7 +1002,7 @@ async def get_asset_tags(
         raise HTTPException(403, "Access denied")
 
     # Load asset from SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "Asset database not found")
 
@@ -828,7 +1021,7 @@ async def get_asset_tags(
 
     output_path = asset.get("output_path") or asset.get("path") or ""
     if output_path and not os.path.isabs(output_path):
-        output_dir = Path(str(config.server.data_dir)) / username / "output"
+        output_dir = _job_output_dir(config, username, job_id)
         full_output_path = str(output_dir / output_path)
     else:
         full_output_path = output_path
@@ -877,7 +1070,7 @@ async def update_asset_tags(
     user_id = row["user_id"]
 
     # Load asset from SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "Asset database not found")
 
@@ -896,7 +1089,7 @@ async def update_asset_tags(
 
     output_path = asset.get("output_path") or asset.get("path") or ""
     if output_path and not os.path.isabs(output_path):
-        output_dir = Path(str(config.server.data_dir)) / username / "output"
+        output_dir = _job_output_dir(config, username, job_id)
         full_output_path = str(output_dir / output_path)
     else:
         full_output_path = output_path
@@ -950,17 +1143,18 @@ async def update_asset_tags(
 @router.get("/download/{path:path}")
 async def download_file(
     path: str,
-    request: Request,
+    job_id: int = Query(...),
+    request: Request = None,
     username: str = Depends(get_current_user),
 ):
-    """GET /api/download/{path} — Stream a processed output file.
+    """GET /api/download/{path}?job_id=42 — Stream a processed output file.
 
-    Path traversal protection: resolves path relative to /data/{username}/output/
+    Path traversal protection: resolves path relative to /data/{username}/jobs/{job_id}/output/
     and verifies it stays within that directory.
     """
     config = request.app.state.config
     user_output_dir = os.path.realpath(
-        str(Path(str(config.server.data_dir)) / username / "output")
+        str(_job_output_dir(config, username, job_id))
     )
     target = os.path.realpath(os.path.join(user_output_dir, path))
 
@@ -1043,7 +1237,7 @@ async def match_stats(
 
     import sqlite3
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         return {"strategies": [], "histogram": [], "total_matched": 0, "total_assets": 0}
 
@@ -1140,7 +1334,7 @@ async def batch_edit_preview(
     if not body.edits:
         return {"count": len(body.asset_ids), "sample_values": {}}
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "No asset database found")
 
@@ -1162,7 +1356,7 @@ async def batch_edit_preview(
     from snatched import tags as tags_module
 
     tag_names = list(body.edits.keys())
-    output_dir = Path(str(config.server.data_dir)) / username / "output"
+    output_dir = _job_output_dir(config, username, job_id)
     sample_values: dict[str, list] = {tag: [] for tag in tag_names}
 
     for asset in assets[:5]:  # sample up to 5 assets
@@ -1232,7 +1426,7 @@ async def batch_edit_tags(
         n = len(body.asset_ids)
         return {"total": n, "succeeded": n, "failed": 0, "errors": []}
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "No asset database found")
 
@@ -1253,7 +1447,7 @@ async def batch_edit_tags(
     asset_map = {a["id"]: a for a in assets}
 
     tag_names = list(body.edits.keys())
-    output_dir = Path(str(config.server.data_dir)) / username / "output"
+    output_dir = _job_output_dir(config, username, job_id)
     succeeded = 0
     failed = 0
     errors: list[dict] = []
@@ -1566,7 +1760,7 @@ async def apply_preset(
         tags = json.loads(tags)
 
     # 3. Look up asset output_path from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
 
     loop = asyncio.get_running_loop()
 
@@ -1587,7 +1781,7 @@ async def apply_preset(
 
     # Resolve to absolute path
     if not os.path.isabs(output_path):
-        output_dir = Path(str(config.server.data_dir)) / username / "output"
+        output_dir = _job_output_dir(config, username, job_id)
         full_output_path = str(output_dir / output_path)
     else:
         full_output_path = output_path
@@ -1694,7 +1888,7 @@ async def batch_apply_preset(
         raise HTTPException(400, "Preset has no tags to apply")
 
     # 3. Bulk-fetch output paths from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
 
     loop = asyncio.get_running_loop()
 
@@ -1712,7 +1906,7 @@ async def batch_apply_preset(
         return {dict(r)["id"]: dict(r)["output_path"] for r in rows}
 
     asset_paths = await loop.run_in_executor(None, _get_asset_paths)
-    output_dir = Path(str(config.server.data_dir)) / username / "output"
+    output_dir = _job_output_dir(config, username, job_id)
 
     # 4. Get user_id once
     async with pool.acquire() as conn:
@@ -1784,13 +1978,13 @@ async def batch_apply_preset(
 # ============================================================
 
 
-def _resolve_xmp_path(asset: dict, config, username: str) -> str | None:
+def _resolve_xmp_path(asset: dict, config, username: str, job_id: int = 0) -> str | None:
     """Resolve absolute xmp_path from an asset row, or return None."""
     xmp_path = asset.get("xmp_path") or ""
     if not xmp_path:
         return None
     if not os.path.isabs(xmp_path):
-        output_dir = Path(str(config.server.data_dir)) / username / "output"
+        output_dir = _job_output_dir(config, username, job_id)
         return str(output_dir / xmp_path)
     return xmp_path
 
@@ -1819,7 +2013,7 @@ async def get_xmp(
     if owner != username:
         raise HTTPException(403, "Access denied")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "Asset database not found")
 
@@ -1836,7 +2030,7 @@ async def get_xmp(
     if not asset:
         raise HTTPException(404, "Asset not found")
 
-    full_xmp_path = _resolve_xmp_path(asset, config, username)
+    full_xmp_path = _resolve_xmp_path(asset, config, username, job_id)
     if not full_xmp_path:
         return {"content": None, "path": None, "exists": False}
 
@@ -1896,7 +2090,7 @@ async def update_xmp(
 
     user_id = row["user_id"]
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "Asset database not found")
 
@@ -1913,7 +2107,7 @@ async def update_xmp(
     if not asset:
         raise HTTPException(404, "Asset not found")
 
-    full_xmp_path = _resolve_xmp_path(asset, config, username)
+    full_xmp_path = _resolve_xmp_path(asset, config, username, job_id)
     if not full_xmp_path:
         raise HTTPException(400, "Asset has no XMP path configured")
 
@@ -1981,13 +2175,15 @@ class SchemaBody(BaseModel):
     fields: list[dict]
 
 
-@router.get("/schemas")
+# FUTURE FEATURE: Custom schemas — routes disabled pending pipeline integration
+# @router.get("/schemas")
 async def list_schemas(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> list[dict]:
-    """GET /api/schemas — List authenticated user's custom metadata schemas."""
+    """GET /api/schemas — List authenticated user's custom metadata schemas. Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -2013,14 +2209,15 @@ async def list_schemas(
     return result
 
 
-@router.post("/schemas")
+# @router.post("/schemas")
 async def create_schema(
     body: SchemaBody,
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """POST /api/schemas — Create a new custom metadata schema."""
+    """POST /api/schemas — Create a new custom metadata schema. Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
     _validate_schema_body(body)
 
     async with pool.acquire() as conn:
@@ -2051,18 +2248,19 @@ async def create_schema(
     return dict(row)
 
 
-@router.put("/schemas/{schema_id}")
+# @router.put("/schemas/{schema_id}")
 async def update_schema(
     schema_id: int,
     body: SchemaBody,
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """PUT /api/schemas/{schema_id} — Update an existing custom schema.
+    """PUT /api/schemas/{schema_id} — Update an existing custom schema. Admin only.
 
     Verifies ownership before update.
     """
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
     _validate_schema_body(body)
 
     async with pool.acquire() as conn:
@@ -2107,17 +2305,18 @@ async def update_schema(
     return dict(row)
 
 
-@router.delete("/schemas/{schema_id}")
+# @router.delete("/schemas/{schema_id}")
 async def delete_schema(
     schema_id: int,
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """DELETE /api/schemas/{schema_id} — Delete a custom schema.
+    """DELETE /api/schemas/{schema_id} — Delete a custom schema. Admin only.
 
     Verifies ownership before deletion.
     """
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         owner = await conn.fetchval(
@@ -2175,12 +2374,13 @@ async def _resolve_asset_path(
     username: str,
     config,
     loop,
+    job_id: int = 0,
 ) -> tuple[dict | None, str | None]:
     """Load asset row from SQLite and resolve the full output path.
 
     Returns (asset_dict, full_output_path). Either can be None on failure.
     """
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         return None, None
 
@@ -2197,7 +2397,7 @@ async def _resolve_asset_path(
 
     out = asset.get("output_path") or asset.get("path") or ""
     if out and not os.path.isabs(out):
-        out = str(Path(str(config.server.data_dir)) / username / "output" / out)
+        out = str(_job_output_dir(config, username, job_id) / out)
 
     return asset, out if out else None
 
@@ -2240,7 +2440,7 @@ async def update_asset_gps(
     user_id = job_row["user_id"]
     loop = asyncio.get_running_loop()
 
-    asset, full_output_path = await _resolve_asset_path(asset_id, username, config, loop)
+    asset, full_output_path = await _resolve_asset_path(asset_id, username, config, loop, job_id)
     if not asset:
         raise HTTPException(404, "Asset not found")
     if not full_output_path or not os.path.isfile(full_output_path):
@@ -2328,7 +2528,7 @@ async def batch_update_gps(
     for asset_id in body.asset_ids:
         try:
             asset, full_output_path = await _resolve_asset_path(
-                asset_id, username, config, loop
+                asset_id, username, config, loop, job_id
             )
             if not asset or not full_output_path or not os.path.isfile(full_output_path):
                 failed += 1
@@ -2527,7 +2727,7 @@ async def snap_to_location(
     radius_m = loc_row["radius_m"]
 
     # Load all assets with GPS from SQLite and filter by radius
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_gps_assets():
@@ -2570,7 +2770,7 @@ async def snap_to_location(
             out_path = asset.get("output_path") or ""
             if out_path and not os.path.isabs(out_path):
                 out_path = str(
-                    Path(str(config.server.data_dir)) / username / "output" / out_path
+                    _job_output_dir(config, username, job_id) / out_path
                 )
             if not out_path or not os.path.isfile(out_path):
                 continue
@@ -2638,7 +2838,7 @@ async def get_timestamps(
     if not job:
         raise HTTPException(404, "Job not found")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load():
@@ -2726,7 +2926,7 @@ async def update_timestamp(
     user_id = row["user_id"]
 
     # Load asset from SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _get_asset():
@@ -2747,7 +2947,7 @@ async def update_timestamp(
     # Resolve output path
     output_path = asset.get("output_path") or ""
     if output_path and not os.path.isabs(output_path):
-        output_dir = Path(str(config.server.data_dir)) / username / "output"
+        output_dir = _job_output_dir(config, username, job_id)
         full_output_path = str(output_dir / output_path)
     else:
         full_output_path = output_path
@@ -2837,7 +3037,7 @@ async def batch_timeshift(
         raise HTTPException(404, "Job not found")
     user_id = row["user_id"]
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _get_assets(ids: list[int]):
@@ -2870,7 +3070,7 @@ async def batch_timeshift(
 
         output_path = asset.get("output_path") or ""
         if output_path and not os.path.isabs(output_path):
-            output_dir = Path(str(config.server.data_dir)) / username / "output"
+            output_dir = _job_output_dir(config, username, job_id)
             full_output_path = str(output_dir / output_path)
         else:
             full_output_path = output_path
@@ -3000,7 +3200,7 @@ async def batch_timezone(
         raise HTTPException(404, "Job not found")
     user_id = row["user_id"]
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _get_assets(ids: list[int]):
@@ -3030,7 +3230,7 @@ async def batch_timezone(
 
         output_path = asset.get("output_path") or ""
         if output_path and not os.path.isabs(output_path):
-            output_dir = Path(str(config.server.data_dir)) / username / "output"
+            output_dir = _job_output_dir(config, username, job_id)
             full_output_path = str(output_dir / output_path)
         else:
             full_output_path = output_path
@@ -3195,7 +3395,7 @@ async def list_friends(
             })
         return result
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_sqlite_friends():
@@ -3441,11 +3641,11 @@ async def apply_friend_names(
     if not aliases_to_apply:
         return {"total_assets_updated": 0, "aliases_applied": 0}
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "No asset database found")
 
-    output_dir = Path(str(config.server.data_dir)) / username / "output"
+    output_dir = _job_output_dir(config, username, job_id)
     loop = asyncio.get_running_loop()
     total_assets_updated = 0
     aliases_applied = 0
@@ -3846,11 +4046,11 @@ async def redact_preview(
     if not body.asset_ids or not body.rules:
         return {"total_assets": 0, "total_tags_to_strip": 0, "per_asset": []}
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "Asset database not found")
 
-    output_dir = Path(str(config.server.data_dir)) / username / "output"
+    output_dir = _job_output_dir(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _lookup_assets_preview(ids: list[int]) -> list[dict]:
@@ -3962,11 +4162,11 @@ async def apply_redaction(
     if not rules:
         raise HTTPException(400, "No redaction rules provided")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "Asset database not found")
 
-    output_dir = Path(str(config.server.data_dir)) / username / "output"
+    output_dir = _job_output_dir(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     # Empty asset_ids means apply to all assets in the job
@@ -4132,7 +4332,7 @@ async def get_match_config(
         current_weights = json.loads(current_weights)
 
     # Load match data from per-user SQLite
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_match_data():
@@ -4246,8 +4446,9 @@ async def create_pipeline_config(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """POST /api/pipeline-configs — Create a named pipeline config preset."""
+    """POST /api/pipeline-configs — Create a named pipeline config preset. Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         user_id = await conn.fetchval(
@@ -4277,8 +4478,9 @@ async def list_pipeline_configs(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> list[dict]:
-    """GET /api/pipeline-configs — List user's pipeline config presets."""
+    """GET /api/pipeline-configs — List user's pipeline config presets. Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -4315,8 +4517,9 @@ async def delete_pipeline_config(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """DELETE /api/pipeline-configs/{config_id} — Delete a pipeline config preset."""
+    """DELETE /api/pipeline-configs/{config_id} — Delete a pipeline config preset. Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         # Verify ownership before delete
@@ -4370,7 +4573,7 @@ async def dry_run_summary(
     if not job:
         raise HTTPException(404, "Job not found")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _compute_summary():
@@ -4725,7 +4928,7 @@ async def preview_export_paths(
         if not job_row:
             raise HTTPException(404, "Job not found")
 
-        db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+        db_path = _job_db_path(config, username, job_id)
         loop = asyncio.get_running_loop()
 
         def _load_samples():
@@ -4846,7 +5049,7 @@ async def gallery_json(
     if owner != username:
         raise HTTPException(403, "Access denied")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         return {"items": [], "total": 0, "page": page, "pages": 0}
 
@@ -4987,7 +5190,7 @@ async def gallery_html(
     if owner != username:
         raise HTTPException(403, "Access denied")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
 
     if not db_path.exists():
         html = (
@@ -5250,7 +5453,7 @@ async def list_conversations(
     if not job_row:
         raise HTTPException(404, "Job not found")
 
-    db_path = _Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
 
     def _query():
         if not db_path.exists():
@@ -5354,7 +5557,7 @@ async def list_conversations_html(
     if not job_row:
         raise HTTPException(404, "Job not found")
 
-    db_path = _Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
 
     def _query():
         if not db_path.exists():
@@ -5516,7 +5719,7 @@ async def get_conversation_messages(
     if not job_row:
         raise HTTPException(404, "Job not found")
 
-    db_path = _Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     offset = (page - 1) * per_page
 
     def _query():
@@ -5624,7 +5827,7 @@ async def get_conversation_messages_html(
     if not job_row:
         raise HTTPException(404, "Job not found")
 
-    db_path = _Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     offset = (page - 1) * per_page
 
     def _query():
@@ -5797,7 +6000,7 @@ async def timeline_data(
     import sqlite3 as _sq3
     from collections import OrderedDict as _OD
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         return {"granularity": granularity, "items": [], "total": 0}
 
@@ -5944,7 +6147,7 @@ async def map_data(
 
     import sqlite3 as _sq3
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         return {"markers": [], "total": 0, "bounds": None}
 
@@ -6064,7 +6267,7 @@ async def get_duplicates(
     if not job_row:
         raise HTTPException(404, "Job not found")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _find_duplicates():
@@ -6181,13 +6384,30 @@ async def resolve_duplicate(
     body: DuplicateResolveBody,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """POST /api/jobs/{job_id}/duplicates/resolve — Mark a duplicate group resolved.
+    """POST /api/jobs/{job_id}/duplicates/resolve — Resolve a duplicate group.
 
-    Body: { hash, keep_asset_id, action }
-    Actual file deletion is a future feature; records intent and returns success.
-    Returns: { resolved, kept, dismissed }
+    Pro-tier feature. Body: { hash, keep_asset_id, action }
+
+    Actions:
+      - keep_best: Mark duplicates as duplicate_of=keep_asset_id, delete their output files.
+      - keep_all: Mark all as resolved (duplicate_of=-1) but keep all files. Dismisses the group.
+
+    Returns: { resolved, kept, dismissed, files_removed }
     """
     pool = request.app.state.db_pool
+
+    # Gate behind Pro tier
+    from snatched.tiers import get_tier_limits_async
+    async with pool.acquire() as conn:
+        tier = await conn.fetchval(
+            "SELECT u.tier FROM users u WHERE u.username = $1", username
+        )
+    if tier == "free":
+        raise HTTPException(
+            403,
+            "Duplicate resolution is a Pro feature. "
+            "Upgrade to Pro to automatically clean up duplicate files and reclaim storage.",
+        )
 
     async with pool.acquire() as conn:
         job_row = await conn.fetchrow(
@@ -6202,37 +6422,71 @@ async def resolve_duplicate(
         raise HTTPException(404, "Job not found")
 
     config = request.app.state.config
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
+    output_dir = _job_output_dir(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     keep_id = body.keep_asset_id
+    action = body.action
 
-    def _get_dismissed():
+    def _resolve_in_sqlite():
         if not db_path.exists():
-            return []
+            return [], 0
         conn_sq = sqlite3.connect(str(db_path))
         conn_sq.row_factory = sqlite3.Row
+        files_removed = 0
+        dismissed_ids = []
         try:
             rows = conn_sq.execute(
                 """
-                SELECT id FROM assets
+                SELECT id, output_path FROM assets
                 WHERE sha256 = (SELECT sha256 FROM assets WHERE id = ?)
                   AND id != ?
                 """,
                 (keep_id, keep_id),
             ).fetchall()
-            return [r["id"] for r in rows]
+            dismissed_ids = [r["id"] for r in rows]
+
+            if action == "keep_best":
+                # Mark dismissed as duplicates and delete their output files
+                for r in rows:
+                    conn_sq.execute(
+                        "UPDATE assets SET duplicate_of = ? WHERE id = ?",
+                        (keep_id, r["id"]),
+                    )
+                    # Delete the output file if it exists
+                    out_path = r["output_path"] or ""
+                    if out_path:
+                        full = out_path if os.path.isabs(out_path) else str(output_dir / out_path)
+                        if os.path.isfile(full):
+                            try:
+                                os.remove(full)
+                                files_removed += 1
+                            except OSError as e:
+                                logger.warning("Dedup: failed to remove %s: %s", full, e)
+            elif action == "keep_all":
+                # Mark all in group as "reviewed" (duplicate_of = -1 means dismissed/kept-all)
+                all_ids = [r["id"] for r in rows] + [keep_id]
+                for aid in all_ids:
+                    conn_sq.execute(
+                        "UPDATE assets SET duplicate_of = -1 WHERE id = ?", (aid,)
+                    )
+
+            conn_sq.commit()
+            return dismissed_ids, files_removed
         except Exception:
-            return []
+            logger.exception("Dedup resolve error for job %s", job_id)
+            conn_sq.rollback()
+            return dismissed_ids, 0
         finally:
             conn_sq.close()
 
-    dismissed = await loop.run_in_executor(None, _get_dismissed)
+    dismissed, files_removed = await loop.run_in_executor(None, _resolve_in_sqlite)
     logger.info(
-        "Duplicate resolve: job=%s hash=%s keep=%s dismissed=%s action=%s",
-        job_id, body.hash[:16], keep_id, dismissed, body.action,
+        "Duplicate resolve: job=%s hash=%s keep=%s dismissed=%s action=%s files_removed=%d",
+        job_id, body.hash[:16], keep_id, dismissed, action, files_removed,
     )
-    return {"resolved": True, "kept": keep_id, "dismissed": dismissed}
+    return {"resolved": True, "kept": keep_id, "dismissed": dismissed, "files_removed": files_removed}
 
 
 @router.get("/jobs/{job_id}/duplicates/html", response_class=HTMLResponse)
@@ -6261,7 +6515,14 @@ async def get_duplicates_html(
     if not job_row:
         raise HTTPException(404, "Job not found")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    # Check tier for gating resolve actions
+    async with pool.acquire() as conn:
+        user_tier = await conn.fetchval(
+            "SELECT tier FROM users WHERE username = $1", username
+        )
+    is_pro = user_tier != "free"
+
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _find_dup_groups():
@@ -6351,6 +6612,28 @@ async def get_duplicates_html(
             )
 
         h_esc = h.replace('"', "&quot;").replace("'", "\\'")
+        if is_pro:
+            actions_html = (
+                f'    <div class="dup-actions">'
+                f'      <button class="btn-primary" style="font-size:0.78rem;" '
+                f"        onclick=\"resolveDuplicate('{h_esc}', {best_id}, 'keep_best', this)\">"
+                f'KEEP BEST <span style="font-size:0.65rem;opacity:0.7;">(deletes others)</span></button>'
+                f'      <button class="btn-outline" style="font-size:0.78rem;" '
+                f"        onclick=\"dismissGroup('{h_esc}', this)\">KEEP ALL</button>"
+                f'    </div>'
+            )
+        else:
+            actions_html = (
+                f'    <div class="dup-actions" style="flex-direction:column;gap:0.5rem;">'
+                f'      <p class="mono" style="font-size:0.75rem;color:var(--text-muted);margin:0;">'
+                f'        <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;">lock</span>'
+                f'        Duplicate resolution is a <strong style="color:var(--snap-yellow);">Pro</strong> feature.'
+                f'        Duplicates are detected and shown for review, but resolving them'
+                f'        (auto-deleting extras or bulk-dismissing) requires Pro.'
+                f'      </p>'
+                f'    </div>'
+            )
+
         parts.append(
             f'<div class="dup-group" id="dup-group-{idx}">'
             f'  <div class="dup-group-header" onclick="toggleDupGroup({idx})">'
@@ -6366,12 +6649,7 @@ async def get_duplicates_html(
             f'      <thead><tr><th>Filename</th><th>Type</th><th>Size</th><th>Date</th><th>Conf</th></tr></thead>'
             f'      <tbody>{rows_html}</tbody>'
             f'    </table>'
-            f'    <div class="dup-actions">'
-            f'      <button class="btn-primary" style="font-size:0.78rem;" '
-            f"        onclick=\"resolveDuplicate('{h_esc}', {best_id}, 'keep_best', this)\">KEEP BEST</button>"
-            f'      <button class="btn-outline" style="font-size:0.78rem;" '
-            f"        onclick=\"dismissGroup('{h_esc}', this)\">KEEP ALL</button>"
-            f'    </div>'
+            f'{actions_html}'
             f'    <p class="dup-status"></p>'
             f'  </div>'
             f'</div>'
@@ -6430,7 +6708,7 @@ async def generate_albums(
         raise HTTPException(404, "Job not found")
 
     user_id = job_row["user_id"]
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_gps_points():
@@ -6737,7 +7015,7 @@ async def get_album_items(
     if not asset_ids:
         return {"items": []}
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     loop = asyncio.get_running_loop()
 
     def _load_asset_details():
@@ -6803,7 +7081,7 @@ async def get_tier(request: Request, username: str = Depends(get_current_user)) 
                    max_upload_bytes, max_upload_label, retention_days,
                    concurrent_jobs, bulk_upload
     """
-    from snatched.tiers import get_tier_limits, TIER_LIMITS, TIER_ORDER
+    from snatched.tiers import get_tier_limits_async, get_all_tiers_async
 
     pool = request.app.state.db_pool
     async with pool.acquire() as conn:
@@ -6813,11 +7091,8 @@ async def get_tier(request: Request, username: str = Depends(get_current_user)) 
     if not tier:
         tier = "free"
 
-    limits = get_tier_limits(tier)
-    all_tiers = [
-        {"tier": t, **TIER_LIMITS[t]}
-        for t in TIER_ORDER
-    ]
+    limits = await get_tier_limits_async(pool, tier)
+    all_tiers = await get_all_tiers_async(pool)
 
     return {
         "tier": tier,
@@ -6835,9 +7110,170 @@ async def get_tier(request: Request, username: str = Depends(get_current_user)) 
     }
 
 
-# ============================================================
-# P5 ACCOUNT & QUOTA MANAGEMENT — Insertion slots
-# ============================================================
+@router.post("/redeem-promo")
+async def redeem_promo(
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> dict:
+    """POST /api/redeem-promo — Redeem a promo code to upgrade tier.
+
+    Body: {"code": "string"}
+    """
+    config = request.app.state.config
+    pool = request.app.state.db_pool
+
+    body = await request.json()
+    code = (body.get("code") or "").strip()
+
+    if not code:
+        raise HTTPException(400, "No promo code provided")
+
+    valid_code = config.server.promo_code
+    if not valid_code:
+        raise HTTPException(400, "Promo codes are not enabled")
+
+    if code.upper() != valid_code.upper():
+        raise HTTPException(400, "Invalid promo code")
+
+    # Check current tier
+    async with pool.acquire() as conn:
+        current_tier = await conn.fetchval(
+            "SELECT tier FROM users WHERE username = $1", username
+        )
+        if current_tier == "pro":
+            return {"status": "already_pro", "message": "You're already on Pro!"}
+
+        await conn.execute(
+            "UPDATE users SET tier = 'pro' WHERE username = $1", username
+        )
+
+    logger.info("User %s redeemed promo code — upgraded to Pro", username)
+    return {"status": "upgraded", "message": "Welcome to Pro! Refresh to see your new limits."}
+
+
+@router.delete("/account")
+async def delete_account(
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> dict:
+    """DELETE /api/account — Permanently delete user account and all associated data.
+
+    Deletes: all jobs (files + DB rows), exports, uploads, preferences,
+    API keys, webhooks, schedules, friend aliases, saved locations,
+    redaction profiles, pipeline configs, albums, and the user row itself.
+    """
+    import shutil
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+
+    body = await request.json()
+    confirm = (body.get("confirm") or "").strip()
+    if confirm != username:
+        raise HTTPException(
+            400,
+            "You must type your username to confirm deletion. "
+            "Send {\"confirm\": \"your_username\"} in the request body.",
+        )
+
+    async with pool.acquire() as conn:
+        user_row = await conn.fetchrow(
+            "SELECT id FROM users WHERE username = $1", username
+        )
+    if not user_row:
+        raise HTTPException(404, "User not found")
+
+    user_id = user_row["id"]
+
+    # Delete all files from disk (per-user data dir)
+    user_data_dir = config.server.data_dir / username
+    if user_data_dir.exists():
+        try:
+            shutil.rmtree(user_data_dir)
+            logger.info("Deleted user data dir: %s", user_data_dir)
+        except Exception as e:
+            logger.warning("Failed to delete user data dir %s: %s", user_data_dir, e)
+
+    # Clean up ramdisk staging
+    ramdisk_dir = Path("/ramdisk/staging") / username
+    if ramdisk_dir.exists():
+        try:
+            shutil.rmtree(ramdisk_dir)
+        except Exception:
+            pass
+
+    # Delete all DB rows in dependency order inside a transaction.
+    # Failsafe: if any table doesn't exist, skip it gracefully.
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            job_ids = [r["id"] for r in await conn.fetch(
+                "SELECT id FROM processing_jobs WHERE user_id = $1", user_id
+            )]
+
+            # Tables with FK to processing_jobs — must delete BEFORE processing_jobs
+            if job_ids:
+                for tbl, col in [
+                    ("exports", "job_id"),
+                    ("job_events", "job_id"),
+                    ("tag_edits", "job_id"),
+                    ("album_items", "album_id IN (SELECT id FROM albums WHERE job_id = ANY($1::int[]))"),
+                    ("albums", "job_id"),
+                    ("upload_files", "session_id IN (SELECT id FROM upload_sessions WHERE job_id = ANY($1::int[]))"),
+                    ("upload_sessions", "job_id"),
+                ]:
+                    try:
+                        if "IN" in col:
+                            await conn.execute(f"DELETE FROM {tbl} WHERE {col}", job_ids)
+                        else:
+                            await conn.execute(f"DELETE FROM {tbl} WHERE {col} = ANY($1::int[])", job_ids)
+                    except Exception as e:
+                        logger.debug("Skipping %s cleanup: %s", tbl, e)
+
+            # Upload sessions by user_id (may also have user_id FK without job_id)
+            for tbl in ["upload_files", "upload_sessions"]:
+                try:
+                    if tbl == "upload_files":
+                        await conn.execute(
+                            "DELETE FROM upload_files WHERE session_id IN "
+                            "(SELECT id FROM upload_sessions WHERE user_id = $1)", user_id
+                        )
+                    else:
+                        await conn.execute(f"DELETE FROM {tbl} WHERE user_id = $1", user_id)
+                except Exception as e:
+                    logger.debug("Skipping %s cleanup: %s", tbl, e)
+
+            # Now safe to delete processing_jobs
+            await conn.execute("DELETE FROM processing_jobs WHERE user_id = $1", user_id)
+
+            # User-linked tables (no FK to processing_jobs)
+            for tbl in [
+                "user_preferences", "tag_edits", "tag_presets",
+                "custom_schemas", "saved_locations", "friend_aliases",
+                "redaction_profiles", "pipeline_configs", "api_keys",
+                "webhooks", "schedules",
+            ]:
+                try:
+                    await conn.execute(f"DELETE FROM {tbl} WHERE user_id = $1", user_id)
+                except Exception as e:
+                    logger.debug("Skipping %s cleanup: %s", tbl, e)
+
+            # Album items + albums (may also be user-linked)
+            try:
+                await conn.execute(
+                    "DELETE FROM album_items WHERE album_id IN "
+                    "(SELECT id FROM albums WHERE user_id = $1)", user_id
+                )
+                await conn.execute("DELETE FROM albums WHERE user_id = $1", user_id)
+            except Exception as e:
+                logger.debug("Skipping albums cleanup: %s", e)
+
+            # Finally, the user
+            await conn.execute("DELETE FROM users WHERE id = $1", user_id)
+
+    logger.warning("ACCOUNT DELETED: user=%s (id=%d) — all data purged", username, user_id)
+    response = JSONResponse({"deleted": True, "username": username})
+    response.delete_cookie("auth_token", path="/")
+    response.delete_cookie("csrf_token", path="/")
+    return response
 
 # --- P5-SLOT-28: Storage Quota Dashboard API ---
 
@@ -6864,7 +7300,7 @@ async def quota_api(
                     days_remaining, status}]
         }
     """
-    from snatched.tiers import get_tier_limits
+    from snatched.tiers import get_tier_limits_async
 
     import asyncio as _asyncio
     import datetime as _dt
@@ -6884,7 +7320,7 @@ async def quota_api(
 
     user_id = user_row["id"]
     tier = user_row["tier"] or "free"
-    limits = get_tier_limits(tier)
+    limits = await get_tier_limits_async(pool, tier)
 
     # ── 2. Load jobs (retention) ─────────────────────────────────────────────
     async with pool.acquire() as conn:
@@ -6944,28 +7380,40 @@ async def quota_api(
 
     total_bytes, lane_bytes, lane_count = await loop.run_in_executor(None, _scan)
 
-    # ── 4. SQLite asset breakdown ─────────────────────────────────────────────
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    # ── 4. SQLite asset breakdown (aggregate across all per-job DBs) ──────────
+    user_jobs_dir = Path(str(config.server.data_dir)) / username / "jobs"
 
     def _sqlite_lanes():
-        if not db_path.exists():
-            return {}
+        """Aggregate asset_type counts across all per-job proc.db files."""
+        aggregated: dict[str, dict] = {}
+        if not user_jobs_dir.exists():
+            return aggregated
         try:
-            conn_sq = sqlite3.connect(str(db_path))
-            conn_sq.row_factory = sqlite3.Row
-            rows = conn_sq.execute(
-                """
-                SELECT asset_type,
-                       COUNT(*) AS file_count,
-                       SUM(COALESCE(file_size, 0)) AS size_bytes
-                FROM assets
-                GROUP BY asset_type
-                """
-            ).fetchall()
-            conn_sq.close()
-            return {r["asset_type"]: dict(r) for r in rows}
+            for job_db in user_jobs_dir.glob("*/proc.db"):
+                try:
+                    conn_sq = sqlite3.connect(str(job_db))
+                    conn_sq.row_factory = sqlite3.Row
+                    rows = conn_sq.execute(
+                        """
+                        SELECT asset_type,
+                               COUNT(*) AS file_count,
+                               SUM(COALESCE(file_size, 0)) AS size_bytes
+                        FROM assets
+                        GROUP BY asset_type
+                        """
+                    ).fetchall()
+                    conn_sq.close()
+                    for r in rows:
+                        at = r["asset_type"]
+                        if at not in aggregated:
+                            aggregated[at] = {"file_count": 0, "size_bytes": 0}
+                        aggregated[at]["file_count"] += r["file_count"]
+                        aggregated[at]["size_bytes"] += r["size_bytes"] or 0
+                except Exception:
+                    pass
         except Exception:
-            return {}
+            pass
+        return aggregated
 
     sqlite_lanes = await loop.run_in_executor(None, _sqlite_lanes)
 
@@ -7108,7 +7556,7 @@ async def upload_limits(
     Returns tier label, max_upload_bytes (null = unlimited), max_upload_label,
     bulk_upload flag, and current cumulative upload usage in bytes.
     """
-    from snatched.tiers import get_tier_limits
+    from snatched.tiers import get_tier_limits_async
 
     pool = request.app.state.db_pool
 
@@ -7132,7 +7580,7 @@ async def upload_limits(
         tier = row["tier"]
         current_usage = int(row["current_usage_bytes"])
 
-    limits = get_tier_limits(tier)
+    limits = await get_tier_limits_async(pool, tier)
     return {
         "tier": tier,
         "max_upload_bytes": limits["max_upload_bytes"],
@@ -7156,7 +7604,7 @@ async def extend_retention(
     Returns: { extended, new_expires_at, days_remaining }
     """
     from datetime import datetime, timezone, timedelta
-    from snatched.tiers import get_tier_limits
+    from snatched.tiers import get_tier_limits_async
 
     pool = request.app.state.db_pool
 
@@ -7179,7 +7627,7 @@ async def extend_retention(
             "SELECT tier FROM users WHERE username = $1", username
         )
         tier = tier_row["tier"] if tier_row else "free"
-        limits = get_tier_limits(tier)
+        limits = await get_tier_limits_async(pool, tier)
 
         if tier == "free":
             raise HTTPException(status_code=403, detail="Upgrade to Pro to extend retention")
@@ -7214,7 +7662,7 @@ async def get_retention(
     Returns: { retention_expires_at, days_remaining, tier, retention_days_allowed, can_extend }
     """
     from datetime import datetime, timezone
-    from snatched.tiers import get_tier_limits
+    from snatched.tiers import get_tier_limits_async
 
     pool = request.app.state.db_pool
 
@@ -7236,7 +7684,7 @@ async def get_retention(
         )
 
     tier = tier_row["tier"] if tier_row else "free"
-    limits = get_tier_limits(tier)
+    limits = await get_tier_limits_async(pool, tier)
     retention_days_allowed = limits.get("retention_days")
     can_extend = tier != "free"
 
@@ -7272,7 +7720,7 @@ async def get_slots(
     Returns slot usage and queue information for the current user.
     Returns: { tier, tier_label, max_slots, active_jobs, available_slots, queue_position }
     """
-    from snatched.tiers import get_tier_limits
+    from snatched.tiers import get_tier_limits_async
 
     pool = request.app.state.db_pool
 
@@ -7287,13 +7735,13 @@ async def get_slots(
             SELECT COUNT(*) as active_count
             FROM processing_jobs pj
             JOIN users u ON pj.user_id = u.id
-            WHERE u.username = $1 AND pj.status IN ('running', 'pending')
+            WHERE u.username = $1 AND pj.status IN ('running', 'pending', 'queued')
             """,
             username,
         )
         active_jobs = active_row["active_count"] if active_row else 0
 
-    limits = get_tier_limits(tier)
+    limits = await get_tier_limits_async(pool, tier)
     max_slots = limits.get("concurrent_jobs")
     tier_label = limits.get("label", tier.title())
 
@@ -7421,12 +7869,6 @@ async def list_job_groups(
 
 # --- Feature #33: API Access Keys ---
 
-_API_KEY_TIER_LIMITS = {
-    "free":      {"max_keys": 0,    "rate_limit_rpm": 0},
-    "pro":       {"max_keys": 3,    "rate_limit_rpm": 60},
-}
-
-
 class ApiKeyCreateBody(BaseModel):
     name: str = Field(default="default", max_length=80)
     scopes: str = Field(default="read,write", max_length=200)
@@ -7438,7 +7880,7 @@ async def create_api_key(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """POST /api/keys — Create a new API access key.
+    """POST /api/keys — Create a new API access key. Admin only.
 
     Generates a cryptographically random 32-byte hex token. The full token
     is returned exactly once — it is never stored. Only a SHA-256 hash and
@@ -7448,9 +7890,10 @@ async def create_api_key(
     """
     import hashlib
     import secrets
-    from snatched.tiers import get_tier_limits
+    from snatched.tiers import get_tier_limits_async
 
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         tier_row = await conn.fetchrow(
@@ -7461,9 +7904,9 @@ async def create_api_key(
         user_id = int(tier_row["id"])
         tier = tier_row["tier"] or "free"
 
-        key_limits = _API_KEY_TIER_LIMITS.get(tier, _API_KEY_TIER_LIMITS["free"])
-        max_keys = key_limits["max_keys"]
-        rate_limit_rpm = key_limits["rate_limit_rpm"]
+        limits = await get_tier_limits_async(pool, tier)
+        max_keys = limits.get("max_api_keys", 0)
+        rate_limit_rpm = limits.get("api_key_rate_limit_rpm", 0)
 
         if max_keys == 0:
             raise HTTPException(
@@ -7516,13 +7959,14 @@ async def list_api_keys(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> list[dict]:
-    """GET /api/keys — List all API keys for the authenticated user.
+    """GET /api/keys — List all API keys for the authenticated user. Admin only.
 
     Returns id, name, key_prefix, scopes, rate_limit_rpm, created_at,
     last_used_at, and revoked_at for each key. The full token is never
     returned — only the prefix.
     """
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -7558,7 +8002,7 @@ async def revoke_api_key(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """DELETE /api/keys/{key_id} — Revoke an API key (soft delete).
+    """DELETE /api/keys/{key_id} — Revoke an API key (soft delete). Admin only.
 
     Sets revoked_at = NOW(). The key record is preserved for audit purposes.
     Returns 404 if the key does not belong to the authenticated user.
@@ -7567,6 +8011,7 @@ async def revoke_api_key(
     from datetime import datetime, timezone
 
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         # Verify ownership and fetch current state
@@ -7596,12 +8041,6 @@ async def revoke_api_key(
 
 # --- Feature #34: Webhook Notifications (CRUD + test) ---
 
-_WEBHOOK_TIER_LIMITS = {
-    "free": 0,
-    "pro": 3,
-}
-
-
 class WebhookCreate(BaseModel):
     url: str
     name: str = ""
@@ -7624,23 +8063,27 @@ async def _get_user_tier_for_webhooks(pool, username: str) -> str:
     return tier or "free"
 
 
-@router.post("/webhooks")
+# REMOVED (2026-03-10): Webhook feature discontinued
+# @router.post("/webhooks")
 async def create_webhook(
     request: Request,
     body: WebhookCreate,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """POST /api/webhooks -- Create a new webhook for the current user.
+    """POST /api/webhooks -- Create a new webhook for the current user. Admin only.
 
     Validates HTTPS URL and enforces tier-based webhook count limit.
     """
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     if not body.url.startswith("https://"):
         raise HTTPException(400, "Webhook URL must start with https://")
 
+    from snatched.tiers import get_tier_limits_async
     tier = await _get_user_tier_for_webhooks(pool, username)
-    max_wh = _WEBHOOK_TIER_LIMITS.get(tier, 0)
+    tier_limits = await get_tier_limits_async(pool, tier)
+    max_wh = tier_limits.get("max_webhooks", 0)
 
     async with pool.acquire() as conn:
         if max_wh is not None:
@@ -7692,13 +8135,14 @@ async def create_webhook(
     }
 
 
-@router.get("/webhooks")
+# @router.get("/webhooks")
 async def list_webhooks(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """GET /api/webhooks -- List all webhooks for the current user."""
+    """GET /api/webhooks -- List all webhooks for the current user. Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -7732,15 +8176,16 @@ async def list_webhooks(
     }
 
 
-@router.put("/webhooks/{webhook_id}")
+# @router.put("/webhooks/{webhook_id}")
 async def update_webhook(
     request: Request,
     webhook_id: int,
     body: WebhookUpdate,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """PUT /api/webhooks/{webhook_id} -- Update a webhook (url, name, events, active, secret)."""
+    """PUT /api/webhooks/{webhook_id} -- Update a webhook (url, name, events, active, secret). Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     if body.url is not None and not body.url.startswith("https://"):
         raise HTTPException(400, "Webhook URL must start with https://")
@@ -7795,14 +8240,15 @@ async def update_webhook(
     }
 
 
-@router.delete("/webhooks/{webhook_id}")
+# @router.delete("/webhooks/{webhook_id}")
 async def delete_webhook(
     request: Request,
     webhook_id: int,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """DELETE /api/webhooks/{webhook_id} -- Permanently delete a webhook."""
+    """DELETE /api/webhooks/{webhook_id} -- Permanently delete a webhook. Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         deleted = await conn.fetchval(
@@ -7822,23 +8268,23 @@ async def delete_webhook(
     return {"deleted": True, "webhook_id": webhook_id}
 
 
-@router.post("/webhooks/{webhook_id}/test")
+# @router.post("/webhooks/{webhook_id}/test")
 async def test_webhook(
     request: Request,
     webhook_id: int,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """POST /api/webhooks/{webhook_id}/test -- Fire a test payload at the webhook URL.
+    """POST /api/webhooks/{webhook_id}/test -- Fire a test payload at the webhook URL. Admin only.
 
     Uses urllib.request (stdlib only -- no httpx).
     Updates last_triggered_at and last_status_code regardless of outcome.
     Returns the HTTP status code received (or 0 on connection error).
     """
+    pool = request.app.state.db_pool
+    await _require_admin(pool, username)
     import urllib.request as _urllib_req
     import urllib.error as _urllib_err
     from datetime import datetime, timezone
-
-    pool = request.app.state.db_pool
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -7939,7 +8385,7 @@ async def job_match_report(
     if owner != username:
         raise HTTPException(403, "Access denied")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "No processing database found for this job")
 
@@ -8035,7 +8481,7 @@ async def job_asset_report(
     if owner != username:
         raise HTTPException(403, "Access denied")
 
-    db_path = Path(str(config.server.data_dir)) / username / "proc.db"
+    db_path = _job_db_path(config, username, job_id)
     if not db_path.exists():
         raise HTTPException(404, "No processing database found for this job")
 
@@ -8154,10 +8600,6 @@ def _calc_next_run(frequency: str, day_of_month: int | None, day_of_week: int | 
         return target.replace(hour=target_hour, minute=0, second=0, microsecond=0)
 
 
-_SCHEDULE_TIER_LIMITS: dict[str, int] = {
-    "free":      0,
-    "pro":       2,
-}
 
 
 class ScheduleCreateBody(BaseModel):
@@ -8185,17 +8627,20 @@ async def create_schedule(
     body: ScheduleCreateBody,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """POST /api/schedules — Create a new recurring export schedule.
+    """POST /api/schedules — Create a new recurring export schedule. Admin only.
 
     Checks tier limit before inserting. Calculates next_run_at from frequency.
     """
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
+    from snatched.tiers import get_tier_limits_async
     async with pool.acquire() as conn:
         tier = await conn.fetchval(
             "SELECT tier FROM users WHERE username = $1", username
         ) or "free"
-        max_schedules = _SCHEDULE_TIER_LIMITS.get(tier, 0)
+        tier_lim = await get_tier_limits_async(pool, tier)
+        max_schedules = tier_lim.get("max_schedules", 0)
 
         if max_schedules == 0:
             raise HTTPException(403, "Scheduled exports require Pro tier or above.")
@@ -8252,8 +8697,9 @@ async def list_schedules(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> list[dict]:
-    """GET /api/schedules — List all schedules for the authenticated user."""
+    """GET /api/schedules — List all schedules for the authenticated user. Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -8294,12 +8740,13 @@ async def update_schedule(
     body: ScheduleUpdateBody,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """PUT /api/schedules/{schedule_id} — Update a schedule.
+    """PUT /api/schedules/{schedule_id} — Update a schedule. Admin only.
 
     Only fields present in the body are updated. Recalculates next_run_at
     whenever frequency, day_of_month, or day_of_week changes.
     """
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         existing = await conn.fetchrow(
@@ -8368,8 +8815,9 @@ async def delete_schedule(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """DELETE /api/schedules/{schedule_id} — Permanently delete a schedule."""
+    """DELETE /api/schedules/{schedule_id} — Permanently delete a schedule. Admin only."""
     pool = request.app.state.db_pool
+    await _require_admin(pool, username)
 
     async with pool.acquire() as conn:
         deleted = await conn.fetchval(
@@ -8432,9 +8880,8 @@ async def get_scan_results(
             f"Scan results only available after ingest (current status: {job_row['status']})"
         )
 
-    # Open the per-user SQLite database
-    data_dir = Path(str(config.server.data_dir)) / username
-    db_path = data_dir / "proc.db"
+    # Open the per-job SQLite database
+    db_path = _job_db_path(config, username, job_id)
 
     if not db_path.exists():
         raise HTTPException(500, "Processing database not found")
@@ -8490,27 +8937,21 @@ async def configure_and_start(
     request: Request,
     username: str = Depends(get_current_user),
 ) -> dict:
-    """POST /api/jobs/{job_id}/configure — Set lanes/options and start remaining phases.
+    """POST /api/jobs/{job_id}/configure — Set tier/options and start processing.
 
     Request body: {
-        "lanes": ["memories", "chats"],  // or ["stories"] or any combo
+        "tier": "free" | "rescue" | "full" | "alacarte",
+        "add_ons": ["gps", "overlays", "chats", "stories", "xmp"],
         "options": {
-            "burn_overlays": true,
+            "folder_style": "year_month",
+            "gps_precision": "exact",
             "dark_mode_pngs": false,
-            "exif_enabled": true,
-            "xmp_enabled": false,
-            "gps_window_seconds": 300
+            "hide_sent_to": false
         }
     }
 
-    Only works if job status is 'scanned'. Updates job and starts match→enrich→export
-    in the background.
-
-    Response (200): {
-        "status": "running",
-        "job_id": 42,
-        "phases": ["match", "enrich", "export"]
-    }
+    Free tier: starts immediately (no payment required).
+    Paid tiers: must have payment_status='paid' before calling this.
     """
     pool = request.app.state.db_pool
     config = request.app.state.config
@@ -8518,22 +8959,27 @@ async def configure_and_start(
     # Parse request body
     try:
         body = await request.json()
-        lanes = body.get("lanes", ["memories", "chats", "stories"])
+        tier = body.get("tier", "free")
+        add_ons = body.get("add_ons", [])
         options = body.get("options", {})
     except Exception as e:
         raise HTTPException(400, f"Invalid request body: {e}")
 
-    # Validate lanes
-    valid_lanes = {"memories", "chats", "stories"}
-    lanes = [l for l in lanes if l in valid_lanes]
-    if not lanes:
-        lanes = ["memories", "chats", "stories"]
+    # Validate tier
+    valid_tiers = {"free", "rescue", "full", "alacarte"}
+    if tier not in valid_tiers:
+        tier = "free"
+
+    # Validate add-ons
+    valid_addons = {"gps", "overlays", "chats", "stories", "xmp"}
+    add_ons = [a for a in add_ons if a in valid_addons]
 
     # Verify job ownership and status
     async with pool.acquire() as conn:
         job_row = await conn.fetchrow(
             """
-            SELECT pj.id, pj.status, pj.phases_requested, u.id as user_id
+            SELECT pj.id, pj.status, pj.phases_requested, pj.payment_status,
+                   u.id as user_id
             FROM processing_jobs pj
             JOIN users u ON pj.user_id = u.id
             WHERE pj.id = $1 AND u.username = $2
@@ -8550,74 +8996,134 @@ async def configure_and_start(
             f"Configuration only available for scanned jobs (current status: {job_row['status']})"
         )
 
-    # Only update preferences if options were explicitly provided
-    if options:
-        gps_window = int(options.get("gps_window_seconds", 300))
-        gps_window = max(30, min(1800, gps_window))
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO user_preferences
-                    (user_id, burn_overlays, dark_mode_pngs, exif_enabled, xmp_enabled, gps_window_seconds)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    burn_overlays = EXCLUDED.burn_overlays,
-                    dark_mode_pngs = EXCLUDED.dark_mode_pngs,
-                    exif_enabled = EXCLUDED.exif_enabled,
-                    xmp_enabled = EXCLUDED.xmp_enabled,
-                    gps_window_seconds = EXCLUDED.gps_window_seconds,
-                    updated_at = NOW()
-                """,
-                job_row["user_id"],
-                bool(options.get("burn_overlays", True)),
-                bool(options.get("dark_mode_pngs", False)),
-                bool(options.get("exif_enabled", True)),
-                bool(options.get("xmp_enabled", False)),
-                gps_window,
-            )
+    # Payment gate: paid tiers require payment_status='paid'
+    if tier != "free" and job_row["payment_status"] != "paid":
+        raise HTTPException(402, "Payment required for this tier")
 
-    # Get processing mode to determine which phases to run
-    async with pool.acquire() as conn:
-        mode_row = await conn.fetchval(
-            "SELECT processing_mode FROM processing_jobs WHERE id=$1", job_id
+    # Block free configure if a paid checkout is in progress
+    if tier == "free" and job_row["payment_status"] == "pending":
+        raise HTTPException(
+            409,
+            "A payment checkout is already in progress. Complete or cancel it first."
         )
-    processing_mode = mode_row or "speed_run"
 
-    if processing_mode == "power_user":
-        # Power User: run only match, pause for review
-        remaining_phases = ["match"]
-    else:
-        # Speed Run: run all remaining phases
-        remaining_phases = ["match", "enrich", "export"]
+    # ── Determine lanes and phases based on tier ──
+    has_gps = tier in ("rescue", "full") or "gps" in add_ons
+    has_overlays = tier in ("rescue", "full") or "overlays" in add_ons
+    has_chats = tier == "full" or "chats" in add_ons
+    has_stories = tier == "full" or "stories" in add_ons
+    has_xmp = tier == "full" or "xmp" in add_ons
+    needs_enrich = has_gps or has_overlays
+
+    # Lanes
+    lanes = ["memories"]  # always included
+    if has_chats:
+        lanes.append("chats")
+    if has_stories:
+        lanes.append("stories")
+
+    # Phases: always match (date recovery). Enrich only if GPS/overlays needed.
+    remaining_phases = ["match"]
+    if needs_enrich:
+        remaining_phases.append("enrich")
+    remaining_phases.append("export")
+
+    # Save user preferences based on tier
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO user_preferences
+                (user_id, burn_overlays, dark_mode_pngs, exif_enabled, xmp_enabled, gps_window_seconds,
+                 folder_style, gps_precision, hide_sent_to, chat_timestamps, chat_cover_pages,
+                 chat_text, chat_png)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (user_id) DO UPDATE SET
+                burn_overlays = EXCLUDED.burn_overlays,
+                dark_mode_pngs = EXCLUDED.dark_mode_pngs,
+                exif_enabled = EXCLUDED.exif_enabled,
+                xmp_enabled = EXCLUDED.xmp_enabled,
+                gps_window_seconds = EXCLUDED.gps_window_seconds,
+                folder_style = EXCLUDED.folder_style,
+                gps_precision = EXCLUDED.gps_precision,
+                hide_sent_to = EXCLUDED.hide_sent_to,
+                chat_timestamps = EXCLUDED.chat_timestamps,
+                chat_cover_pages = EXCLUDED.chat_cover_pages,
+                chat_text = EXCLUDED.chat_text,
+                chat_png = EXCLUDED.chat_png,
+                updated_at = NOW()
+            """,
+            job_row["user_id"],
+            has_overlays,                                        # burn_overlays
+            bool(options.get("dark_mode_pngs", False)),          # dark_mode_pngs
+            has_gps or has_overlays,                             # exif_enabled (dates always, GPS if paid)
+            has_xmp,                                             # xmp_enabled
+            300,                                                 # gps_window_seconds
+            str(options.get("folder_style", "year_month")),      # folder_style
+            str(options.get("gps_precision", "exact")),          # gps_precision
+            bool(options.get("hide_sent_to", False)),            # hide_sent_to
+            True,                                                # chat_timestamps
+            True,                                                # chat_cover_pages
+            has_chats,                                           # chat_text
+            has_chats,                                           # chat_png
+        )
 
     try:
+        # Atomic check-and-update: only transitions from 'scanned' to 'queued'
         async with pool.acquire() as conn:
-            await conn.execute(
+            updated = await conn.fetchval(
                 """
                 UPDATE processing_jobs
-                SET lanes_requested = $1, phases_requested = $2, status = 'running'
-                WHERE id = $3
+                SET lanes_requested = $1, phases_requested = $2,
+                    job_tier = $3, add_ons = $4,
+                    status = 'queued',
+                    retention_expires_at = NULL
+                WHERE id = $5 AND status = 'scanned'
+                RETURNING id
                 """,
                 lanes,
                 ["ingest"] + remaining_phases,
+                tier,
+                json.dumps(add_ons),
                 job_id,
             )
 
+        if not updated:
+            raise HTTPException(409, "Job is no longer in 'scanned' state (concurrent request?)")
+
         logger.info(
-            f"Job {job_id} configured with lanes={lanes}. Starting remaining phases..."
+            f"Job {job_id} configured: tier={tier}, lanes={lanes}, phases={remaining_phases}"
         )
 
-        # Schedule remaining phases to run in background
-        asyncio.create_task(
-            _run_remaining_phases(pool, job_id, username, config, remaining_phases)
-        )
+        # Enqueue to ARQ worker (durable Redis queue) instead of asyncio.create_task
+        arq_pool = getattr(request.app.state, "arq_pool", None)
+        if arq_pool:
+            await arq_pool.enqueue_job(
+                "run_remaining_phases",
+                job_id,
+                username,
+                remaining_phases,
+                _queue_name="snatched:default",
+            )
+            logger.info("Job %d remaining phases enqueued to ARQ", job_id)
+        else:
+            # Fallback: direct execution if Redis unavailable
+            logger.warning("ARQ unavailable — running job %d remaining phases directly", job_id)
+            from snatched.db import update_job
+            await update_job(pool, job_id, status="running")
+            task = asyncio.create_task(
+                _run_remaining_phases(pool, job_id, username, config, remaining_phases)
+            )
+            task.add_done_callback(lambda t, jid=job_id: _log_task_result(t, jid))
 
         return {
-            "status": "running",
+            "status": "queued",
             "job_id": job_id,
+            "tier": tier,
             "phases": remaining_phases,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to configure job {job_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to configure job: {e}")
@@ -8638,6 +9144,7 @@ async def start_enrich(
     pool = request.app.state.db_pool
     config = request.app.state.config
 
+    # Read job info (ownership + mode)
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -8659,15 +9166,26 @@ async def start_enrich(
     else:
         phases = ["enrich", "export"]  # Speed Run: finish everything
 
+    # Atomic transition: only proceed if still 'matched'
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE processing_jobs SET phases_requested = phases_requested || $1::text[] WHERE id = $2",
-            ["enrich"], job_id,
+        updated = await conn.fetchval(
+            """
+            UPDATE processing_jobs
+            SET phases_requested = phases_requested || $1::text[],
+                status = 'running', current_phase = 'enrich'
+            WHERE id = $2 AND status = 'matched'
+            RETURNING id
+            """,
+            phases, job_id,
         )
-    await update_job(pool, job_id, status="running", current_phase="enrich")
-    asyncio.create_task(
+
+    if not updated:
+        raise HTTPException(409, "Job is no longer in 'matched' state (concurrent request?)")
+
+    task = asyncio.create_task(
         _run_remaining_phases(pool, job_id, username, config, phases)
     )
+    task.add_done_callback(lambda t, jid=job_id: _log_task_result(t, jid))
     return {"status": "started", "phases": phases}
 
 
@@ -8745,14 +9263,23 @@ async def start_export(
             await conn.execute(
                 """
                 INSERT INTO user_preferences
-                    (user_id, burn_overlays, dark_mode_pngs, exif_enabled, xmp_enabled, gps_window_seconds)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                    (user_id, burn_overlays, dark_mode_pngs, exif_enabled, xmp_enabled, gps_window_seconds,
+                     folder_style, gps_precision, hide_sent_to, chat_timestamps, chat_cover_pages,
+                     chat_text, chat_png)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 ON CONFLICT (user_id) DO UPDATE SET
                     burn_overlays = EXCLUDED.burn_overlays,
                     dark_mode_pngs = EXCLUDED.dark_mode_pngs,
                     exif_enabled = EXCLUDED.exif_enabled,
                     xmp_enabled = EXCLUDED.xmp_enabled,
                     gps_window_seconds = EXCLUDED.gps_window_seconds,
+                    folder_style = EXCLUDED.folder_style,
+                    gps_precision = EXCLUDED.gps_precision,
+                    hide_sent_to = EXCLUDED.hide_sent_to,
+                    chat_timestamps = EXCLUDED.chat_timestamps,
+                    chat_cover_pages = EXCLUDED.chat_cover_pages,
+                    chat_text = EXCLUDED.chat_text,
+                    chat_png = EXCLUDED.chat_png,
                     updated_at = NOW()
                 """,
                 user_id,
@@ -8761,17 +9288,35 @@ async def start_export(
                 bool(options.get("exif_enabled", True)),
                 bool(options.get("xmp_enabled", False)),
                 gps_window,
+                str(options.get("folder_style", "year_month")),
+                str(options.get("gps_precision", "exact")),
+                bool(options.get("hide_sent_to", False)),
+                bool(options.get("chat_timestamps", True)),
+                bool(options.get("chat_cover_pages", True)),
+                bool(options.get("chat_text", True)),
+                bool(options.get("chat_png", True)),
             )
 
+    # Atomic transition: only proceed if still 'enriched'
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE processing_jobs SET phases_requested = phases_requested || $1::text[] WHERE id = $2",
+        updated = await conn.fetchval(
+            """
+            UPDATE processing_jobs
+            SET phases_requested = phases_requested || $1::text[],
+                status = 'running', current_phase = 'export'
+            WHERE id = $2 AND status = 'enriched'
+            RETURNING id
+            """,
             ["export"], job_id,
         )
-    await update_job(pool, job_id, status="running", current_phase="export")
-    asyncio.create_task(
+
+    if not updated:
+        raise HTTPException(409, "Job is no longer in 'enriched' state (concurrent request?)")
+
+    task = asyncio.create_task(
         _run_remaining_phases(pool, job_id, username, config, ["export"])
     )
+    task.add_done_callback(lambda t, jid=job_id: _log_task_result(t, jid))
     return {"status": "started", "phases": ["export"]}
 
 
@@ -8787,16 +9332,19 @@ async def _run_remaining_phases(
     This is a continuation of the ingest-only job. The SQLite DB
     already has all assets populated by ingest.
     """
-    from snatched.processing import enrich, export, match
+    from snatched.processing import enrich, match
     from snatched.processing.sqlite import open_database
     from snatched.db import update_job, emit_event
 
-    data_dir = Path(str(config.server.data_dir)) / username
+    data_dir = Path(str(config.server.data_dir)) / username / "jobs" / str(job_id)
     db_path = data_dir / "proc.db"
     project_dir = data_dir
     loop = asyncio.get_running_loop()
 
     config = config.model_copy(deep=True)
+
+    # Register in _job_tasks so cancel_job() works for PATH 2
+    _job_tasks[job_id] = asyncio.current_task()
 
     sqlite_db = None
     try:
@@ -8805,7 +9353,10 @@ async def _run_remaining_phases(
             prefs = await conn.fetchrow(
                 """
                 SELECT burn_overlays, dark_mode_pngs, exif_enabled,
-                       xmp_enabled, gps_window_seconds
+                       xmp_enabled, gps_window_seconds,
+                       folder_style, gps_precision, hide_sent_to,
+                       chat_timestamps, chat_cover_pages,
+                       chat_text, chat_png
                 FROM user_preferences up
                 JOIN users u ON up.user_id = u.id
                 WHERE u.username = $1
@@ -8818,27 +9369,89 @@ async def _run_remaining_phases(
             config.exif.enabled = prefs["exif_enabled"]
             config.xmp.enabled = prefs["xmp_enabled"]
             config.pipeline.gps_window_seconds = prefs["gps_window_seconds"]
+            _folder_style = prefs.get("folder_style", "year_month") or "year_month"
+            _gps_precision = prefs.get("gps_precision", "exact") or "exact"
             config.lanes["memories"] = LaneConfig(
                 burn_overlays=prefs["burn_overlays"],
+                folder_pattern=_folder_style,
+                gps_precision=_gps_precision,
+                hide_sent_to=prefs.get("hide_sent_to", False),
             )
             config.lanes["chats"] = LaneConfig(
                 dark_mode=prefs["dark_mode_pngs"],
+                export_text=prefs.get("chat_text", True),
+                export_png=prefs.get("chat_png", True),
+                folder_pattern=_folder_style,
+                gps_precision=_gps_precision,
+                hide_sent_to=prefs.get("hide_sent_to", False),
+                chat_timestamps=prefs.get("chat_timestamps", True),
+                chat_cover_pages=prefs.get("chat_cover_pages", True),
             )
+            config.lanes["stories"] = LaneConfig(
+                folder_pattern=_folder_style,
+                gps_precision=_gps_precision,
+            )
+
+        # Tier-based config overrides: free tier skips enrich (no GPS/overlays)
+        async with pool.acquire() as conn:
+            tier_row = await conn.fetchrow(
+                "SELECT job_tier, add_ons FROM processing_jobs WHERE id=$1", job_id
+            )
+        job_tier = (tier_row["job_tier"] if tier_row else None) or "free"
+        job_addons = set()
+        if tier_row and tier_row.get("add_ons"):
+            _raw = tier_row["add_ons"]
+            if isinstance(_raw, str):
+                import json as _json
+                job_addons = set(_json.loads(_raw))
+            elif isinstance(_raw, list):
+                job_addons = set(_raw)
+
+        if job_tier == "free":
+            # Free tier: date recovery only, no GPS, no overlays, no XMP
+            config.xmp.enabled = False
+            config.exif.enabled = False
+            if config.lanes.get("memories"):
+                config.lanes["memories"].burn_overlays = False
+            logger.info(f"Job {job_id}: Free tier — dates only, no GPS/overlays")
+        elif job_tier == "rescue":
+            # Rescue tier: GPS + overlays on memories only
+            config.xmp.enabled = False
+            config.exif.enabled = True
+            if config.lanes.get("memories"):
+                config.lanes["memories"].burn_overlays = True
+            logger.info(f"Job {job_id}: Rescue tier — GPS + overlays, memories only")
+        elif job_tier == "alacarte":
+            # A la carte: enable features based on selected add-ons
+            # Only override the global toggles — preserve lane configs from prefs
+            _alc_gps = "gps" in job_addons
+            _alc_overlays = "overlays" in job_addons
+            _alc_xmp = "xmp" in job_addons
+            config.xmp.enabled = _alc_xmp
+            config.exif.enabled = _alc_gps or _alc_overlays
+            # Patch burn_overlays on the existing memories lane config (preserves folder/gps settings)
+            if hasattr(config.lanes.get("memories"), "burn_overlays"):
+                config.lanes["memories"].burn_overlays = _alc_overlays
+            logger.info(f"Job {job_id}: A la carte — addons={job_addons}")
 
         sqlite_db = open_database(str(db_path))
         progress_cb = _make_progress_cb(pool, job_id, loop)
 
-        # Read lanes from updated job
+        # Read lanes + existing stats from updated job
         async with pool.acquire() as conn:
             job_row = await conn.fetchrow(
-                "SELECT lanes_requested FROM processing_jobs WHERE id=$1",
+                "SELECT lanes_requested, stats_json FROM processing_jobs WHERE id=$1",
                 job_id,
             )
         if not job_row:
             raise RuntimeError(f"Job {job_id} not found after update")
         job_lanes = job_row["lanes_requested"] or ["memories", "chats", "stories"]
 
-        all_stats = {"phase_durations": {}}
+        # Merge with existing stats (preserves ingest totals like total_assets)
+        existing_stats = job_row["stats_json"] or {}
+        if isinstance(existing_stats, str):
+            existing_stats = json.loads(existing_stats)
+        all_stats = {**existing_stats, "phase_durations": existing_stats.get("phase_durations", {})}
         phase_pct = 100 // max(len(phases), 1)
         cumulative_pct = 0
 
@@ -8853,17 +9466,21 @@ async def _run_remaining_phases(
                 None, match.phase2_match, sqlite_db, progress_cb
             )
             cumulative_pct += phase_pct
+            if isinstance(match_stats, dict):
+                all_stats["total_matches"] = match_stats.get("total_matched", 0)
+                all_stats["matched_count"] = match_stats.get("total_matched", 0)
+                all_stats["match_rate"] = match_stats.get("match_rate", 0)
+                all_stats["true_orphans"] = match_stats.get("true_orphans", 0)
+                all_stats["phase_durations"]["match"] = match_stats.get("elapsed", 0)
             await update_job(pool, job_id, current_phase="match", progress_pct=cumulative_pct)
             await emit_event(
                 pool, job_id, "progress",
                 "Match complete",
-                {"phase": "match", "progress_pct": cumulative_pct}
+                {"phase": "match", "progress_pct": cumulative_pct,
+                 "matched_count": all_stats.get("matched_count", 0),
+                 "match_rate": all_stats.get("match_rate", 0),
+                 "true_orphans": all_stats.get("true_orphans", 0)}
             )
-            if isinstance(match_stats, dict):
-                all_stats["total_matches"] = match_stats.get("total_matched", 0)
-                all_stats["match_rate"] = match_stats.get("match_rate", 0)
-                all_stats["true_orphans"] = match_stats.get("true_orphans", 0)
-                all_stats["phase_durations"]["match"] = match_stats.get("elapsed", 0)
 
         # Phase 3: Enrich
         if "enrich" in phases:
@@ -8876,32 +9493,24 @@ async def _run_remaining_phases(
                 None, enrich.phase3_enrich, sqlite_db, project_dir, config, progress_cb
             )
             cumulative_pct += phase_pct
+            if isinstance(enrich_stats, dict):
+                gps_total = enrich_stats.get("gps_metadata", 0) + enrich_stats.get("gps_location_history", 0)
+                total = enrich_stats.get("total", 1)
+                all_stats["gps_count"] = gps_total
+                all_stats["gps_coverage"] = round((gps_total / total) * 100, 1) if total > 0 else 0
+                all_stats["phase_durations"]["enrich"] = enrich_stats.get("elapsed", 0)
             await update_job(pool, job_id, current_phase="enrich", progress_pct=cumulative_pct)
             await emit_event(
                 pool, job_id, "progress",
                 "Enrich complete",
-                {"phase": "enrich", "progress_pct": cumulative_pct}
+                {"phase": "enrich", "progress_pct": cumulative_pct,
+                 "gps_count": all_stats.get("gps_count", 0),
+                 "gps_coverage": all_stats.get("gps_coverage", 0)}
             )
-            if isinstance(enrich_stats, dict):
-                gps_total = enrich_stats.get("gps_metadata", 0) + enrich_stats.get("gps_location_history", 0)
-                total = enrich_stats.get("total", 1)
-                all_stats["gps_coverage"] = round((gps_total / total) * 100, 1) if total > 0 else 0
-                all_stats["phase_durations"]["enrich"] = enrich_stats.get("elapsed", 0)
 
-        # Phase 4: Export
-        if "export" in phases:
-            await emit_event(
-                pool, job_id, "phase_start",
-                "Exporting files...",
-                {"phase": "export", "progress_pct": cumulative_pct}
-            )
-            export_stats = await loop.run_in_executor(
-                None, export.phase4_export, sqlite_db, project_dir, config, job_lanes, progress_cb
-            )
-            if isinstance(export_stats, dict):
-                all_stats["files_exported"] = export_stats.get("copied", 0)
-                all_stats["exif_written"] = export_stats.get("exif_written", 0)
-                all_stats["phase_durations"]["export"] = export_stats.get("elapsed", 0)
+        # Phase 4: Export — handled post-completion via export_worker.
+        # All modes now create an export record and launch run_export()
+        # instead of calling phase4_export() synchronously inline.
 
         # Set final status based on last phase run
         if phases[-1] == "match":
@@ -8911,21 +9520,1179 @@ async def _run_remaining_phases(
         else:
             final_status = "completed"
 
-        await update_job(pool, job_id, status=final_status, progress_pct=100, stats_json=all_stats)
+        # Vault merge is now user-gated (manual via vault management UI)
+        if final_status == "completed":
+            logger.info("Job %d completed — vault merge available (user-gated)", job_id)
+
+        # ── Auto-export record ────────────────────────────────────────
+        # Unified path: ALL modes create an export record and launch
+        # run_export() via export_worker. No more phase4_export inline.
+        if final_status == "completed":
+            async with pool.acquire() as conn:
+                job_meta = await conn.fetchrow(
+                    "SELECT job_tier, user_id FROM processing_jobs WHERE id=$1",
+                    job_id,
+                )
+            if job_meta:
+                from snatched.db import create_export
+
+                _tier = job_meta.get("job_tier") or "free"
+                uid = job_meta["user_id"]
+
+                if _tier == "free":
+                    _export_type = "free"
+                    _lanes = ["memories"]
+                    _chat_text = False
+                    _chat_png = False
+                elif _tier == "rescue":
+                    _export_type = "rescue"
+                    _lanes = ["memories"]
+                    _chat_text = False
+                    _chat_png = False
+                else:
+                    _export_type = "full"
+                    _lanes = list(job_lanes) if job_lanes else ["memories", "chats", "stories"]
+                    _chat_text = True
+                    _chat_png = True
+
+                # Read user preferences for export settings
+                _prefs = {}
+                async with pool.acquire() as conn:
+                    _pref_row = await conn.fetchrow(
+                        """
+                        SELECT burn_overlays, dark_mode_pngs, exif_enabled, xmp_enabled,
+                               folder_style, gps_precision, hide_sent_to,
+                               chat_timestamps, chat_cover_pages, chat_text, chat_png
+                        FROM user_preferences WHERE user_id = $1
+                        """,
+                        uid,
+                    )
+                if _pref_row:
+                    _prefs = dict(_pref_row)
+
+                try:
+                    export_id = await create_export(
+                        pool, job_id, uid,
+                        export_type=_export_type,
+                        lanes=_lanes,
+                        exif_enabled=_prefs.get("exif_enabled", _tier != "free"),
+                        xmp_enabled=_prefs.get("xmp_enabled", False),
+                        burn_overlays=_prefs.get("burn_overlays", _tier != "free"),
+                        chat_text=_chat_text and _prefs.get("chat_text", True),
+                        chat_png=_chat_png and _prefs.get("chat_png", True),
+                        dark_mode_pngs=_prefs.get("dark_mode_pngs", False),
+                        folder_style=_prefs.get("folder_style", "year_month"),
+                        gps_precision=_prefs.get("gps_precision", "exact"),
+                        hide_sent_to=_prefs.get("hide_sent_to", False),
+                        chat_timestamps=_prefs.get("chat_timestamps", True),
+                        chat_cover_pages=_prefs.get("chat_cover_pages", True),
+                    )
+                    logger.info(
+                        "Auto-export %d for tier=%s job %d (%s)",
+                        export_id, _tier, job_id, _export_type,
+                    )
+
+                    # Launch export worker as background task
+                    asyncio.create_task(
+                        run_export(pool, export_id, job_id, username, config)
+                    )
+
+                    await emit_event(pool, job_id, "progress",
+                                    "Building your download...",
+                                    {"export_id": export_id})
+                except Exception as export_err:
+                    logger.error(
+                        "Auto-export failed for job %d: %s",
+                        job_id, export_err, exc_info=True,
+                    )
+
+        # Emit event BEFORE status update so SSE stream delivers it
+        # before the terminal status closes the stream
         await emit_event(pool, job_id, final_status, f"Phase {phases[-1]} complete", {"progress_pct": 100})
+        await update_job(pool, job_id, status=final_status, progress_pct=100, stats_json=all_stats)
         logger.info(f"Job {job_id} remaining phases completed successfully (status={final_status})")
 
     except Exception as e:
         logger.error(f"Job {job_id} remaining phases failed: {e}", exc_info=True)
-        await update_job(pool, job_id, status="failed", error_message=str(e))
-        await emit_event(pool, job_id, "error", str(e))
+        try:
+            await update_job(pool, job_id, status="failed", error_message=str(e))
+        except Exception as update_err:
+            logger.error(f"Job {job_id}: failed to mark as failed: {update_err}")
+        try:
+            await emit_event(pool, job_id, "error", str(e))
+        except Exception as emit_err:
+            logger.error(f"Job {job_id}: failed to emit error event: {emit_err}")
 
     finally:
         if sqlite_db:
             sqlite_db.close()
+        _job_tasks.pop(job_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Export CRUD endpoints (WU-7)
+# ---------------------------------------------------------------------------
+
+
+class CreateExportBody(BaseModel):
+    """Request body for POST /api/exports."""
+    job_id: int
+    export_type: str = "full"
+    lanes: list[str] = Field(default_factory=lambda: ["memories", "chats", "stories"])
+    exif_enabled: bool = True
+    xmp_enabled: bool = False
+    burn_overlays: bool = True
+    chat_text: bool = True
+    chat_png: bool = True
+    dark_mode_pngs: bool = False
+    folder_style: str = "year_month"
+    gps_precision: str = "exact"
+    hide_sent_to: bool = False
+    chat_timestamps: bool = True
+    chat_cover_pages: bool = True
+
+
+async def _verify_job_owner(pool, job_id: int, username: str) -> dict:
+    """Return the job row if it exists and belongs to username, else raise 404."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT pj.*
+            FROM processing_jobs pj
+            JOIN users u ON pj.user_id = u.id
+            WHERE pj.id = $1 AND u.username = $2
+            """,
+            job_id, username,
+        )
+    if not row:
+        raise HTTPException(404, "Job not found")
+    return dict(row)
+
+
+async def _verify_export_owner(pool, export_id: int, username: str) -> dict:
+    """Return the export row if it exists and belongs to username, else raise 404."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT e.*
+            FROM exports e
+            JOIN users u ON e.user_id = u.id
+            WHERE e.id = $1 AND u.username = $2
+            """,
+            export_id, username,
+        )
+    if not row:
+        raise HTTPException(404, "Export not found")
+    return dict(row)
+
+
+@router.post("/exports")
+async def create_export_endpoint(
+    body: CreateExportBody,
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> dict:
+    """POST /api/exports — Create a new export for a completed job.
+
+    Validates job ownership and status, creates the export record,
+    then launches the export worker as a background task.
+    """
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+
+    job_row = await _verify_job_owner(pool, body.job_id, username)
+
+    # Only allow exports on completed jobs (all phases finished)
+    # OLD: allowed scanned/matched/enriched — but those haven't finished processing
+    if job_row["status"] != "completed":
+        raise HTTPException(
+            400,
+            f"Job is '{job_row['status']}' — exports require a completed job",
+        )
+
+    # Validate export_type (includes new monetization types)
+    if body.export_type not in ("quick_rescue", "full", "free", "rescue"):
+        raise HTTPException(400, f"Invalid export_type: {body.export_type}")
+
+    # Validate lanes (only lanes with actual export support)
+    valid_lanes = {"memories", "chats", "stories"}
+    for lane in body.lanes:
+        if lane not in valid_lanes:
+            raise HTTPException(400, f"Invalid lane: {lane}")
+
+    export_id = await create_export(
+        pool,
+        job_id=body.job_id,
+        user_id=job_row["user_id"],
+        export_type=body.export_type,
+        lanes=body.lanes,
+        exif_enabled=body.exif_enabled,
+        xmp_enabled=body.xmp_enabled,
+        burn_overlays=body.burn_overlays,
+        chat_text=body.chat_text,
+        chat_png=body.chat_png,
+        dark_mode_pngs=body.dark_mode_pngs,
+        folder_style=body.folder_style,
+        gps_precision=body.gps_precision,
+        hide_sent_to=body.hide_sent_to,
+        chat_timestamps=body.chat_timestamps,
+        chat_cover_pages=body.chat_cover_pages,
+    )
+
+    # Fire-and-forget the export worker (with exception logging)
+    task = asyncio.create_task(
+        run_export(pool, export_id, body.job_id, username, config)
+    )
+
+    def _export_done(t: asyncio.Task) -> None:
+        if t.cancelled():
+            logger.warning("Export %d task was cancelled", export_id)
+        elif t.exception():
+            logger.error(
+                "Export %d task raised: %s", export_id, t.exception(),
+                exc_info=t.exception(),
+            )
+
+    task.add_done_callback(_export_done)
+
+    return {"export_id": export_id, "status": "pending"}
+
+
+@router.get("/exports")
+async def list_exports_endpoint(
+    request: Request,
+    job_id: int = Query(..., description="Job ID to list exports for"),
+    username: str = Depends(get_current_user),
+) -> list[dict]:
+    """GET /api/exports?job_id=N — List all exports for a job."""
+    pool = request.app.state.db_pool
+
+    # Verify the user owns this job
+    await _verify_job_owner(pool, job_id, username)
+
+    exports = await list_exports(pool, job_id)
+
+    # Serialize datetimes for JSON
+    for exp in exports:
+        for key in ("created_at", "started_at", "completed_at"):
+            if exp.get(key):
+                exp[key] = exp[key].isoformat()
+
+    return exports
+
+
+@router.get("/exports/{export_id}")
+async def get_export_endpoint(
+    export_id: int,
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> dict:
+    """GET /api/exports/{export_id} — Get a single export's status and details."""
+    pool = request.app.state.db_pool
+
+    export_row = await _verify_export_owner(pool, export_id, username)
+
+    # Serialize datetimes
+    for key in ("created_at", "started_at", "completed_at"):
+        if export_row.get(key):
+            export_row[key] = export_row[key].isoformat()
+
+    return export_row
+
+
+@router.get("/exports/{export_id}/stream")
+async def stream_export(
+    export_id: int,
+    request: Request,
+    username: str = Depends(get_current_user),
+):
+    """GET /api/exports/{export_id}/stream — SSE progress stream for an export.
+
+    Streams export_step and export_progress events. Terminates when the
+    export reaches a terminal state (completed/failed/cancelled).
+    """
+    pool = request.app.state.db_pool
+    export_row = await _verify_export_owner(pool, export_id, username)
+    job_id = export_row["job_id"]
+
+    async def _export_stream():
+        last_id = 0
+        idle_polls = 0
+
+        while True:
+            from snatched.db import get_events_after, get_export
+            events = await get_events_after(pool, job_id, last_id)
+
+            if events:
+                idle_polls = 0
+                for event in events:
+                    last_id = event["id"]
+                    etype = event["event_type"]
+                    # Only forward export-related events for this export
+                    if etype not in ("export_step", "export_progress", "export_complete"):
+                        continue
+                    raw = event.get("data_json")
+                    if isinstance(raw, str):
+                        try:
+                            raw = json.loads(raw)
+                        except (json.JSONDecodeError, TypeError):
+                            raw = {}
+                    if isinstance(raw, dict) and raw.get("export_id") != export_id:
+                        continue
+                    data = {"message": event.get("message", ""), **(raw or {})}
+                    yield f"event: {etype}\ndata: {json.dumps(data)}\n\n"
+            else:
+                idle_polls += 1
+                if idle_polls >= 30:
+                    yield ": heartbeat\n\n"
+                    idle_polls = 0
+
+            # Check terminal state
+            exp = await get_export(pool, export_id)
+            if exp and exp.get("status") in ("completed", "failed", "cancelled"):
+                yield f"event: export_done\ndata: {json.dumps({'status': exp['status']})}\n\n"
+                break
+
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        _export_stream(),
+        media_type="text/event-stream",
+    )
+
+
+@router.get("/exports/{export_id}/download")
+async def download_export_part(
+    export_id: int,
+    request: Request,
+    part: int = Query(1, ge=1, description="ZIP part number (1-indexed)"),
+    username: str = Depends(get_current_user),
+):
+    """GET /api/exports/{export_id}/download?part=N — Download a ZIP part.
+
+    New exports: streams a ZIP on-the-fly from the file manifest (no pre-built ZIPs).
+    Legacy exports: serves pre-built ZIP files from disk.
+    """
+    pool = request.app.state.db_pool
+
+    export_row = await _verify_export_owner(pool, export_id, username)
+
+    if export_row["status"] != "completed":
+        raise HTTPException(400, f"Export is '{export_row['status']}' — not ready for download")
+
+    part_count = export_row.get("zip_part_count") or 1
+
+    if part > part_count:
+        raise HTTPException(404, f"Part {part} does not exist (export has {part_count} parts)")
+
+    # Build friendly download filename
+    export_type = export_row.get("export_type", "full")
+    job_id_for_name = export_row.get("job_id", 0)
+    from snatched.processing.export_worker import _friendly_zip_prefix
+    friendly_prefix = _friendly_zip_prefix(username, export_type, job_id_for_name)
+    friendly_name = f"{friendly_prefix}-{part}.zip"
+
+    # Check for manifest (new streaming exports) vs pre-built ZIPs (legacy)
+    stats = export_row.get("stats_json") or {}
+    if isinstance(stats, str):
+        import json as _json
+        try:
+            stats = _json.loads(stats)
+        except (ValueError, TypeError):
+            stats = {}
+    manifest_parts = stats.get("manifest_parts")
+
+    if manifest_parts and part <= len(manifest_parts):
+        # ── New path: stream ZIP on-the-fly from manifest ──────────────
+        from snatched.processing.export import stream_zip_part, compute_zip_part_size
+
+        manifest = manifest_parts[part - 1]  # 1-indexed → 0-indexed
+        content_length = compute_zip_part_size(manifest)
+
+        return StreamingResponse(
+            stream_zip_part(manifest),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{friendly_name}"',
+                "Content-Length": str(content_length),
+            },
+        )
+    else:
+        # ── Legacy path: serve pre-built ZIP file ──────────────────────
+        zip_dir = export_row.get("zip_dir")
+        if not zip_dir:
+            raise HTTPException(500, "Export has no zip_dir — something went wrong during build")
+
+        zip_dir_path = Path(zip_dir)
+        matches = sorted(zip_dir_path.glob(f"*-{part}.zip"))
+        if not matches:
+            matches = [zip_dir_path / f"export-{export_id}-{part}.zip"]
+
+        zip_path = matches[0]
+        if not zip_path.exists():
+            raise HTTPException(404, f"ZIP part {part} not found in export directory")
+
+        return FileResponse(
+            path=str(zip_path),
+            media_type="application/zip",
+            filename=friendly_name,
+        )
+
+
+@router.delete("/exports/{export_id}")
+async def delete_export_endpoint(
+    export_id: int,
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> dict:
+    """DELETE /api/exports/{export_id} — Delete an export and its files."""
+    import shutil
+
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+
+    export_row = await _verify_export_owner(pool, export_id, username)
+
+    # Don't delete an export that's currently building
+    if export_row["status"] == "building":
+        raise HTTPException(400, "Cannot delete an export that is currently building")
+
+    # Clean up files on disk
+    zip_dir = export_row.get("zip_dir")
+    if zip_dir:
+        zip_dir_path = Path(zip_dir)
+        if zip_dir_path.exists():
+            shutil.rmtree(zip_dir_path, ignore_errors=True)
+
+    # Also clean up the work directory
+    job_id = export_row["job_id"]
+    job_dir = _job_dir(config, username, job_id)
+    export_work = job_dir / "exports" / str(export_id)
+    if export_work.exists():
+        shutil.rmtree(export_work, ignore_errors=True)
+
+    # Delete the DB record
+    await delete_export(pool, export_id)
+
+    return {"deleted": True, "export_id": export_id}
+
+
+# ============================================================================
+# Admin: Tier Plans CRUD API
+# ============================================================================
+
+
+@router.get("/admin/tiers")
+async def admin_get_tiers(
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> dict:
+    """GET /api/admin/tiers — Return all tier plans + version. Admin only."""
+    from snatched.tiers import get_all_tiers_async
+
+    pool = request.app.state.db_pool
+    await _require_admin(pool, username)
+
+    all_tiers = await get_all_tiers_async(pool)
+
+    async with pool.acquire() as conn:
+        version = await conn.fetchval(
+            "SELECT version FROM tier_plans_meta WHERE id = 1"
+        )
+
+    return {"tiers": all_tiers, "version": version}
+
+
+class TierPlanUpdate(BaseModel):
+    label: str | None = None
+    color: str | None = None
+    sort_order: int | None = None
+    storage_gb: int | None = None
+    max_upload_bytes: int | None = None
+    max_upload_label: str | None = None
+    retention_days: int | None = None
+    concurrent_jobs: int | None = None
+    bulk_upload: bool | None = None
+    max_api_keys: int | None = None
+    api_key_rate_limit_rpm: int | None = None
+    max_webhooks: int | None = None
+    max_schedules: int | None = None
+
+
+@router.put("/admin/tiers/{tier_key}")
+async def admin_update_tier(
+    tier_key: str,
+    body: TierPlanUpdate,
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> dict:
+    """PUT /api/admin/tiers/{tier_key} — Update one tier's limits, bump version. Admin only."""
+    from snatched.tiers import bump_version
+
+    pool = request.app.state.db_pool
+    await _require_admin(pool, username)
+
+    # Build dynamic SET clause from non-None fields
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    set_clauses = []
+    params = []
+    param_idx = 1
+    for col, val in updates.items():
+        set_clauses.append(f"{col} = ${param_idx}")
+        params.append(val)
+        param_idx += 1
+
+    # Always update updated_at
+    set_clauses.append("updated_at = NOW()")
+
+    params.append(tier_key)
+    query = (
+        f"UPDATE tier_plans SET {', '.join(set_clauses)} "
+        f"WHERE tier_key = ${param_idx} RETURNING tier_key"
+    )
+
+    async with pool.acquire() as conn:
+        result = await conn.fetchval(query, *params)
+        if not result:
+            raise HTTPException(404, f"Tier '{tier_key}' not found")
+
+    new_ver = await bump_version(pool)
+    return {"updated": tier_key, "version": new_ver}
+
+
+# ============================================================================
+# Admin: System Config CRUD API
+# ============================================================================
+
+
+@router.get("/admin/system")
+async def admin_get_system(
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> dict:
+    """GET /api/admin/system — Return all system_config rows. Admin only."""
+    pool = request.app.state.db_pool
+    await _require_admin(pool, username)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT key, value, value_type, description, updated_at FROM system_config ORDER BY key"
+        )
+
+    configs = [
+        {
+            "key": r["key"],
+            "value": r["value"],
+            "value_type": r["value_type"],
+            "description": r["description"],
+            "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+        }
+        for r in rows
+    ]
+    return {"configs": configs}
+
+
+class SystemConfigUpdate(BaseModel):
+    value: str
+
+
+@router.put("/admin/system/{config_key}")
+async def admin_update_system(
+    config_key: str,
+    body: SystemConfigUpdate,
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> dict:
+    """PUT /api/admin/system/{config_key} — Update one config value, bump version. Admin only."""
+    from snatched.tiers import bump_version
+
+    pool = request.app.state.db_pool
+    await _require_admin(pool, username)
+
+    async with pool.acquire() as conn:
+        # Verify the key exists and validate against its declared type
+        row = await conn.fetchrow(
+            "SELECT value_type FROM system_config WHERE key = $1", config_key
+        )
+        if not row:
+            raise HTTPException(404, f"Config key '{config_key}' not found")
+
+        # Type validation
+        vtype = row["value_type"]
+        if vtype == "integer":
+            try:
+                int(body.value)
+            except ValueError:
+                raise HTTPException(400, f"Value must be an integer for key '{config_key}'")
+        elif vtype == "boolean":
+            if body.value.lower() not in ("true", "false", "1", "0", "yes", "no"):
+                raise HTTPException(400, f"Value must be a boolean for key '{config_key}'")
+
+        await conn.execute(
+            "UPDATE system_config SET value = $1, updated_at = NOW() WHERE key = $2",
+            body.value, config_key,
+        )
+
+    new_ver = await bump_version(pool)
+    return {"updated": config_key, "value": body.value, "version": new_ver}
+
+
+@router.post("/admin/stats/reset")
+async def reset_platform_stats(
+    request: Request,
+    username: str = Depends(get_current_user),
+):
+    """POST /api/admin/stats/reset — Snapshot current totals as baselines.
+
+    After reset, the landing page shows 0 for all stats.
+    Admin only. Used during dev/testing to avoid inflated numbers.
+    """
+    pool = request.app.state.db_pool
+    await _require_admin(pool, username)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT
+                COALESCE(SUM(e.file_count), 0)::bigint AS total_files,
+                COALESCE(SUM((e.stats_json->>'gps_tagged')::int), 0)::bigint AS total_gps,
+                (SELECT COUNT(DISTINCT user_id) FROM processing_jobs
+                 WHERE status = 'completed')::bigint AS total_users
+            FROM exports e
+            WHERE e.status = 'completed'
+        """)
+        for key, col in [
+            ("stats_baseline_files", "total_files"),
+            ("stats_baseline_gps", "total_gps"),
+            ("stats_baseline_users", "total_users"),
+        ]:
+            await conn.execute("""
+                INSERT INTO system_config (key, value, value_type, description)
+                VALUES ($1, $2, 'integer', 'Platform stats baseline')
+                ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+            """, key, str(row[col]))
+    return {
+        "reset": True,
+        "baselines": {
+            "files": row["total_files"],
+            "gps": row["total_gps"],
+            "users": row["total_users"],
+        },
+    }
 
 
 @router.get("/health")
-async def health() -> dict:
-    """GET /api/health — Health check (no auth required)."""
-    return {"status": "ok", "version": "3.0"}
+async def health(request: Request) -> dict:
+    """GET /api/health — Health check (no auth required).
+
+    Checks DB connectivity and data dir disk space.
+    Returns 200 with status=ok if all checks pass, 503 if degraded.
+    """
+    import shutil
+    checks = {}
+    status = "ok"
+
+    # DB check
+    try:
+        pool = request.app.state.db_pool
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        checks["db"] = "ok"
+    except Exception as e:
+        checks["db"] = f"error: {e}"
+        status = "degraded"
+
+    # Disk check (data dir)
+    try:
+        config = request.app.state.config
+        usage = shutil.disk_usage(str(config.server.data_dir))
+        free_gb = usage.free / (1024 ** 3)
+        checks["disk_free_gb"] = round(free_gb, 1)
+        if free_gb < 1.0:
+            checks["disk"] = "critical"
+            status = "degraded"
+        elif free_gb < 5.0:
+            checks["disk"] = "warning"
+        else:
+            checks["disk"] = "ok"
+    except Exception as e:
+        checks["disk"] = f"error: {e}"
+        status = "degraded"
+
+    # Ramdisk check
+    try:
+        ramdisk = shutil.disk_usage("/ramdisk")
+        checks["ramdisk_free_gb"] = round(ramdisk.free / (1024 ** 3), 1)
+    except Exception:
+        checks["ramdisk_free_gb"] = None
+
+    code = 200 if status == "ok" else 503
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=code,
+        content={"status": status, "version": "3.0", "checks": checks},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Vault endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/vaults/html")
+async def list_vaults_html(
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> HTMLResponse:
+    """GET /api/vaults/html — HTML fragment of vault cards for htmx swap."""
+    from snatched.processing.vault import get_vault_stats
+    from pathlib import Path
+
+    pool = request.app.state.db_pool
+    templates = request.app.state.templates
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT v.* FROM vaults v
+            JOIN users u ON v.user_id = u.id
+            WHERE u.username = $1
+            ORDER BY v.updated_at DESC
+            """,
+            username,
+        )
+
+    vaults = []
+    for row in rows:
+        v = dict(row)
+        # Try to get GPS coverage from vault.db stats
+        vault_path = v.get("vault_path")
+        if vault_path and Path(vault_path).is_file():
+            disk_stats = get_vault_stats(Path(vault_path))
+            v["gps_pct"] = disk_stats.get("gps_coverage", {}).get("pct", 0)
+            v["total_memories"] = disk_stats.get("total_memories", 0)
+        else:
+            v["gps_pct"] = 0
+            v["total_memories"] = 0
+        vaults.append(v)
+
+    return templates.TemplateResponse("_vault_card.html", {
+        "request": request,
+        "vaults": vaults,
+    })
+
+
+@router.post("/vault/{vault_id}/export")
+async def export_from_vault(
+    request: Request,
+    vault_id: int,
+    username: str = Depends(get_current_user),
+):
+    """POST /api/vault/{vault_id}/export — Export from vault (coming soon)."""
+    pool = request.app.state.db_pool
+
+    async with pool.acquire() as conn:
+        vault = await conn.fetchrow(
+            """
+            SELECT v.id FROM vaults v
+            JOIN users u ON v.user_id = u.id
+            WHERE v.id = $1 AND u.username = $2
+            """,
+            vault_id, username,
+        )
+        if not vault:
+            raise HTTPException(404, "Vault not found")
+
+    return {"message": "Export from vault is coming soon. This feature is under development."}
+
+
+# ---------------------------------------------------------------------------
+# Vault merge / unmerge endpoints (user-gated)
+# ---------------------------------------------------------------------------
+
+@router.get("/vault/available-jobs")
+async def vault_available_jobs(
+    request: Request,
+    username: str = Depends(get_current_user),
+) -> JSONResponse:
+    """GET /api/vault/available-jobs — completed jobs not yet merged into vault."""
+    from snatched.processing.vault import get_mergeable_job_stats
+
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+    data_dir = Path(str(config.server.data_dir))
+
+    async with pool.acquire() as conn:
+        user = await conn.fetchrow("SELECT id FROM users WHERE username=$1", username)
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        rows = await conn.fetch("""
+            SELECT pj.id, pj.status, pj.created_at, pj.snap_account_uid, pj.snap_username
+            FROM processing_jobs pj
+            LEFT JOIN vault_imports vi ON vi.job_id = pj.id
+            WHERE pj.user_id = $1
+              AND pj.status = 'completed'
+              AND vi.id IS NULL
+            ORDER BY pj.created_at DESC
+        """, user["id"])
+
+    jobs = []
+    for row in rows:
+        job_id = row["id"]
+        proc_db = data_dir / username / "jobs" / str(job_id) / "proc.db"
+        stats = None
+        if proc_db.is_file():
+            stats = get_mergeable_job_stats(proc_db)
+            if stats.get("error"):
+                stats = None
+
+        # Get original filename from upload_sessions
+        orig_fn = None
+        try:
+            async with pool.acquire() as conn:
+                fn_row = await conn.fetchrow(
+                    "SELECT options_json FROM upload_sessions WHERE job_id=$1", job_id
+                )
+                if fn_row and fn_row["options_json"]:
+                    opts = fn_row["options_json"]
+                    if isinstance(opts, str):
+                        opts = json.loads(opts)
+                    orig_names = opts.get("original_filenames", [])
+                    orig_fn = ", ".join(orig_names) if orig_names else None
+        except Exception:
+            pass
+
+        jobs.append({
+            "job_id": job_id,
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "original_filename": orig_fn,
+            "snap_uid": row["snap_account_uid"],
+            "snap_username": row["snap_username"],
+            "has_proc_db": proc_db.is_file(),
+            "stats": stats,
+        })
+
+    return JSONResponse({"jobs": jobs})
+
+
+@router.get("/vault/merge-preview/{job_id}")
+async def vault_merge_preview(
+    request: Request,
+    job_id: int,
+    username: str = Depends(get_current_user),
+) -> JSONResponse:
+    """GET /api/vault/merge-preview/{job_id} — preview merge without executing it."""
+    from snatched.processing.vault import (
+        check_vault_fingerprint, get_mergeable_job_stats, validate_vault_seed,
+    )
+
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+    data_dir = Path(str(config.server.data_dir))
+
+    # Verify job belongs to user
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow("""
+            SELECT pj.id, pj.snap_account_uid, pj.snap_username
+            FROM processing_jobs pj
+            JOIN users u ON pj.user_id = u.id
+            WHERE pj.id = $1 AND u.username = $2
+        """, job_id, username)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    proc_db = data_dir / username / "jobs" / str(job_id) / "proc.db"
+    if not proc_db.is_file():
+        raise HTTPException(404, "Job proc.db not found — data may have been cleaned up")
+
+    # Fingerprint check
+    vault_db = data_dir / username / "vault" / "vault.db"
+    fp_check = check_vault_fingerprint(
+        vault_db, job["snap_account_uid"], job["snap_username"]
+    )
+
+    # Job stats
+    stats = get_mergeable_job_stats(proc_db)
+
+    # Seed validation — only relevant when creating a new vault
+    vault_exists = vault_db.is_file()
+    seed_check = None
+    if not vault_exists:
+        seed_check = validate_vault_seed(proc_db, snap_account_uid=job["snap_account_uid"])
+
+    return JSONResponse({
+        "job_id": job_id,
+        "fingerprint": fp_check,
+        "stats": stats,
+        "vault_exists": vault_exists,
+        "seed_check": seed_check,
+    })
+
+
+@router.post("/vault/merge/{job_id}")
+async def vault_merge_job(
+    request: Request,
+    job_id: int,
+    force: bool = Query(False, description="Skip fingerprint check"),
+    username: str = Depends(get_current_user),
+) -> JSONResponse:
+    """POST /api/vault/merge/{job_id} — merge a completed job into the vault."""
+    from snatched.processing.vault import (
+        find_user_vault, create_user_vault, import_job_to_vault,
+        rematch_vault_gps, check_vault_fingerprint, validate_vault_seed,
+    )
+
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+    data_dir = Path(str(config.server.data_dir))
+    loop = asyncio.get_running_loop()
+
+    # Verify job belongs to user, is completed, and not already merged
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow("""
+            SELECT pj.id, pj.user_id, pj.status, pj.snap_account_uid, pj.snap_username
+            FROM processing_jobs pj
+            JOIN users u ON pj.user_id = u.id
+            WHERE pj.id = $1 AND u.username = $2
+        """, job_id, username)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        if job["status"] != "completed":
+            raise HTTPException(400, f"Job status is '{job['status']}' — only completed jobs can be merged")
+        already_merged = await conn.fetchval(
+            "SELECT id FROM vault_imports WHERE job_id = $1", job_id
+        )
+        if already_merged:
+            raise HTTPException(409, "This job has already been merged into the vault")
+
+    snap_uid = job["snap_account_uid"]
+    snap_username_val = job["snap_username"]
+    user_id = job["user_id"]
+
+    proc_db = data_dir / username / "jobs" / str(job_id) / "proc.db"
+    if not proc_db.is_file():
+        raise HTTPException(404, "Job proc.db not found — data may have been cleaned up")
+
+    # Fingerprint guard
+    vault_db = find_user_vault(data_dir, username)
+    vault_db_path = vault_db or (data_dir / username / "vault" / "vault.db")
+
+    if not force:
+        fp_check = check_vault_fingerprint(vault_db_path, snap_uid, snap_username_val)
+        if not fp_check["ok"]:
+            return JSONResponse(status_code=409, content={
+                "error": "fingerprint_mismatch",
+                "detail": (
+                    "This upload does not match your vault's Snapchat account. "
+                    "Use force=true to override."
+                ),
+                "fingerprint": fp_check,
+            })
+
+    # Vault creation gate — only for first import
+    if vault_db is None:
+        # Validate data richness before creating vault
+        seed_check = validate_vault_seed(proc_db, snap_account_uid=snap_uid)
+        if not seed_check["pass"] and not force:
+            return JSONResponse(status_code=422, content={
+                "error": "vault_seed_insufficient",
+                "detail": "This export doesn't meet the minimum requirements to create a vault.",
+                "checks": seed_check["checks"],
+                "recommendation": seed_check["recommendation"],
+            })
+        vault_db = create_user_vault(data_dir, username, snap_uid, snap_username_val)
+        logger.info("Job %d: new vault created at %s", job_id, vault_db)
+
+    # Get original filename
+    orig_fn = None
+    try:
+        async with pool.acquire() as conn:
+            fn_row = await conn.fetchrow(
+                "SELECT options_json FROM upload_sessions WHERE job_id=$1", job_id
+            )
+            if fn_row and fn_row["options_json"]:
+                opts = fn_row["options_json"]
+                if isinstance(opts, str):
+                    opts = json.loads(opts)
+                orig_names = opts.get("original_filenames", [])
+                orig_fn = ", ".join(orig_names) if orig_names else None
+    except Exception:
+        pass
+
+    # Merge
+    merge_stats = await loop.run_in_executor(
+        None, import_job_to_vault, vault_db, proc_db, job_id, orig_fn
+    )
+    logger.info("Job %d: vault merge — %s", job_id, merge_stats)
+
+    # GPS re-match if new locations
+    if merge_stats.get("locations_added", 0) > 0:
+        gps_window = getattr(config.pipeline, 'gps_window_seconds', 300)
+        rematch = await loop.run_in_executor(
+            None, rematch_vault_gps, vault_db, gps_window
+        )
+        merge_stats["gps_rematched"] = rematch.get("rematched", 0)
+        logger.info("Job %d: vault GPS rematch — %s", job_id, rematch)
+
+    # Update PostgreSQL vault + vault_imports records
+    try:
+        async with pool.acquire() as conn:
+            existing_vault = await conn.fetchrow(
+                "SELECT id FROM vaults WHERE user_id=$1 LIMIT 1", user_id
+            )
+            if existing_vault:
+                vault_pg_id = existing_vault["id"]
+                await conn.execute("""
+                    UPDATE vaults SET
+                        snap_username = COALESCE($1, snap_username),
+                        snap_account_uid = COALESCE($2, snap_account_uid),
+                        import_count = import_count + 1,
+                        total_assets = $3, total_locations = $4, total_friends = $5,
+                        last_import_at = NOW(), updated_at = NOW()
+                    WHERE id = $6
+                """, snap_username_val, snap_uid,
+                    merge_stats.get("total_assets", 0),
+                    merge_stats.get("total_locations", 0),
+                    merge_stats.get("total_friends", 0),
+                    vault_pg_id,
+                )
+            else:
+                vault_pg_id = await conn.fetchval("""
+                    INSERT INTO vaults (user_id, snap_account_uid, snap_username, vault_path,
+                                       import_count, total_assets, total_locations, total_friends,
+                                       last_import_at)
+                    VALUES ($1, $2, $3, $4, 1, $5, $6, $7, NOW())
+                    RETURNING id
+                """, user_id, snap_uid, snap_username_val, str(vault_db),
+                    merge_stats.get("total_assets", 0),
+                    merge_stats.get("total_locations", 0),
+                    merge_stats.get("total_friends", 0),
+                )
+
+            # Record import in vault_imports (include sqlite_import_id for unmerge)
+            if vault_pg_id:
+                await conn.execute("""
+                    INSERT INTO vault_imports (vault_id, job_id, original_filename,
+                        assets_added, assets_skipped, locations_added, friends_added,
+                        gps_rematched, sqlite_import_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """, vault_pg_id, job_id, orig_fn,
+                    merge_stats.get("assets_added", 0),
+                    merge_stats.get("assets_skipped", 0),
+                    merge_stats.get("locations_added", 0),
+                    merge_stats.get("friends_added", 0),
+                    merge_stats.get("gps_rematched", 0),
+                    merge_stats.get("import_id"),
+                )
+        vault_created = existing_vault is None
+    except Exception as pg_err:
+        logger.warning("Job %d: vault PostgreSQL update failed: %s", job_id, pg_err)
+        return JSONResponse({"ok": True, "merge_stats": merge_stats,
+                             "pg_sync_failed": True, "vault_created": False})
+
+    return JSONResponse({"ok": True, "merge_stats": merge_stats,
+                         "pg_sync_failed": False, "vault_created": vault_created})
+
+
+@router.post("/vault/unmerge/{import_id}")
+async def vault_unmerge(
+    request: Request,
+    import_id: int,
+    username: str = Depends(get_current_user),
+) -> JSONResponse:
+    """POST /api/vault/unmerge/{import_id} — remove an import from the vault."""
+    from snatched.processing.vault import unmerge_from_vault, get_vault_stats
+
+    pool = request.app.state.db_pool
+    config = request.app.state.config
+    data_dir = Path(str(config.server.data_dir))
+    loop = asyncio.get_running_loop()
+
+    # Verify import belongs to user's vault
+    async with pool.acquire() as conn:
+        user = await conn.fetchrow("SELECT id FROM users WHERE username=$1", username)
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        vi = await conn.fetchrow("""
+            SELECT vi.id, vi.vault_id, vi.job_id, vi.sqlite_import_id
+            FROM vault_imports vi
+            JOIN vaults v ON vi.vault_id = v.id
+            WHERE vi.id = $1 AND v.user_id = $2
+        """, import_id, user["id"])
+
+    if not vi:
+        raise HTTPException(404, "Import not found or does not belong to your vault")
+
+    vault_db = data_dir / username / "vault" / "vault.db"
+    if not vault_db.is_file():
+        raise HTTPException(404, "Vault not found on disk")
+
+    vault_pg_id = vi["vault_id"]
+    job_id = vi["job_id"]
+
+    # Use stored sqlite_import_id if available, otherwise fall back to job_id lookup
+    sqlite_import_id = vi["sqlite_import_id"]
+    if sqlite_import_id is None:
+        # Legacy import without stored sqlite_import_id — look up via job_id
+        if job_id is None:
+            raise HTTPException(
+                400,
+                "Cannot unmerge: job was deleted and no sqlite_import_id was stored. "
+                "This import predates the fix. Re-merge the data first to populate the reference."
+            )
+        import sqlite3 as _sqlite3
+        _conn = _sqlite3.connect(str(vault_db))
+        try:
+            _row = _conn.execute(
+                "SELECT id FROM imports WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if not _row:
+                raise HTTPException(404, "Import not found in vault SQLite database")
+            sqlite_import_id = _row[0]
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"Error reading vault database: {e}")
+        finally:
+            _conn.close()
+
+    # Unmerge from SQLite vault
+    removal_stats = await loop.run_in_executor(
+        None, unmerge_from_vault, vault_db, sqlite_import_id
+    )
+
+    if removal_stats.get("error"):
+        raise HTTPException(400, removal_stats["error"])
+
+    logger.info("Vault unmerge: import_id=%d (sqlite), job_id=%d — %s",
+                sqlite_import_id, job_id, removal_stats)
+
+    # Update PostgreSQL: refresh vault totals from SQLite
+    try:
+        vault_stats = get_vault_stats(vault_db)
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE vaults SET
+                    import_count = GREATEST(import_count - 1, 0),
+                    total_assets = $1, total_locations = $2, total_friends = $3,
+                    updated_at = NOW()
+                WHERE id = $4
+            """,
+                vault_stats.get("total_assets", 0),
+                vault_stats.get("total_locations", 0),
+                vault_stats.get("total_friends", 0),
+                vault_pg_id,
+            )
+            # Delete from vault_imports
+            await conn.execute(
+                "DELETE FROM vault_imports WHERE id = $1", vi["id"]
+            )
+    except Exception as pg_err:
+        logger.warning("Vault unmerge PG update failed: %s", pg_err)
+        return JSONResponse({"ok": True, "removal_stats": removal_stats,
+                             "pg_sync_failed": True})
+
+    return JSONResponse({"ok": True, "removal_stats": removal_stats,
+                         "pg_sync_failed": False})

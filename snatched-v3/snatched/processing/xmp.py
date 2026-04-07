@@ -47,6 +47,16 @@ def generate_xmp(match_row: dict, config: Config) -> str:
         tags['exif:GPSLatitude'] = str(lat)
         tags['exif:GPSLongitude'] = str(lon)
 
+    # Location name (human-readable place from Snapchat)
+    location_raw = match_row.get('location_raw')
+    if location_raw:
+        tags['photoshop:City'] = location_raw
+
+    # GPS source provenance
+    gps_source = match_row.get('gps_source')
+    if gps_source:
+        tags['snatched:gpsSource'] = gps_source
+
     # Creator / contributor
     creator_str = match_row.get('creator_str')
     if creator_str:
@@ -121,6 +131,7 @@ def build_xmp_xml(tags: dict, snatched_meta: dict) -> str:
         xmlns:exif="http://ns.adobe.com/exif/1.0/"
         xmlns:xmp="http://ns.adobe.com/xap/1.0/"
         xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/"
+        xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"
         xmlns:snatched="http://snatched.app/ns/1.0/">
 {tags_xml}
       <xmpMM:DocumentID>snatched://{file_id}</xmpMM:DocumentID>{snatched_xml}
@@ -134,6 +145,7 @@ def write_xmp_sidecars(
     project_dir: Path,
     config: Config,
     progress_cb: Callable[[str], None] | None = None,
+    readonly: bool = False,
 ) -> dict:
     """Write XMP sidecar files for all exported assets.
 
@@ -141,6 +153,10 @@ def write_xmp_sidecars(
     Example: Snap_Memory_2025-01-15_143022.jpg.xmp
 
     Skips assets with no output_path.
+
+    Args:
+        readonly: If True, resolve output paths from match data + project_dir
+                  instead of assets.output_path, and skip DB status writes.
 
     Returns:
         {'written': int, 'skipped': int, 'errors': int, 'elapsed': float}
@@ -150,18 +166,40 @@ def write_xmp_sidecars(
     if progress_cb:
         progress_cb("Writing XMP sidecar files...")
 
-    rows = db.execute("""
-        SELECT
-            m.id as match_id,
-            m.matched_date, m.matched_lat, m.matched_lon, m.gps_source,
-            m.display_name, m.creator_str, m.direction, m.conversation,
-            m.strategy, m.confidence,
-            a.id as asset_id, a.output_path, a.file_id, a.memory_uuid
-        FROM matches m
-        JOIN assets a ON m.asset_id = a.id
-        WHERE m.is_best = 1
-    """).fetchall()
+    if readonly:
+        rows = db.execute("""
+            SELECT
+                m.id as match_id,
+                m.matched_date, m.matched_lat, m.matched_lon, m.gps_source,
+                m.display_name, m.creator_str, m.direction, m.conversation,
+                m.strategy, m.confidence,
+                a.id as asset_id, m.output_subdir, m.output_filename,
+                a.file_id, a.memory_uuid,
+                mem.location_raw
+            FROM matches m
+            JOIN assets a ON m.asset_id = a.id
+            LEFT JOIN memories mem ON m.memory_id = mem.id
+            WHERE m.is_best = 1
+              AND m.output_subdir IS NOT NULL
+              AND m.output_filename IS NOT NULL
+        """).fetchall()
+    else:
+        rows = db.execute("""
+            SELECT
+                m.id as match_id,
+                m.matched_date, m.matched_lat, m.matched_lon, m.gps_source,
+                m.display_name, m.creator_str, m.direction, m.conversation,
+                m.strategy, m.confidence,
+                a.id as asset_id, a.output_path, NULL,
+                a.file_id, a.memory_uuid,
+                mem.location_raw
+            FROM matches m
+            JOIN assets a ON m.asset_id = a.id
+            LEFT JOIN memories mem ON m.memory_id = mem.id
+            WHERE m.is_best = 1
+        """).fetchall()
 
+    out_dir = project_dir / 'output'
     written = 0
     skipped = 0
     errors = 0
@@ -170,7 +208,13 @@ def write_xmp_sidecars(
         (match_id, matched_date, matched_lat, matched_lon, gps_source,
          display_name, creator_str, direction, conversation,
          strategy, confidence,
-         asset_id, output_path, file_id, memory_uuid) = row
+         asset_id, col_a, col_b, file_id, memory_uuid,
+         location_raw) = row
+
+        if readonly:
+            output_path = str(out_dir / col_a / col_b)
+        else:
+            output_path = col_a
 
         if not output_path:
             skipped += 1
@@ -186,6 +230,7 @@ def write_xmp_sidecars(
             'matched_lat': matched_lat,
             'matched_lon': matched_lon,
             'gps_source': gps_source,
+            'location_raw': location_raw,
             'display_name': display_name,
             'creator_str': creator_str,
             'direction': direction,
@@ -201,9 +246,10 @@ def write_xmp_sidecars(
             xmp_path = Path(str(output_path) + '.xmp')
             xmp_path.write_text(xmp_content, encoding='utf-8')
 
-            db.execute(
-                "UPDATE assets SET xmp_written=1, xmp_path=? WHERE id=?",
-                (str(xmp_path), asset_id))
+            if not readonly:
+                db.execute(
+                    "UPDATE assets SET xmp_written=1, xmp_path=? WHERE id=?",
+                    (str(xmp_path), asset_id))
             written += 1
 
         except Exception:
@@ -213,7 +259,8 @@ def write_xmp_sidecars(
         if written % 100 == 0 and written > 0 and progress_cb:
             progress_cb(f"XMP sidecars: {written} written...")
 
-    db.commit()
+    if not readonly:
+        db.commit()
 
     elapsed = time.time() - t0
     logger.info(

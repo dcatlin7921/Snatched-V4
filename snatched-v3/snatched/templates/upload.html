@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block title %}Upload — SNATCHED{% endblock %}
 
 {% block content %}
 <!-- Inject tier info as a JS constant for client-side enforcement -->
@@ -6,163 +7,81 @@
 const TIER_INFO = {{ tier_info | tojson }};
 </script>
 
-<style>
-/* Upload-page-specific styles (base styles in style.css) */
-.phase-container { transition: opacity 0.3s; }
-.phase-container.hidden { display: none; }
-
-.warning-banner {
-    background: var(--snap-yellow);
-    color: #000;
-    padding: 1rem 1.5rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    font-size: 0.9rem;
-}
-.warning-banner .material-symbols-outlined { color: #000; }
-
-.file-table { width: 100%; margin: 1rem 0; }
-.file-table thead th {
-    color: var(--snap-yellow); text-align: left; padding: 0.75rem;
-    font-size: 0.75rem; font-weight: 800; text-transform: uppercase;
-    letter-spacing: 0.1em; border-bottom: 2px solid var(--border-dark);
-}
-.file-table tbody td {
-    padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--border-dark); font-size: 0.85rem;
-}
-
-.btn-remove {
-    background: transparent; color: var(--danger); border: 1px solid var(--danger);
-    padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.7rem;
-    font-weight: 700; text-transform: uppercase;
-}
-.btn-remove:hover { background: var(--danger); color: #fff; }
-
-.file-summary { margin-top: 0.75rem; font-size: 0.85rem; }
-
-.hash-progress-row {
-    margin-bottom: 1rem; padding: 0.75rem; background: var(--charcoal);
-    border-left: 3px solid var(--snap-yellow);
-}
-.hash-row-content { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-.hash-filename { font-size: 0.9rem; color: var(--text-primary); }
-.hash-status { font-size: 0.75rem; }
-
-.stat-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
-
-.upload-stats { margin-bottom: 1.5rem; }
-
-.file-progress-container { margin: 1.5rem 0; }
-.file-progress-row { margin-bottom: 1.5rem; padding: 1rem; background: var(--charcoal); border-left: 3px solid var(--border-dark); }
-.file-progress-row.complete { border-left-color: var(--success); }
-.file-progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
-.file-progress-name { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); }
-.file-progress-status { font-size: 0.75rem; }
-.file-progress-details { display: flex; justify-content: space-between; margin-top: 0.5rem; }
-.file-progress-bytes { font-size: 0.75rem; }
-
-.upload-footer {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-dark);
-}
-.speed-eta { display: flex; gap: 0.5rem; align-items: center; font-size: 0.85rem; }
-.speed-eta .separator { color: var(--text-dim); }
-
-.paused-banner {
-    background: var(--charcoal);
-    color: var(--snap-yellow);
-    border-left: 4px solid var(--snap-yellow);
-}
-.paused-banner .material-symbols-outlined { color: var(--snap-yellow); }
-
-.resume-picker {
-    display: flex; align-items: center; gap: 1rem;
-    padding: 1.25rem; margin: 1rem 0;
-    background: var(--charcoal); border: 2px dashed var(--snap-yellow);
-}
-.resume-picker input[type="file"] { display: none; }
-
-</style>
-
 <section>
     <!-- PHASE 1: FILE SELECTION -->
     <div id="phase-select" class="phase-container">
-        <h1 class="mb-2">Upload Your Snapchat Export</h1>
+        <h2 style="font-size: 1.2rem; margin-bottom: 0.15rem;">Upload Your Snapchat Export</h2>
+        <p style="font-size: 0.72rem; color: var(--text-dim); margin: 0 0 0.5rem;">
+            We'll scan your data and show you exactly what's inside before anything else happens.
+        </p>
 
-        <!-- Tier badge + upload limit info -->
-        <div class="gap-row mb-2" style="flex-wrap: wrap; align-items: center;">
-            <span style="
-                display: inline-block;
-                padding: 0.2rem 0.65rem;
-                font-size: 0.72rem;
-                font-weight: 800;
-                text-transform: uppercase;
-                letter-spacing: 0.1em;
-                font-family: 'JetBrains Mono', monospace;
-                color: var(--void);
-                background: {{ tier_info.color }};
-                line-height: 1.6;
-            ">{{ tier_info.label }}</span>
-            <span class="text-muted" style="font-size: 0.85rem;">
-                Your plan allows up to <strong>{{ tier_info.max_upload_label }}</strong> per upload
-            </span>
-            {% if not tier_info.bulk_upload %}
-            <span class="text-muted" style="font-size: 0.8rem;">
-                <a href="/settings">Upgrade to Pro</a> for bulk uploads (multiple ZIPs)
-            </span>
-            {% endif %}
+        <!-- Upload Mode Toggle (ZIP / Folder) — behind disclosure for advanced users -->
+        <div class="upload-mode-toggle-wrapper" style="margin-bottom: 0.5rem;">
+            <details id="advanced-upload-options">
+                <!-- OLD: <summary>Advanced Options</summary> -->
+                <summary style="font-size: 0.72rem; font-family: 'JetBrains Mono', monospace; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); cursor: pointer; list-style: none; display: flex; align-items: center; gap: 0.4rem;">
+                    <span class="material-symbols-outlined" style="font-size: 0.85rem;">folder_open</span>
+                    Already unzipped? Upload a folder instead
+                    <span class="material-symbols-outlined" style="font-size: 0.85rem; transition: transform 0.2s;" id="advanced-chevron">expand_more</span>
+                </summary>
+                <div style="margin-top: 0.5rem;">
+                    <div class="upload-mode-toggle" style="display: flex; gap: 0; margin-bottom: 0.5rem; border: 2px solid var(--snap-yellow, #FFFC00);">
+                        <button id="mode-zip" class="mode-btn active" onclick="setUploadMode('zip')" type="button"
+                                style="flex: 1; padding: 0.4rem 0.75rem; background: var(--snap-yellow, #FFFC00); color: #000; border: none; font-weight: 700; font-family: 'JetBrains Mono', monospace; cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.72rem;">
+                            ZIP Upload
+                        </button>
+                        <button id="mode-folder" class="mode-btn" onclick="setUploadMode('folder')" type="button"
+                                style="flex: 1; padding: 0.4rem 0.75rem; background: transparent; color: var(--snap-yellow, #FFFC00); border: none; border-left: 2px solid var(--snap-yellow, #FFFC00); font-weight: 700; font-family: 'JetBrains Mono', monospace; cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.72rem;">
+                            Folder Upload
+                        </button>
+                    </div>
+                </div>
+            </details>
         </div>
 
-        {% if tier_info.bulk_upload %}
-        <!-- Bulk upload info card -->
-        <div class="info-card mb-2" style="border-left: 3px solid #c084fc;">
-            <div class="gap-row" style="align-items: center;">
-                <span class="material-symbols-outlined" style="color: #c084fc; font-size: 1.2rem;">layers</span>
-                <strong class="mono uppercase" style="color: #c084fc; font-size: 0.85rem; letter-spacing: 0.08em;">Bulk Upload Enabled</strong>
-            </div>
-            <p class="text-muted mb-0" style="margin-top: 0.4rem; font-size: 0.82rem;">
-                Upload multiple ZIPs to process as a linked group — perfect for monthly exports spanning a year.
-            </p>
-        </div>
-        {% endif %}
-
-        <p class="text-muted">Drop your ZIP files or select them below. Multiple files supported (2GB parts).</p>
-
-        <!-- Drag-drop zone -->
-        <div class="upload-zone" id="dropzone">
-            <div class="upload-icon">
-                <span class="material-symbols-outlined" style="font-size: 3rem; color: var(--snap-yellow);">cloud_upload</span>
-            </div>
-            <p>Drop your Snapchat export files here</p>
+        <!-- Drag-drop zone (ZIP mode) -->
+        <div id="upload-zone">
+        <div class="upload-zone" id="dropzone" style="padding: 1.25rem 1rem;">
+            <span class="material-symbols-outlined" style="font-size: 1.75rem; color: var(--snap-yellow);">cloud_upload</span>
+            <p style="margin: 0.15rem 0 0.3rem; font-size: 0.85rem;">Drop your Snapchat export ZIPs here</p>
             <input type="file" name="files" accept=".zip" id="fileInput" multiple>
-            <label for="fileInput" class="btn-outline" style="cursor: pointer;">Select Files</label>
-            <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.75rem;">Multiple .zip files supported (Snapchat 2GB parts)</p>
+            <label for="fileInput" class="btn-outline" style="cursor: pointer; padding: 0.25rem 1rem; font-size: 0.75rem;">Select Files</label>
+            <p class="text-muted" style="font-size: 0.68rem; margin-top: 0.25rem;">Multiple .zip files · Snapchat 2GB parts OK</p>
+        </div>
+        </div>
+
+        <!-- Folder Upload Zone (hidden by default) -->
+        <div id="folder-zone" style="display: none;">
+            <div style="border: 2px dashed var(--snap-yellow, #FFFC00); padding: 1rem; text-align: center; margin-bottom: 0.5rem;">
+                <span class="material-symbols-outlined" style="font-size: 1.75rem; color: var(--snap-yellow, #FFFC00);">folder_open</span>
+                <p style="margin: 0.15rem 0 0.15rem; font-weight: 700; font-size: 0.85rem;">Select your unzipped export folder</p>
+                <p style="font-size: 0.72rem; opacity: 0.7; margin: 0 0 0.25rem;">Folder with json/, memories/, chat_media/, etc.</p>
+                <input type="file" id="folderInput" webkitdirectory directory multiple
+                       style="display: none;" onchange="handleFolderSelect(this.files)">
+                <button onclick="document.getElementById('folderInput').click()" type="button"
+                        style="padding: 0.4rem 1.25rem; background: var(--snap-yellow, #FFFC00); color: #000; border: none; font-weight: 700; font-family: 'JetBrains Mono', monospace; cursor: pointer; text-transform: uppercase; font-size: 0.75rem;">
+                    Choose Folder
+                </button>
+            </div>
+            <div id="folder-warning" style="display: none; background: rgba(255, 252, 0, 0.1); border: 1px solid var(--snap-yellow, #FFFC00); padding: 0.5rem 0.75rem; margin-bottom: 0.5rem;">
+                <p style="margin: 0; font-size: 0.75rem;">
+                    <strong>&#9888; Folder uploads may be less accurate than ZIP uploads.</strong>
+                </p>
+            </div>
+            <div id="folder-validation" style="display: none; margin-bottom: 0.5rem;"></div>
         </div>
 
         <!-- File list (appears after selection) -->
         <div id="file-list-container" class="hidden">
-            <div class="info-card">
-                <h3>Files Selected</h3>
+            <div class="info-card" style="padding: 0.5rem 0.75rem;">
+                <h3 style="font-size: 0.8rem; margin-bottom: 0.3rem;">Files Selected</h3>
                 <table id="file-list" class="file-table">
-                    <thead>
-                        <tr>
-                            <th>Filename</th>
-                            <th>Size</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="file-list-body">
-                    </tbody>
+                    <thead><tr><th>Filename</th><th>Size</th><th>Action</th></tr></thead>
+                    <tbody id="file-list-body"></tbody>
                 </table>
-                <div id="file-list-summary" class="file-summary mono text-muted"></div>
-
-                <!-- Size limit progress bar -->
-                <div id="size-limit-bar-container" class="mt-2">
-                    <div class="gap-row mb-1" style="justify-content: space-between; font-size: 0.75rem;">
+                <div id="file-list-summary" class="file-summary mono text-muted" style="font-size: 0.75rem;"></div>
+                <div id="size-limit-bar-container" style="margin-top: 0.4rem;">
+                    <div class="gap-row" style="justify-content: space-between; font-size: 0.68rem; margin-bottom: 0.2rem;">
                         <span class="mono text-muted">Upload Size vs. Limit</span>
                         <span class="mono text-muted" id="size-limit-label"></span>
                     </div>
@@ -170,87 +89,48 @@ const TIER_INFO = {{ tier_info | tojson }};
                         <div id="size-limit-fill" class="progress-fill" style="width: 0%; background: var(--snap-yellow); transition: width 0.2s, background 0.2s;"></div>
                     </div>
                 </div>
-
-                <!-- Oversized warning / upgrade prompt -->
-                <div id="size-over-warning" class="hidden alert alert-error mt-2" style="align-items: center; gap: 0.6rem;">
+                <div id="size-over-warning" class="hidden alert alert-error" style="align-items: center; gap: 0.5rem; margin-top: 0.4rem; font-size: 0.78rem;">
                     <span class="material-symbols-outlined icon-sm">error</span>
-                    <span id="size-over-text">Total size exceeds your plan limit.</span>
-                    <a href="/settings" class="text-yellow" style="margin-left: auto; white-space: nowrap; font-weight: 700;">Upgrade Plan &rarr;</a>
+                    <span id="size-over-text">Total size exceeds the upload limit.</span>
+                    <!-- OLD: <a href="/settings" class="text-yellow" style="margin-left: auto; white-space: nowrap; font-weight: 700;">Upgrade &rarr;</a> -->
                 </div>
-
-                <!-- Bulk job group badge (shown when bulk enabled + multiple files) -->
-                <div id="job-group-badge" class="hidden mt-2" style="
-                    padding: 0.5rem 0.75rem;
-                    background: rgba(192, 132, 252, 0.08);
-                    border: 1px solid rgba(192, 132, 252, 0.35);
-                    display: flex;
-                    align-items: center;
-                    gap: 0.6rem;
-                    font-size: 0.8rem;
+                <div id="job-group-badge" class="hidden" style="
+                    padding: 0.35rem 0.6rem; margin-top: 0.4rem;
+                    background: rgba(192, 132, 252, 0.08); border: 1px solid rgba(192, 132, 252, 0.35);
+                    display: flex; align-items: center; gap: 0.5rem; font-size: 0.72rem;
                 ">
-                    <span class="material-symbols-outlined" style="color: #c084fc; font-size: 1rem;">link</span>
-                    <span class="mono uppercase" style="color: #c084fc; font-weight: 700; font-size: 0.72rem; letter-spacing: 0.08em;">Job Group</span>
+                    <span class="material-symbols-outlined" style="color: #c084fc; font-size: 0.85rem;">link</span>
+                    <span class="mono uppercase" style="color: #c084fc; font-weight: 700; font-size: 0.65rem; letter-spacing: 0.08em;">Job Group</span>
                     <span class="text-muted" id="job-group-summary"></span>
                 </div>
             </div>
         </div>
 
-        <!-- Processing Mode -->
-        <div class="mode-select" style="margin: 1.5rem 0;">
-            <label class="mono uppercase text-muted" style="font-size: 0.72rem; font-weight: 800; letter-spacing: 0.1em; display: block; margin-bottom: 0.75rem;">Processing Mode</label>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                <label id="mode-speed" class="mode-card mode-card--active" style="
-                    display: block; padding: 1.25rem; cursor: pointer;
-                    border: 2px solid var(--snap-yellow); background: rgba(255,252,0,0.06);
-                ">
-                    <input type="radio" name="processing_mode" value="speed_run" checked style="display: none;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                        <span class="material-symbols-outlined" style="color: var(--snap-yellow); font-size: 1.3rem;">bolt</span>
-                        <strong style="font-size: 1rem; color: var(--snap-yellow); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em;">Speed Run</strong>
-                    </div>
-                    <p class="text-muted mb-0" style="font-size: 0.8rem; line-height: 1.5;">
-                        One click, walk away. All phases run automatically.
-                        Come back to find your rescued files ready to download.
-                    </p>
-                </label>
-                <label id="mode-power" class="mode-card" style="
-                    display: block; padding: 1.25rem; cursor: pointer;
-                    border: 2px solid var(--border-dark); background: transparent;
-                ">
-                    <input type="radio" name="processing_mode" value="power_user" style="display: none;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                        <span class="material-symbols-outlined" style="color: var(--text-muted); font-size: 1.3rem;">tune</span>
-                        <strong style="font-size: 1rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em;">Power User</strong>
-                    </div>
-                    <p class="text-muted mb-0" style="font-size: 0.8rem; line-height: 1.5;">
-                        Pause at each phase. Review matches, fix names,
-                        correct GPS, choose what to export.
-                    </p>
-                </label>
-            </div>
+        <!-- Error banner (hidden by default) -->
+        <div id="upload-error-banner" style="display: none; background: rgba(204, 0, 0, 0.1); border: 1px solid rgba(204, 0, 0, 0.4); padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; font-size: 0.78rem; align-items: center; gap: 0.4rem;">
+            <span class="material-symbols-outlined" style="font-size: 0.9rem; color: var(--danger);">error</span>
+            <span id="upload-error-text"></span>
+            <button type="button" onclick="document.getElementById('upload-error-banner').style.display='none'" style="margin-left: auto; background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.8rem;">&times;</button>
         </div>
 
         <!-- Upload button -->
-        <button type="button" id="btn-upload" class="btn-primary btn-full" disabled>
-            UPLOAD &amp; GO
+        <button type="button" id="btn-upload" class="btn-primary btn-full" disabled style="padding: 0.5rem 1rem;">
+            UPLOAD
         </button>
 
-        <!-- Info card -->
-        <div class="info-card">
-            <h3>Before you upload:</h3>
-            <ul>
-                <li>Max total upload: {{ (max_upload_bytes / 1024 / 1024 / 1024) | round(1) }} GB</li>
-                <li>Individual file: 5 GB max (Snapchat export splits automatically)</li>
-                <li>Processing time: 10–30 minutes depending on file size</li>
-                <li>ZIP files only — export from Snapchat Settings → Download My Data</li>
-            </ul>
+        <!-- Info footer -->
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; font-size: 0.68rem; color: var(--text-dim);">
+            <span class="material-symbols-outlined" style="font-size: 0.8rem;">info</span>
+            {{ (max_upload_bytes / 1024 / 1024 / 1024) | round(1) }}GB max · 5GB/file · Quick scan, then you choose ·
+            <a href="/help" style="color: var(--snap-yellow);">Export guide</a>
         </div>
     </div>
 
     <!-- PHASE 2: HASHING -->
     <div id="phase-hashing" class="phase-container hidden">
-        <h2 class="text-yellow">Computing Checksums</h2>
-        <p class="text-muted">Computing SHA-256 hashes for integrity verification...</p>
+        <!-- OLD: <h2>Computing Checksums</h2><p>Computing SHA-256 hashes for integrity verification...</p> -->
+        <h2 class="text-yellow">Preparing Your Files</h2>
+        <p class="text-muted">Verifying file integrity before upload...</p>
 
         <div id="hash-progress-container">
             <div id="hash-progress-list"></div>
@@ -315,6 +195,383 @@ const SPEED_WINDOW = 10; // rolling average over 10 chunks
 // Use tier-aware limit from TIER_INFO (null = unlimited)
 const MAX_UPLOAD_BYTES = TIER_INFO.max_upload_bytes;
 
+// ============================================================
+// FOLDER UPLOAD MODE
+// ============================================================
+let currentUploadMode = 'zip';
+// Upload mode only — product/tier selection happens AFTER scan on configure page
+
+function setUploadMode(mode) {
+    currentUploadMode = mode;
+    const zipBtn = document.getElementById('mode-zip');
+    const folderBtn = document.getElementById('mode-folder');
+
+    if (mode === 'zip') {
+        zipBtn.style.background = 'var(--snap-yellow, #FFFC00)';
+        zipBtn.style.color = '#000';
+        folderBtn.style.background = 'transparent';
+        folderBtn.style.color = 'var(--snap-yellow, #FFFC00)';
+    } else {
+        folderBtn.style.background = 'var(--snap-yellow, #FFFC00)';
+        folderBtn.style.color = '#000';
+        zipBtn.style.background = 'transparent';
+        zipBtn.style.color = 'var(--snap-yellow, #FFFC00)';
+    }
+
+    const zipZone = document.getElementById('upload-zone');
+    const folderZone = document.getElementById('folder-zone');
+    if (zipZone) zipZone.style.display = mode === 'zip' ? '' : 'none';
+    if (folderZone) folderZone.style.display = mode === 'folder' ? '' : 'none';
+}
+
+function validateSnapchatFolder(files) {
+    const paths = Array.from(files).map(f => f.webkitRelativePath);
+    const result = {
+        valid: false,
+        hasMemoriesHistory: false,
+        hasChatHistory: false,
+        hasSnapHistory: false,
+        hasFriends: false,
+        hasLocations: false,
+        hasJson: false,
+        hasMemoriesDir: false,
+        hasChatMedia: false,
+        hasStoryDir: false,
+        memoryFileCount: 0,
+        chatFileCount: 0,
+        storyFileCount: 0,
+        totalFiles: files.length,
+        totalSize: 0,
+        warnings: [],
+        rootFolder: paths.length > 0 ? paths[0].split('/')[0] : ''
+    };
+
+    for (const f of files) result.totalSize += f.size;
+
+    result.hasMemoriesHistory = paths.some(p => /\/json\/memories_history\.json$/i.test(p));
+    result.hasChatHistory = paths.some(p => /\/json\/chat_history\.json$/i.test(p));
+    result.hasSnapHistory = paths.some(p => /\/json\/snap_history\.json$/i.test(p));
+    result.hasFriends = paths.some(p => /\/json\/friends\.json$/i.test(p));
+    result.hasLocations = paths.some(p => /\/json\/location_history\.json$/i.test(p));
+    result.hasJson = result.hasMemoriesHistory || result.hasChatHistory;
+
+    result.hasMemoriesDir = paths.some(p => /\/memories\//.test(p));
+    result.hasChatMedia = paths.some(p => /\/chat_media\//.test(p));
+    result.hasStoryDir = paths.some(p => /\/shared_story\//.test(p));
+
+    const memPattern = /\/memories\/\d{4}-\d{2}-\d{2}_[^\/]+-(?:main|overlay)\.\w+$/;
+    result.memoryFileCount = paths.filter(p => memPattern.test(p)).length;
+    const chatPattern = /\/chat_media\/\d{4}-\d{2}-\d{2}_[^\/]+\.\w+$/;
+    result.chatFileCount = paths.filter(p => chatPattern.test(p)).length;
+    const storyPattern = /\/shared_story\/\d{4}-\d{2}-\d{2}_[^\/]+\.\w+$/;
+    result.storyFileCount = paths.filter(p => storyPattern.test(p)).length;
+
+    result.valid = result.hasJson || result.hasMemoriesDir;
+
+    if (!result.hasMemoriesHistory) result.warnings.push("No memories_history.json \u2014 memory metadata will be limited");
+    if (!result.hasJson) result.warnings.push("No json/ directory \u2014 processing accuracy will be significantly reduced");
+    if (result.hasMemoriesDir && result.memoryFileCount === 0) result.warnings.push("memories/ found but no files match Snapchat naming pattern");
+    if (!result.hasMemoriesDir && !result.hasChatMedia) result.warnings.push("No memories/ or chat_media/ \u2014 this may not be a Snapchat export");
+
+    return result;
+}
+
+function handleFolderSelect(files) {
+    if (!files || files.length === 0) return;
+
+    const validation = validateSnapchatFolder(files);
+    const validationDiv = document.getElementById('folder-validation');
+    const warningDiv = document.getElementById('folder-warning');
+
+    warningDiv.style.display = '';
+
+    let html = '<div style="padding: 1rem; border: 1px solid rgba(255,252,0,0.3); background: rgba(255,252,0,0.05);">';
+
+    if (validation.valid) {
+        html += '<p style="color: #4ade80; font-weight: 700; margin: 0 0 0.5rem;">&#10003; Valid Snapchat export detected</p>';
+    } else {
+        html += '<p style="color: #f87171; font-weight: 700; margin: 0 0 0.5rem;">&#10007; This does not appear to be a Snapchat export</p>';
+    }
+
+    html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem; margin: 0.5rem 0;">';
+    html += '<div><strong>' + validation.totalFiles.toLocaleString() + '</strong> total files</div>';
+    html += '<div><strong>' + (validation.totalSize / (1024*1024*1024)).toFixed(1) + ' GB</strong> total size</div>';
+    if (validation.memoryFileCount > 0) html += '<div><strong>' + validation.memoryFileCount.toLocaleString() + '</strong> memories</div>';
+    if (validation.chatFileCount > 0) html += '<div><strong>' + validation.chatFileCount.toLocaleString() + '</strong> chat files</div>';
+    if (validation.storyFileCount > 0) html += '<div><strong>' + validation.storyFileCount.toLocaleString() + '</strong> story files</div>';
+    html += '</div>';
+
+    html += '<div style="margin-top: 0.5rem; font-size: 0.85rem;"><strong>JSON metadata:</strong> ';
+    const checks = [
+        [validation.hasMemoriesHistory, 'memories'],
+        [validation.hasChatHistory, 'chats'],
+        [validation.hasSnapHistory, 'snaps'],
+        [validation.hasFriends, 'friends'],
+        [validation.hasLocations, 'locations'],
+    ];
+    html += checks.map(function(c) {
+        return c[0] ? '<span style="color: #4ade80;">&#10003; ' + c[1] + '</span>' : '<span style="opacity: 0.5;">&#10007; ' + c[1] + '</span>';
+    }).join(' &middot; ');
+    html += '</div>';
+
+    if (validation.warnings.length > 0) {
+        html += '<div style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--snap-yellow, #FFFC00);">';
+        validation.warnings.forEach(function(w) { html += '<p style="margin: 0.25rem 0;">&#9888; ' + w + '</p>'; });
+        html += '</div>';
+    }
+
+    html += '</div>';
+
+    if (validation.valid) {
+        html += '<button id="startFolderUpload" onclick="startFolderUpload()" type="button" '
+             + 'style="margin-top: 1rem; padding: 0.75rem 2rem; background: var(--snap-yellow, #FFFC00); '
+             + 'color: #000; border: none; font-weight: 700; font-family: \'JetBrains Mono\', monospace; '
+             + 'cursor: pointer; text-transform: uppercase; width: 100%; font-size: 1rem; letter-spacing: 0.05em;">'
+             + 'Upload Folder (' + validation.totalFiles.toLocaleString() + ' files)'
+             + '</button>';
+    }
+
+    validationDiv.innerHTML = html;
+    validationDiv.style.display = '';
+
+    // Store for later upload flow
+    if (validation.valid) {
+        window._folderFiles = files;
+        window._folderValidation = validation;
+    }
+}
+
+// ============================================================
+// SEMAPHORE — concurrency limiter for folder upload streams
+// ============================================================
+class Semaphore {
+    constructor(max) {
+        this.max = max;
+        this.current = 0;
+        this.queue = [];
+    }
+
+    acquire() {
+        return new Promise(resolve => {
+            if (this.current < this.max) {
+                this.current++;
+                resolve(() => this._release());
+            } else {
+                this.queue.push(resolve);
+            }
+        });
+    }
+
+    _release() {
+        this.current--;
+        if (this.queue.length > 0) {
+            this.current++;
+            const next = this.queue.shift();
+            next(() => this._release());
+        }
+    }
+}
+
+// ============================================================
+// FOLDER UPLOADER — parallel upload of pre-validated folder
+// ============================================================
+class FolderUploader {
+    constructor(files, options = {}) {
+        this.files = Array.from(files);
+        this.options = options;
+        this.sessionId = null;
+        this.chunkSize = 5 * 1024 * 1024; // 5 MB default, overridden by server
+        this.concurrency = options.concurrency || 4;
+        this.completed = 0;
+        this.failed = 0;
+        this.total = this.files.length;
+        this.jobId = null;
+    }
+
+    async start() {
+        // 1. Build manifest — strip the root folder name from webkitRelativePath
+        const manifest = this.files.map(f => ({
+            filename: f.name,
+            relative_path: f.webkitRelativePath.split('/').slice(1).join('/'),
+            size: f.size,
+            sha256: ''
+        }));
+
+        // 2. Init session with upload_type: "folder"
+        const initBody = {
+            upload_type: 'folder',
+            files: manifest,
+        };
+
+        const initResp = await fetch('/api/upload/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(initBody)
+        });
+
+        if (!initResp.ok) {
+            const err = await initResp.json().catch(() => ({}));
+            throw new Error(err.detail || `Init failed: ${initResp.status}`);
+        }
+
+        const initData = await initResp.json();
+        this.sessionId = initData.session_id;
+        if (initData.chunk_size) this.chunkSize = initData.chunk_size;
+
+        // 3. Upload all files with bounded concurrency
+        const sem = new Semaphore(this.concurrency);
+        const promises = this.files.map((file, index) =>
+            sem.acquire().then(async release => {
+                try {
+                    await this._uploadFile(file, index);
+                    this.completed++;
+                } catch (e) {
+                    this.failed++;
+                    console.error(`FolderUploader: failed file[${index}] ${file.name}:`, e);
+                } finally {
+                    release();
+                    this._notify();
+                }
+            })
+        );
+
+        await Promise.all(promises);
+
+        return {
+            sessionId: this.sessionId,
+            jobId: this.jobId,
+            completed: this.completed,
+            failed: this.failed,
+            total: this.total
+        };
+    }
+
+    async _uploadFile(file, fileIndex) {
+        const chunkSize = this.chunkSize;
+        let offset = 0;
+
+        // Upload all chunks for this file
+        while (offset < file.size) {
+            const end = Math.min(offset + chunkSize, file.size);
+            const chunk = file.slice(offset, end);
+
+            const resp = await fetch(
+                `/api/upload/chunk/${this.sessionId}/${fileIndex}`,
+                {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/octet-stream',
+                        'X-Chunk-Offset': offset.toString()
+                    },
+                    body: chunk
+                }
+            );
+
+            if (!resp.ok) {
+                const msg = await resp.text().catch(() => '');
+                throw new Error(`Chunk upload failed (${resp.status}): ${msg.substring(0, 200)}`);
+            }
+
+            offset = end;
+        }
+
+        // Verify file (no SHA-256 for folder uploads — server skips hash check)
+        const verifyResp = await fetch(
+            `/api/upload/verify/${this.sessionId}/${fileIndex}`,
+            { method: 'POST' }
+        );
+
+        if (!verifyResp.ok) {
+            const msg = await verifyResp.text().catch(() => '');
+            throw new Error(`Verify failed (${verifyResp.status}): ${msg.substring(0, 200)}`);
+        }
+
+        const verifyData = await verifyResp.json().catch(() => ({}));
+
+        // Capture job_id from the final verify response (server emits it once all files are done)
+        if (verifyData.job_id) {
+            this.jobId = verifyData.job_id;
+        }
+    }
+
+    _notify() {
+        if (this.options.onProgress) {
+            this.options.onProgress(this.completed, this.total, this.failed);
+        }
+    }
+}
+
+// ============================================================
+// FOLDER UPLOAD TRIGGER
+// ============================================================
+async function startFolderUpload() {
+    if (!window._folderFiles || !window._folderValidation) return;
+
+    const btn = document.getElementById('startFolderUpload');
+    if (btn) btn.disabled = true;
+
+    const progressDiv = document.getElementById('folder-validation');
+
+    function renderProgress(completed, total, failed) {
+        const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+        progressDiv.innerHTML = '<div style="padding: 1rem; border: 1px solid rgba(255,252,0,0.3); background: rgba(255,252,0,0.05);">'
+            + '<p style="font-weight: 700; margin: 0 0 0.75rem; font-family: \'JetBrains Mono\', monospace; text-transform: uppercase; letter-spacing: 0.05em;">Uploading... ' + pct + '%</p>'
+            + '<div style="background: rgba(255,255,255,0.1); height: 8px; width: 100%; margin-bottom: 0.5rem;">'
+            + '<div style="background: var(--snap-yellow, #FFFC00); height: 100%; width: ' + pct + '%; transition: width 0.2s;"></div>'
+            + '</div>'
+            + '<p style="margin: 0; font-size: 0.85rem; opacity: 0.7; font-family: \'JetBrains Mono\', monospace;">'
+            + 'Uploading file ' + completed.toLocaleString() + ' of ' + total.toLocaleString()
+            + (failed > 0 ? ' &nbsp;<span style="color: #f87171;">(' + failed + ' failed)</span>' : '')
+            + '</p>'
+            + '<p style="margin: 0.5rem 0 0; font-size: 0.75rem; color: var(--snap-yellow, #FFFC00); font-weight: 700;">DO NOT CLOSE THIS TAB</p>'
+            + '</div>';
+    }
+
+    // Show initial progress state
+    renderProgress(0, window._folderValidation.totalFiles, 0);
+
+    const folderUploader = new FolderUploader(window._folderFiles, {
+        concurrency: 4,
+        onProgress: (completed, total, failed) => {
+            renderProgress(completed, total, failed);
+        }
+    });
+
+    try {
+        const result = await folderUploader.start();
+
+        if (result.jobId) {
+            progressDiv.innerHTML = '<div style="padding: 1rem; border: 1px solid #4ade80; background: rgba(74,222,128,0.08);">'
+                + '<p style="font-weight: 700; color: #4ade80; margin: 0 0 0.25rem; font-family: \'JetBrains Mono\', monospace; text-transform: uppercase;">Upload Complete</p>'
+                + '<p style="margin: 0; font-size: 0.85rem; opacity: 0.7;">'
+                + result.completed.toLocaleString() + ' files uploaded'
+                + (result.failed > 0 ? ', ' + result.failed + ' failed' : '')
+                + '. Redirecting to job...</p>'
+                + '</div>';
+            setTimeout(() => { window.location.href = '/snatchedmemories/' + result.jobId; }, 1200);
+        } else {
+            // All files uploaded but no job_id yet — show summary
+            progressDiv.innerHTML = '<div style="padding: 1rem; border: 1px solid rgba(255,252,0,0.3); background: rgba(255,252,0,0.05);">'
+                + '<p style="font-weight: 700; color: var(--snap-yellow, #FFFC00); margin: 0 0 0.25rem; font-family: \'JetBrains Mono\', monospace; text-transform: uppercase;">Upload Complete</p>'
+                + '<p style="margin: 0; font-size: 0.85rem; opacity: 0.7;">'
+                + result.completed.toLocaleString() + ' of ' + result.total.toLocaleString() + ' files uploaded'
+                + (result.failed > 0 ? ', <span style="color: #f87171;">' + result.failed + ' failed</span>' : '')
+                + '. Processing starting shortly...</p>'
+                + '</div>';
+        }
+    } catch (e) {
+        console.error('Folder upload failed:', e);
+        progressDiv.innerHTML = '<div style="padding: 1rem; border: 1px solid #f87171; background: rgba(248,113,113,0.08);">'
+            + '<p style="color: #f87171; font-weight: 700; margin: 0 0 0.25rem; font-family: \'JetBrains Mono\', monospace; text-transform: uppercase;">Upload Failed</p>'
+            + '<p style="margin: 0; font-size: 0.85rem; opacity: 0.7;">' + e.message + '</p>'
+            + '<button onclick="startFolderUpload()" type="button" style="margin-top: 0.75rem; padding: 0.5rem 1.5rem; background: transparent; color: #f87171; border: 1px solid #f87171; font-weight: 700; font-family: \'JetBrains Mono\', monospace; cursor: pointer; text-transform: uppercase; font-size: 0.85rem;">Retry</button>'
+            + '</div>';
+        // Re-enable the start button if it still exists
+        const retryBtn = document.getElementById('startFolderUpload');
+        if (retryBtn) retryBtn.disabled = false;
+    }
+}
+
 class ChunkedUploader {
     constructor(files, options = {}) {
         this.files = Array.from(files);
@@ -335,9 +592,15 @@ class ChunkedUploader {
     /**
      * Compute SHA-256 for all files using Web Crypto API
      * For files > 500MB, skip client-side hash (server will compute)
+     * Falls back gracefully on non-HTTPS connections (crypto.subtle unavailable)
      */
     async computeHashes() {
         const hashes = [];
+        const canHash = !!(crypto && crypto.subtle);
+
+        if (!canHash) {
+            console.warn('Web Crypto API unavailable (non-HTTPS context) — server will compute hashes');
+        }
 
         for (let i = 0; i < this.files.length; i++) {
             const file = this.files[i];
@@ -346,8 +609,7 @@ class ChunkedUploader {
             this.onHash({ fileIndex: i, filename: file.name, status: 'computing' });
 
             try {
-                // For large files, skip client-side hashing (5GB+ will OOM browser)
-                if (file.size > 500 * 1024 * 1024) {
+                if (!canHash || file.size > 500 * 1024 * 1024) {
                     // Server will compute SHA-256 after assembly
                     hash = '';
                     this.onHash({ fileIndex: i, filename: file.name, status: 'skipped' });
@@ -361,9 +623,10 @@ class ChunkedUploader {
                     this.onHash({ fileIndex: i, filename: file.name, status: 'complete', hash });
                 }
             } catch (err) {
-                console.error(`Failed to hash ${file.name}:`, err);
-                this.onHash({ fileIndex: i, filename: file.name, status: 'error', error: err.message });
-                throw new Error(`Failed to compute hash for ${file.name}: ${err.message}`);
+                // Hash failure is non-fatal — server can compute it
+                console.warn(`Client-side hash failed for ${file.name}: ${err.message}`);
+                hash = '';
+                this.onHash({ fileIndex: i, filename: file.name, status: 'skipped' });
             }
 
             hashes.push(hash);
@@ -645,10 +908,12 @@ fileInput.addEventListener('change', () => {
  * Deduplicates by name+size. Validates .zip and total size.
  */
 function addFiles(newFiles) {
+    const countBefore = selectedFiles.length;
     // Filter to .zip only
     const nonZip = newFiles.filter(f => !f.name.toLowerCase().endsWith('.zip'));
     if (nonZip.length > 0) {
-        alert(`Only .zip files allowed. Rejected: ${nonZip.map(f => f.name).join(', ')}`);
+        /* OLD: alert(`Only .zip files allowed. Rejected: ${nonZip.map(f => f.name).join(', ')}`); */
+        showUploadMsg('Only .zip files allowed. Rejected: ' + nonZip.map(f => f.name).join(', '));
         newFiles = newFiles.filter(f => f.name.toLowerCase().endsWith('.zip'));
     }
 
@@ -658,6 +923,15 @@ function addFiles(newFiles) {
     for (const f of newFiles) {
         if (!selectedFiles.some(e => e.name === f.name && e.size === f.size)) {
             selectedFiles.push(f);
+        }
+    }
+
+    // Visual feedback: flash the drop zone on valid file addition
+    if (selectedFiles.length > countBefore) {
+        var dropzone = document.getElementById('dropzone');
+        if (dropzone) {
+            dropzone.classList.add('drop-accepted');
+            setTimeout(() => dropzone.classList.remove('drop-accepted'), 1500);
         }
     }
 
@@ -778,6 +1052,14 @@ function updateJobGroupBadge() {
 btnUpload.addEventListener('click', async () => {
     if (selectedFiles.length === 0) return;
 
+    // Immediate button feedback
+    btnUpload.disabled = true;
+    btnUpload.textContent = 'PREPARING...';
+
+    // Clear any previous error
+    var errBanner = document.getElementById('upload-error-banner');
+    if (errBanner) errBanner.style.display = 'none';
+
     // Hide select phase, show hashing phase
     phaseSelect.classList.add('hidden');
     phaseHashing.classList.remove('hidden');
@@ -800,7 +1082,6 @@ btnUpload.addEventListener('click', async () => {
                 size: file.size,
                 sha256: hashes[idx]
             })),
-            processing_mode: document.querySelector('input[name="processing_mode"]:checked').value,
             // Bulk upload: attach job group ID when bulk is enabled and multiple files selected
             job_group_id: (TIER_INFO.bulk_upload && selectedFiles.length > 1 && currentJobGroupId)
                 ? currentJobGroupId
@@ -836,7 +1117,8 @@ btnCancel.addEventListener('click', async () => {
         await uploader.abort();
         phaseUpload.classList.add('hidden');
         phaseSelect.classList.remove('hidden');
-        alert('Upload cancelled');
+        /* OLD: alert('Upload cancelled'); */
+        showUploadMsg('Upload cancelled. You can select files and try again.');
     }
 });
 
@@ -876,7 +1158,7 @@ function initUploadUI() {
                 <span class="file-progress-status mono text-muted">⏳ Waiting</span>
             </div>
             <div class="progress-bar">
-                <div class="progress-fill" id="progress-fill-${idx}" style="width: 0%"></div>
+                <div class="progress-fill striped" id="progress-fill-${idx}" style="width: 0%"></div>
                 <div class="progress-text" id="progress-text-${idx}">0%</div>
             </div>
             <div class="file-progress-details">
@@ -944,6 +1226,8 @@ function updateFileComplete(e) {
     if (status) {
         status.textContent = '✓ Complete';
     }
+    var fill = document.getElementById('progress-fill-' + e.fileIndex);
+    if (fill) fill.classList.remove('striped');
 }
 
 // All complete - redirect to job
@@ -951,9 +1235,27 @@ function handleAllComplete(e) {
     const { jobId } = e;
     isActivelyUploading = false;
     localStorage.removeItem('snatched_upload_session');
+
+    var overallFill = document.getElementById('overall-progress-fill');
+    if (overallFill) {
+        overallFill.style.width = '100%';
+        overallFill.classList.remove('striped');
+        overallFill.style.background = 'var(--success)';
+    }
+    var overallPct = document.getElementById('overall-percent');
+    /* OLD: overallPct.textContent = 'Complete! Redirecting...'; */
+    if (overallPct) overallPct.textContent = 'Upload complete! Starting scan...';
+
     setTimeout(() => {
-        window.location.href = `/job/${jobId}`;
+        window.location.href = `/snatchedmemories/${jobId}`;
     }, 1000);
+}
+
+// Show inline message via the upload error banner (replaces alert() calls)
+function showUploadMsg(msg) {
+    var banner = document.getElementById('upload-error-banner');
+    var text = document.getElementById('upload-error-text');
+    if (banner && text) { text.textContent = msg; banner.style.display = 'flex'; }
 }
 
 // Error handling
@@ -967,13 +1269,23 @@ function handleUploadError(err) {
         return;
     }
 
-    alert(`Upload failed: ${err.message}`);
+    // Abort session server-side so it doesn't block future uploads (429)
+    if (uploader && uploader.sessionId) {
+        uploader.abort();  // calls /api/upload/abort + clears localStorage
+    } else {
+        localStorage.removeItem('snatched_upload_session');
+    }
+
+    /* OLD: alert(`Upload failed: ${err.message}`); */
+    var errorBanner = document.getElementById('upload-error-banner');
+    var errorText = document.getElementById('upload-error-text');
+    if (errorBanner && errorText) {
+        errorText.textContent = 'Upload failed: ' + (err.message || 'Network error. Please check your connection and try again.');
+        errorBanner.style.display = 'flex';
+    }
     phaseUpload.classList.add('hidden');
     phaseHashing.classList.add('hidden');
     phaseSelect.classList.remove('hidden');
-    if (uploader) {
-        uploader.aborted = true;
-    }
 }
 
 // ============================================================
@@ -1142,37 +1454,20 @@ async function handleResumeFileSelection(files) {
     }
 }
 
-// Check for existing session on page load
-window.addEventListener('load', () => {
-    checkExistingSession();
+// Check for existing session on page load (and bfcache back-navigation)
+window.addEventListener('pageshow', async (event) => {
+    await checkExistingSession();
 });
 
-// ============================================================
-// MODE TOGGLE: Speed Run vs Power User
-// ============================================================
+// Chevron rotation for advanced options disclosure
 (function() {
-    const modeCards = document.querySelectorAll('.mode-card');
-    const modeInputs = document.querySelectorAll('input[name="processing_mode"]');
-
-    modeInputs.forEach(input => {
-        input.addEventListener('change', () => {
-            modeCards.forEach(card => {
-                const isActive = card.querySelector('input').checked;
-                card.classList.toggle('mode-card--active', isActive);
-                card.style.borderColor = isActive ? 'var(--snap-yellow)' : 'var(--border-dark)';
-                card.style.background = isActive ? 'rgba(255,252,0,0.06)' : 'transparent';
-                const icon = card.querySelector('.material-symbols-outlined');
-                const title = card.querySelector('strong');
-                if (icon) icon.style.color = isActive ? 'var(--snap-yellow)' : 'var(--text-muted)';
-                if (title) title.style.color = isActive ? 'var(--snap-yellow)' : 'var(--text-muted)';
-            });
-
-            // Update button text
-            const btn = document.getElementById('btn-upload');
-            const mode = document.querySelector('input[name="processing_mode"]:checked').value;
-            btn.textContent = mode === 'speed_run' ? 'UPLOAD & GO' : 'UPLOAD & CONFIGURE';
+    const details = document.getElementById('advanced-upload-options');
+    const chevron = document.getElementById('advanced-chevron');
+    if (details && chevron) {
+        details.addEventListener('toggle', () => {
+            chevron.style.transform = details.open ? 'rotate(180deg)' : '';
         });
-    });
+    }
 })();
 </script>
 

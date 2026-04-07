@@ -20,8 +20,34 @@ from fastapi import HTTPException, Request
 logger = logging.getLogger("snatched.auth")
 
 DEV_MODE = os.getenv("SNATCHED_DEV_MODE") == "1"
+REQUIRE_HTTPS = os.getenv("SNATCHED_REQUIRE_HTTPS", "0") == "1"
 JWT_SECRET = os.getenv("SNATCHED_JWT_SECRET", "dev-key-change-me")
+
+# Trusted proxy IPs allowed to set X-Remote-User header.
+# Only Traefik (reverse-proxy container) should be trusted.
+# Comma-separated list via env var, defaults to Traefik's Docker IP.
+_trusted_raw = os.getenv("SNATCHED_TRUSTED_PROXY_IPS", "172.20.1.10")
+TRUSTED_PROXY_IPS: set[str] = {ip.strip() for ip in _trusted_raw.split(",") if ip.strip()}
 JWT_EXPIRE_HOURS = 24
+
+# WU-18: Validate JWT secret length at import time
+if len(JWT_SECRET) < 32:
+    if DEV_MODE:
+        logger.warning(
+            "SECURITY: SNATCHED_JWT_SECRET is shorter than 32 bytes (%d). "
+            "This is acceptable in DEV_MODE but MUST be fixed for production.",
+            len(JWT_SECRET),
+        )
+    else:
+        import secrets as _secrets
+        _fallback = _secrets.token_hex(32)
+        logger.critical(
+            "SECURITY: SNATCHED_JWT_SECRET is shorter than 32 bytes (%d). "
+            "Generating a random fallback secret. Sessions will NOT survive restarts. "
+            "Set SNATCHED_JWT_SECRET to a value >= 32 bytes in production.",
+            len(JWT_SECRET),
+        )
+        JWT_SECRET = _fallback
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +108,17 @@ async def get_current_user(request: Request) -> str:
     Raises:
         HTTPException(401): If not authenticated.
     """
-    # 1. Authelia header (highest priority)
+    # 1. Authelia header (highest priority) — only trust from reverse proxy
     username = request.headers.get("X-Remote-User")
     if username:
-        return username
+        client_ip = request.client.host if request.client else None
+        if client_ip in TRUSTED_PROXY_IPS:
+            return username
+        else:
+            logger.warning(
+                "X-Remote-User header '%s' rejected: client IP %s not in trusted proxies %s",
+                username, client_ip, TRUSTED_PROXY_IPS,
+            )
 
     # 2. JWT cookie (built-in login or dev mode)
     token = request.cookies.get("auth_token")
@@ -120,9 +153,9 @@ async def get_user_groups(request: Request) -> list[str]:
 
 
 async def require_admin(request: Request) -> str:
-    """Dependency for admin-only routes.
+    """Dependency for admin-only routes (Authelia groups).
 
-    Verifies authenticated user is in the 'admin' group.
+    Verifies authenticated user is in the 'admin' group via X-Remote-Groups header.
 
     Returns:
         Username if user is admin.
@@ -137,3 +170,17 @@ async def require_admin(request: Request) -> str:
         raise HTTPException(403, f"User '{username}' is not in admin group.")
 
     return username
+
+
+async def require_admin_db(pool, username: str) -> None:
+    """Check is_admin column on users table. Raises 403 if not admin.
+
+    Used by page and API routes that check the DB directly rather than
+    relying on Authelia X-Remote-Groups headers.
+    """
+    async with pool.acquire() as conn:
+        user_row = await conn.fetchrow(
+            "SELECT is_admin FROM users WHERE username = $1", username
+        )
+    if not user_row or not user_row["is_admin"]:
+        raise HTTPException(403, "Admin access required")

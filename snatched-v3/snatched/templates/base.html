@@ -3,7 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ title or "SNATCHED" }}</title>
+    <title>{% block title %}{{ title or "SNATCHED — Rescue Your Snapchat Memories" }}{% endblock %}</title>
+
+    <!-- SEO -->
+    <meta name="description" content="{% block meta_description %}Snatched recovers dates, GPS locations, and metadata from your Snapchat data export. Free scan, packages from $4.99.{% endblock %}">
+    <meta name="theme-color" content="#FFFC00">
+    <meta name="robots" content="{% block robots %}noindex, nofollow{% endblock %}">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{% block og_title %}SNATCHED — Rescue Your Snapchat Memories{% endblock %}">
+    <meta property="og:description" content="Snapchat stripped your metadata. We put it back. Free scan, dates recovered free, GPS and full archive from $4.99.">
+    <meta property="og:site_name" content="Snatched">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="SNATCHED — Rescue Your Snapchat Memories">
+    <meta name="twitter:description" content="Recover dates, GPS, and metadata from your Snapchat export. Free scan included.">
+
+    <!-- Favicon: snap-yellow "S" on black -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='4' fill='%230a0a0a'/><text x='16' y='24' font-family='monospace' font-weight='900' font-size='24' fill='%23FFFC00' text-anchor='middle'>S</text></svg>">
+
+    {% block head_extra %}{% endblock %}
 
     <!-- Google Fonts: Inter + JetBrains Mono + Material Symbols -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,29 +36,71 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
 
     <!-- Custom rebellion styles (cache-bust with version) -->
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=5">
+    <!-- Cache-bust: bump after CSS changes. v11 = post-centennial polish (2026-03-25) -->
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=11">
 
     <!-- htmx 2.x (vendored, do not edit) -->
     <script src="{{ url_for('static', path='htmx.min.js') }}" defer></script>
+
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
+    <!-- Page load progress bar — pure CSS, no JS -->
+    <div style="
+        position: fixed; top: 0; left: 0; z-index: 9999;
+        width: 100%; height: 2px;
+        background: transparent;
+    "><div style="
+        height: 100%;
+        background: var(--snap-yellow, #FFFC00);
+        animation: page-load 0.8s ease-out forwards;
+    "></div></div>
+    <style>
+        @keyframes page-load {
+            0% { width: 0; opacity: 1; }
+            80% { width: 100%; opacity: 1; }
+            100% { width: 100%; opacity: 0; }
+        }
+    </style>
+
+    <!-- JavaScript required notice -->
+    <noscript>
+        <div style="background: var(--snap-yellow, #FFFC00); color: #000; padding: 0.5rem 1rem; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; font-weight: 700;">
+            Snatched requires JavaScript to upload, scan, and process your files.
+            Please enable JavaScript to continue.
+        </div>
+    </noscript>
+
     <!-- Navigation bar -->
     <nav class="nav-bar">
         <a href="/" class="nav-brand">
             <span class="material-symbols-outlined">heart_broken</span>
             <span class="nav-brand-text">SNATCHED</span>
         </a>
-        <ul class="nav-links">
-            <li><a href="/dashboard">Dashboard</a></li>
-            <li><a href="/upload">Upload</a></li>
-            <li><a href="/settings">Settings</a></li>
+        <button class="nav-hamburger" id="nav-hamburger" aria-label="Toggle menu"
+                onclick="var nl=document.querySelector('.nav-links'),ic=this.querySelector('.material-symbols-outlined'); nl.classList.toggle('nav-links--open'); ic.textContent=nl.classList.contains('nav-links--open')?'close':'menu';">
+            <span class="material-symbols-outlined">menu</span>
+        </button>
+        <ul class="nav-links" id="nav-links">
+            {% if username %}
+            <li><a href="/dashboard"{% if request.url.path == '/dashboard' or request.url.path.startswith('/configure/') or request.url.path.startswith('/snatchedmemories/') %} class="nav-active"{% endif %}>Dashboard</a></li>
+            <li><a href="/upload"{% if request.url.path == '/upload' %} class="nav-active"{% endif %}>Upload</a></li>
+            <li><a href="/help"{% if request.url.path == '/help' %} class="nav-active"{% endif %}>Help</a></li>
             <li>
-                <span class="nav-user">{{ username }}</span>
-                {% if tier_info %}<span class="tier-badge tier-badge--{{ tier_info.label | lower }}">{{ tier_info.label }}</span>{% endif %}
+                <a href="/settings" class="nav-user-link{% if request.url.path == '/settings' %} nav-active{% endif %}">
+                    <span class="nav-user">{{ username }}</span>
+                    <!-- OLD account-tier badge — hidden for per-job monetization model
+                    {% if tier_info %}<span class="tier-badge tier-badge--{{ tier_info.label | lower }}">{{ tier_info.label }}</span>{% endif %}
+                    -->
+                </a>
                 <a href="/logout" class="nav-logout" title="Sign out">
                     <span class="material-symbols-outlined nav-logout-icon">logout</span>
                 </a>
             </li>
+            {% else %}
+            <li><a href="/help">Help</a></li>
+            <li><a href="/login" class="nav-auth-link">Log In</a></li>
+            <li><a href="/register" class="btn-primary nav-signup-btn">Sign Up Free</a></li>
+            {% endif %}
         </ul>
     </nav>
 
@@ -71,5 +134,54 @@
         htmx.config.historyEnabled = false;
         htmx.config.refreshOnHistoryMiss = true;
     </script>
+
+    <!-- CSRF: global helper for fetch() calls + htmx -->
+    <script>
+    (function() {
+        function getCsrfToken() {
+            var m = document.cookie.match('(?:^|;)\\s*csrf_token=([^;]+)');
+            return m ? m[1] : '';
+        }
+        // Expose globally for inline fetch() calls
+        window.csrfToken = getCsrfToken;
+
+        // Monkey-patch fetch to auto-inject X-CSRF-Token header
+        var _fetch = window.fetch;
+        window.fetch = function(url, opts) {
+            opts = opts || {};
+            var method = (opts.method || 'GET').toUpperCase();
+            if (['POST','PUT','DELETE','PATCH'].indexOf(method) !== -1) {
+                opts.headers = opts.headers || {};
+                if (opts.headers instanceof Headers) {
+                    if (!opts.headers.has('X-CSRF-Token')) opts.headers.set('X-CSRF-Token', getCsrfToken());
+                } else {
+                    if (!opts.headers['X-CSRF-Token']) opts.headers['X-CSRF-Token'] = getCsrfToken();
+                }
+            }
+            return _fetch.call(this, url, opts);
+        };
+
+        // htmx: add CSRF header to all AJAX requests
+        document.body.addEventListener('htmx:configRequest', function(e) {
+            e.detail.headers['X-CSRF-Token'] = getCsrfToken();
+        });
+    })();
+    </script>
+
+    <!-- Site Footer -->
+    <footer style="
+        margin-top: 2rem; padding: 1rem 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        text-align: center;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.6rem;
+        color: var(--text-dim, #666);
+        letter-spacing: 0.05em;
+    ">
+        <span style="color: var(--snap-yellow, #FFFC00);">SNATCHED</span> &copy; 2026
+        &middot; <a href="/help" style="color: var(--text-dim, #666); text-decoration: none;">Help</a>
+        &middot; <span style="opacity: 0.5;">Privacy</span>
+        &middot; <span style="opacity: 0.5;">Terms</span>
+    </footer>
 </body>
 </html>

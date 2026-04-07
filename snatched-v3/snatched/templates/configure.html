@@ -1,303 +1,726 @@
 {% extends "base.html" %}
+{% block title %}Intelligence Report — SNATCHED{% endblock %}
 
 {% block content %}
+<style>
+/* Intelligence Report + Tier Selection */
+.ir-header { margin-bottom: 0.75rem; }
+.ir-header h1 { font-size: 1.3rem; margin-bottom: 0.2rem; }
+.ir-subtitle { font-size: 0.8rem; color: var(--text-dim); margin: 0; }
+
+/* Scan stats cards */
+.scan-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 1rem; }
+@keyframes stat-pop {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+}
+.stat-card {
+    background: rgba(255, 252, 0, 0.04); border: 1px solid rgba(255, 252, 0, 0.15);
+    padding: 0.75rem 0.6rem; text-align: center;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    animation: stat-pop 0.35s ease-out both;
+}
+.stat-card:nth-child(1) { animation-delay: 0s; }
+.stat-card:nth-child(2) { animation-delay: 0.1s; }
+.stat-card:nth-child(3) { animation-delay: 0.2s; }
+.stat-card:not(.empty):hover {
+    border-color: rgba(255, 252, 0, 0.4);
+    box-shadow: 0 0 12px rgba(255, 252, 0, 0.08);
+}
+.stat-card .stat-icon { font-size: 1.3rem; color: var(--snap-yellow); margin-bottom: 0.2rem; }
+.stat-card .stat-number {
+    font-size: 1.6rem; font-weight: 900; color: var(--snap-yellow);
+    font-family: 'JetBrains Mono', monospace; line-height: 1.1;
+}
+.stat-card .stat-label { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 0.1rem; }
+.stat-card .stat-size { font-size: 0.62rem; color: var(--text-dim); }
+
+/* Tier cards */
+.tier-section { margin-bottom: 1rem; }
+.tier-section h2 { font-size: 0.95rem; margin-bottom: 0.5rem; }
+.tier-grid { display: flex; flex-direction: column; gap: 0.5rem; }
+
+/* Entrance animation */
+@keyframes tier-slide-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.tier-card {
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    padding: 0.7rem 0.8rem;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s, transform 0.15s;
+    position: relative;
+    animation: tier-slide-in 0.4s ease-out both;
+}
+.tier-card:nth-child(1) { animation-delay: 0.1s; }
+.tier-card:nth-child(2) { animation-delay: 0.25s; }
+.tier-card:nth-child(3) { animation-delay: 0.4s; }
+.tier-card:hover {
+    border-color: rgba(255, 252, 0, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(255, 252, 0, 0.06);
+}
+.tier-card:active { transform: scale(0.99); }
+.tier-card:focus-visible { outline: 2px solid var(--snap-yellow); outline-offset: 2px; }
+.tier-card.selected {
+    border-color: var(--snap-yellow);
+    background: rgba(255, 252, 0, 0.06);
+    box-shadow: 0 0 16px rgba(255, 252, 0, 0.12);
+}
+
+.tier-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.25rem; }
+.tier-name { font-size: 0.9rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+.tier-price { font-size: 1rem; font-weight: 900; font-family: 'JetBrains Mono', monospace; color: var(--snap-yellow); }
+.tier-price-free { color: #4ade80; }
+
+.tier-tagline { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 0.3rem; font-style: italic; }
+
+.tier-features { list-style: none; padding: 0; margin: 0; }
+.tier-features li { font-size: 0.72rem; padding: 0.1rem 0; display: flex; align-items: center; gap: 0.3rem; }
+.tier-features .check { color: var(--snap-yellow); font-size: 0.8rem; }
+.tier-features .lock { color: var(--text-dim); font-size: 0.8rem; }
+.tier-features .locked-text { color: var(--text-dim); }
+
+/* Best value badge */
+.best-value {
+    position: absolute; top: -0.5rem; right: 0.75rem;
+    background: var(--snap-yellow); color: #000;
+    font-size: 0.55rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.1em;
+    padding: 0.1rem 0.4rem; font-family: 'JetBrains Mono', monospace;
+}
+
+/* A la carte section */
+.alc-section { margin-bottom: 0.75rem; }
+.alc-toggle { font-size: 0.78rem; cursor: pointer; color: var(--text-dim); display: flex; align-items: center; gap: 0.3rem; user-select: none; }
+.alc-toggle:hover { color: var(--snap-yellow); }
+.alc-grid { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.alc-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.35rem 0.6rem; border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.75rem; cursor: pointer; transition: border-color 0.15s;
+}
+.alc-item:hover { border-color: rgba(255, 252, 0, 0.3); }
+.alc-item.selected { border-color: var(--snap-yellow); background: rgba(255, 252, 0, 0.04); }
+.alc-item:focus-visible { outline: 2px solid var(--snap-yellow); outline-offset: 1px; }
+.alc-item .alc-name { flex: 1; }
+.alc-item .alc-price { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--snap-yellow); margin-left: 0.5rem; }
+
+/* Options (shown for paid tiers) */
+.paid-options { display: none; margin-bottom: 0.75rem; }
+.paid-options.visible { display: block; }
+.paid-options h2 { font-size: 0.9rem; margin-bottom: 0.4rem; }
+
+/* Reuse existing option-card styles from base */
+.option-card { padding: 0.4rem 0.7rem; margin-bottom: 0.35rem; }
+.option-title { font-size: 0.8rem; }
+.option-description { font-size: 0.65rem; }
+.option-icon .material-symbols-outlined { font-size: 1rem; }
+.chat-options-header { font-size: 0.8rem; color: var(--text-dim); margin: 0.5rem 0 0.25rem; padding-left: 0.2rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.option-select { background: var(--bg-card, #1a1a1a); color: var(--text-main, #fff); border: 1px solid var(--border-dim, #333); border-radius: 4px; padding: 0.2rem 0.4rem; font-size: 0.75rem; min-width: 8rem; }
+
+/* Sticky checkout bar — always visible at bottom */
+.checkout-sticky {
+    position: sticky; bottom: 0; z-index: 50;
+    background: rgba(10, 10, 10, 0.92);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid rgba(255, 252, 0, 0.2);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.5);
+    padding: 0.5rem 0;
+    margin: 0.5rem -0.5rem 0;
+    padding-left: 0.5rem; padding-right: 0.5rem;
+}
+.btn-submit {
+    padding: 0.6rem 1.5rem; font-size: 0.95rem; width: 100%; margin-top: 0.4rem;
+    transition: box-shadow 0.2s, transform 0.1s;
+}
+.btn-submit:hover:not(:disabled) {
+    box-shadow: 0 0 20px rgba(255, 252, 0, 0.3);
+}
+.btn-submit:active:not(:disabled) { transform: scale(0.98); }
+
+/* Summary bar */
+.order-summary {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.4rem 0.5rem;
+    background: rgba(255, 252, 0, 0.06); border: 1px solid rgba(255, 252, 0, 0.15);
+    font-size: 0.78rem; font-family: 'JetBrains Mono', monospace;
+}
+.order-total { font-size: 1rem; font-weight: 900; color: var(--snap-yellow); }
+
+/* Selected tier checkmark */
+.tier-card.selected::before {
+    content: '';
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 2px;
+    background: var(--snap-yellow);
+}
+
+/* Price flash on change */
+@keyframes price-flash {
+    0% { color: #fff; }
+    100% { color: var(--snap-yellow); }
+}
+.order-total.flash { animation: price-flash 0.4s ease-out; }
+
+/* Zero-count dimming */
+.stat-card.empty { opacity: 0.35; }
+.stat-card.empty .stat-number { color: var(--text-dim); }
+.alc-item.disabled { opacity: 0.3; pointer-events: none; }
+.tier-features .na-text { color: var(--text-dim); text-decoration: line-through; font-size: 0.65rem; }
+
+/* Savings hint */
+.savings-hint { font-size: 0.65rem; color: #4ade80; margin-top: 0.2rem; font-family: 'JetBrains Mono', monospace; }
+
+/* ── Responsive ── */
+@media (max-width: 479px) {
+    .scan-stats { grid-template-columns: 1fr; gap: 0.35rem; }
+    .stat-card { display: flex; align-items: center; gap: 0.6rem; text-align: left; padding: 0.5rem 0.6rem; }
+    .stat-card .stat-icon { margin-bottom: 0; font-size: 1.1rem; }
+    .stat-card .stat-number { font-size: 1.2rem; }
+    .stat-card .stat-label { font-size: 0.62rem; }
+    .stat-card .stat-size { font-size: 0.58rem; }
+    .tier-name { font-size: 0.8rem; }
+    .tier-price { font-size: 0.9rem; }
+    .tier-features li { font-size: 0.65rem; }
+    .best-value { font-size: 0.5rem; padding: 0.05rem 0.3rem; }
+    .alc-item { padding: 0.3rem 0.5rem; font-size: 0.7rem; }
+    .checkout-sticky { margin: 0.5rem -0.75rem 0; padding-left: 0.75rem; padding-right: 0.75rem; }
+    .order-summary { flex-direction: column; gap: 0.15rem; text-align: center; padding: 0.35rem 0.4rem; }
+    .btn-submit { font-size: 0.85rem; padding: 0.55rem 1rem; }
+    .ir-header h1 { font-size: 1.1rem; }
+}
+@media (min-width: 480px) and (max-width: 767px) {
+    .scan-stats { grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+    .stat-card .stat-number { font-size: 1.3rem; }
+}
+</style>
+
+<!-- Payment cancelled banner (shown when returning from Stripe) -->
+<div id="payment-cancelled-banner" style="display: none; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.4); padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.78rem; align-items: center; gap: 0.4rem;">
+    <span class="material-symbols-outlined" style="font-size: 0.9rem; color: #ef4444;">close</span>
+    <span>Payment cancelled. You can try again or choose a different package.</span>
+</div>
+<script>
+if (new URLSearchParams(window.location.search).get('payment') === 'cancelled') {
+    document.getElementById('payment-cancelled-banner').style.display = 'flex';
+    // Clean URL
+    history.replaceState(null, '', window.location.pathname);
+}
+</script>
+
 <!-- Breadcrumb -->
-<div class="breadcrumb">
-    <a href="/dashboard">Dashboard</a>
-    <span class="separator">&gt;</span>
-    <span>Job #{{ job_id }}</span>
+<div style="font-size: 0.7rem; margin-bottom: 0.5rem; font-family: 'JetBrains Mono', monospace;">
+    <a href="/dashboard" style="color: var(--text-dim); text-decoration: none;">Dashboard</a>
+    <span style="color: var(--text-dim); margin: 0 0.3rem;">&gt;</span>
+    <span style="color: var(--snap-yellow);">Job #{{ job_id }}</span>
 </div>
 
-<!-- SECTION 1: HEADER -->
-<section class="configure-header">
-    <h1>Your export has been scanned</h1>
-    <p class="configure-subtitle">
-        {{ "{:,}".format(scan_results.total_assets) }} files found across {{ scan_results.total_size_bytes | format_size }}
+<!-- INTELLIGENCE REPORT HEADER -->
+<section class="ir-header">
+    <h1>
+        <span class="material-symbols-outlined" style="font-size: 1.2rem; color: var(--snap-yellow); vertical-align: middle;">analytics</span>
+        Intelligence Report
+    </h1>
+    <p class="ir-subtitle">
+        We scanned your Snapchat export. Here's what we found.
+        <span style="display: block; font-size: 0.68rem; color: var(--text-dim); margin-top: 0.2rem;">
+            This report expires in 72 hours. Choose a package to start processing.
+        </span>
     </p>
 </section>
 
-<!-- SECTION 2: PICK YOUR LANES -->
-<section class="configure-lanes">
-    <h2>Pick Your Lanes</h2>
-    <div class="lanes-grid">
-        <!-- Memories Lane -->
-        <div class="lane-card selected" data-lane="memories" onclick="toggleLane(this)">
-            <div class="lane-icon">
-                <span class="material-symbols-outlined">photo_library</span>
+<!-- SCAN STATS -->
+<section class="scan-stats">
+    <div class="stat-card{% if scan_results.memories == 0 %} empty{% endif %}">
+        <div class="stat-icon"><span class="material-symbols-outlined">photo_library</span></div>
+        <div class="stat-number">{{ "{:,}".format(scan_results.memories) }}</div>
+        <div class="stat-label">Memories</div>
+        <div class="stat-size">{{ scan_results.memories_size | format_size }}</div>
+    </div>
+    <div class="stat-card{% if scan_results.stories == 0 %} empty{% endif %}">
+        <div class="stat-icon"><span class="material-symbols-outlined">auto_stories</span></div>
+        <div class="stat-number">{{ "{:,}".format(scan_results.stories) }}</div>
+        <div class="stat-label">Stories</div>
+        <div class="stat-size">{{ scan_results.stories_size | format_size }}</div>
+    </div>
+    <div class="stat-card{% if scan_results.chats == 0 %} empty{% endif %}">
+        <div class="stat-icon"><span class="material-symbols-outlined">chat_bubble</span></div>
+        <div class="stat-number">{{ "{:,}".format(scan_results.chats) }}</div>
+        <div class="stat-label">Chats</div>
+        <div class="stat-size">{{ scan_results.chats_size | format_size }}</div>
+    </div>
+</section>
+
+<!-- TIER SELECTION -->
+<section class="tier-section">
+    <h2>Choose Your Package</h2>
+    <div class="tier-grid">
+
+        <!-- FREE TIER -->
+        <div class="tier-card selected" data-tier="free" onclick="selectTier('free')" tabindex="0" role="button" aria-label="Free tier — Memories plus Dates">
+            <div class="tier-header">
+                <span class="tier-name">Memories + Dates</span>
+                <span class="tier-price tier-price-free">FREE</span>
             </div>
-            <div class="lane-content">
-                <div class="lane-name">Memories</div>
-                <div class="lane-count">{{ "{:,}".format(scan_results.memories) }}</div>
-                <div class="lane-size">{{ scan_results.memories_size | format_size }}</div>
-            </div>
-            <input type="hidden" class="lane-checkbox" name="memories" value="1" checked>
+            <div class="tier-tagline">"Your {{ "{:,}".format(scan_results.memories) }} memories, properly dated"</div>
+            <ul class="tier-features">
+                <li><span class="material-symbols-outlined check">check</span> Date recovery via 6-level matching</li>
+                <li><span class="material-symbols-outlined check">check</span> Memories organized by date</li>
+                <li><span class="material-symbols-outlined lock">lock</span> <span class="locked-text">No GPS coordinates</span></li>
+                <li><span class="material-symbols-outlined lock">lock</span> <span class="locked-text">No overlay compositing</span></li>
+                <li><span class="material-symbols-outlined lock">lock</span> <span class="locked-text">No chats or stories</span></li>
+            </ul>
         </div>
 
-        <!-- Stories Lane -->
-        <div class="lane-card selected" data-lane="stories" onclick="toggleLane(this)">
-            <div class="lane-icon">
-                <span class="material-symbols-outlined">auto_stories</span>
+        <!-- $4.99 RESCUE TIER -->
+        <div class="tier-card" data-tier="rescue" onclick="selectTier('rescue')" tabindex="0" role="button" aria-label="Memory Rescue tier — 4 dollars 99">
+            <div class="tier-header">
+                <span class="tier-name">Memory Rescue</span>
+                <span class="tier-price">$4.99</span>
             </div>
-            <div class="lane-content">
-                <div class="lane-name">Stories</div>
-                <div class="lane-count">{{ "{:,}".format(scan_results.stories) }}</div>
-                <div class="lane-size">{{ scan_results.stories_size | format_size }}</div>
-            </div>
-            <input type="hidden" class="lane-checkbox" name="stories" value="1" checked>
+            <div class="tier-tagline">"Camera-roll ready with locations"</div>
+            <ul class="tier-features">
+                <li><span class="material-symbols-outlined check">check</span> Everything in Free, plus:</li>
+                <li><span class="material-symbols-outlined check">check</span> GPS coordinates in EXIF</li>
+                <li><span class="material-symbols-outlined check">check</span> Overlays composited onto photos</li>
+                <li><span class="material-symbols-outlined check">check</span> Full EXIF enrichment</li>
+                <li><span class="material-symbols-outlined lock">lock</span> <span class="locked-text">No chats or stories</span></li>
+            </ul>
         </div>
 
-        <!-- Chats Lane -->
-        <div class="lane-card selected" data-lane="chats" onclick="toggleLane(this)">
-            <div class="lane-icon">
-                <span class="material-symbols-outlined">chat_bubble</span>
+        <!-- $9.99 FULL TIER -->
+        <div class="tier-card" data-tier="full" onclick="selectTier('full')" tabindex="0" role="button" aria-label="Complete Archive tier — 9 dollars 99">
+            <span class="best-value">Best Value</span>
+            <div class="tier-header">
+                <span class="tier-name">Complete Archive</span>
+                <span class="tier-price">$9.99</span>
             </div>
-            <div class="lane-content">
-                <div class="lane-name">Chats</div>
-                <div class="lane-count">{{ "{:,}".format(scan_results.chats) }}</div>
-                <div class="lane-size">{{ scan_results.chats_size | format_size }}</div>
-            </div>
-            <input type="hidden" class="lane-checkbox" name="chats" value="1" checked>
+            <div class="tier-tagline">"Your complete Snapchat history, preserved"</div>
+            <ul class="tier-features">
+                <li><span class="material-symbols-outlined check">check</span> All {{ "{:,}".format(scan_results.total_assets) }} files processed</li>
+                <li><span class="material-symbols-outlined check">check</span> Memories + Stories + Chats</li>
+                <li><span class="material-symbols-outlined check">check</span> GPS, overlays, full EXIF &amp; XMP</li>
+                <li><span class="material-symbols-outlined check">check</span> Chat transcripts + dark mode PNGs</li>
+                <li><span class="material-symbols-outlined check">check</span> Saves ~$5 vs a la carte</li>
+            </ul>
         </div>
     </div>
 </section>
 
-<!-- SECTION 3: PROCESSING OPTIONS -->
-<section class="configure-options">
-    <h2>Processing Options</h2>
-
-    <!-- EMBED EXIF METADATA -->
-    <div class="option-card">
-        <div class="option-left">
-            <div class="option-icon">
-                <span class="material-symbols-outlined">sell</span>
-            </div>
-            <div class="option-text">
-                <div class="option-title">Embed EXIF Metadata</div>
-                <div class="option-description">GPS, dates, camera info written into files</div>
-            </div>
-        </div>
-        <div class="option-right">
-            <label class="toggle-switch">
-                <input type="checkbox" id="exif_enabled" name="exif_enabled" {% if prefs.exif_enabled %}checked{% endif %}>
-                <span class="toggle-slider"></span>
-            </label>
-        </div>
-    </div>
-
-    <!-- BURN DATE OVERLAYS -->
-    <div class="option-card">
-        <div class="option-left">
-            <div class="option-icon">
-                <span class="material-symbols-outlined">schedule</span>
-            </div>
-            <div class="option-text">
-                <div class="option-title">Burn Date Overlays</div>
-                <div class="option-description">Add date & time text onto photos</div>
-            </div>
-        </div>
-        <div class="option-right">
-            <label class="toggle-switch">
-                <input type="checkbox" id="burn_overlays" name="burn_overlays" {% if prefs.burn_overlays %}checked{% endif %}>
-                <span class="toggle-slider"></span>
-            </label>
-        </div>
-    </div>
-
-    <!-- DARK MODE CHATS (conditional visibility) -->
-    <div class="option-card hidden" id="dark_mode_option">
-        <div class="option-left">
-            <div class="option-icon">
-                <span class="material-symbols-outlined">dark_mode</span>
-            </div>
-            <div class="option-text">
-                <div class="option-title">Dark Mode Chats</div>
-                <div class="option-description">Render chat PNGs with dark background</div>
-            </div>
-        </div>
-        <div class="option-right">
-            <label class="toggle-switch">
-                <input type="checkbox" id="dark_mode_pngs" name="dark_mode_pngs" {% if prefs.dark_mode_pngs %}checked{% endif %}>
-                <span class="toggle-slider"></span>
-            </label>
-        </div>
-    </div>
-
-    <!-- XMP SIDECAR FILES -->
-    <div class="option-card">
-        <div class="option-left">
-            <div class="option-icon">
-                <span class="material-symbols-outlined">description</span>
-            </div>
-            <div class="option-text">
-                <div class="option-title">XMP Sidecar Files</div>
-                <div class="option-description">For Lightroom / Darktable workflows</div>
-            </div>
-        </div>
-        <div class="option-right">
-            <label class="toggle-switch">
-                <input type="checkbox" id="xmp_enabled" name="xmp_enabled" {% if prefs.xmp_enabled %}checked{% endif %}>
-                <span class="toggle-slider"></span>
-            </label>
-        </div>
-    </div>
-</section>
-
-<!-- SECTION 4: ADVANCED SETTINGS -->
-<section class="configure-advanced">
-    <details class="advanced-details">
-        <summary class="advanced-summary">
-            <span class="material-symbols-outlined">settings</span>
-            Advanced Settings
+<!-- A LA CARTE -->
+<section class="alc-section">
+    <details id="alc-details">
+        <summary class="alc-toggle">
+            <span class="material-symbols-outlined" style="font-size: 0.9rem;">tune</span>
+            Or build your own — A La Carte
+            <span id="alc-count-badge" style="display: none; background: var(--snap-yellow); color: #000; font-size: 0.55rem; font-weight: 900; padding: 0.05rem 0.35rem; font-family: 'JetBrains Mono', monospace; margin-left: 0.2rem;"></span>
+            <span class="material-symbols-outlined" style="font-size: 0.85rem; transition: transform 0.2s;" id="alc-chevron">expand_more</span>
         </summary>
-        <div class="advanced-content">
-            <!-- GPS Matching Window Slider -->
-            <div class="advanced-control">
-                <label for="gps_window">GPS Matching Window</label>
-                <input type="range" id="gps_window" name="gps_window" min="30" max="1800" value="{{ prefs.gps_window_seconds | default(300) }}" step="30">
-                <div class="slider-value">
-                    <span id="gps_window_display">{{ prefs.gps_window_seconds | default(300) }}</span>s
-                </div>
+        <div class="alc-grid">
+            <div class="alc-item" data-addon="gps" onclick="toggleAddon(this)">
+                <span class="material-symbols-outlined" style="font-size: 0.85rem; margin-right: 0.3rem;">my_location</span>
+                <span class="alc-name">GPS Metadata</span>
+                <span class="alc-price">$2.99</span>
             </div>
-
-            <!-- Phase Selection -->
-            <div class="advanced-control">
-                <label>Processing Phases</label>
-                <div class="phase-checkboxes">
-                    <label class="phase-check">
-                        <input type="checkbox" name="phase_ingest" checked>
-                        <span>Ingest</span>
-                    </label>
-                    <label class="phase-check">
-                        <input type="checkbox" name="phase_match" checked>
-                        <span>Match</span>
-                    </label>
-                    <label class="phase-check">
-                        <input type="checkbox" name="phase_enrich" checked>
-                        <span>Enrich</span>
-                    </label>
-                    <label class="phase-check">
-                        <input type="checkbox" name="phase_export" checked>
-                        <span>Export</span>
-                    </label>
-                </div>
+            <div class="alc-item" data-addon="overlays" onclick="toggleAddon(this)">
+                <span class="material-symbols-outlined" style="font-size: 0.85rem; margin-right: 0.3rem;">layers</span>
+                <span class="alc-name">Overlay Burn</span>
+                <span class="alc-price">$1.99</span>
             </div>
-
-            <!-- Dry Run Toggle -->
-            <div class="advanced-control">
-                <label class="toggle-switch">
-                    <input type="checkbox" id="dry_run" name="dry_run">
-                    <span class="toggle-slider"></span>
-                    <span>Dry Run (don't write files)</span>
-                </label>
+            <div class="alc-item" data-addon="chats" onclick="toggleAddon(this)">
+                <span class="material-symbols-outlined" style="font-size: 0.85rem; margin-right: 0.3rem;">chat_bubble</span>
+                <span class="alc-name">Chat Export</span>
+                <span class="alc-price">$3.99</span>
+            </div>
+            <div class="alc-item" data-addon="stories" onclick="toggleAddon(this)">
+                <span class="material-symbols-outlined" style="font-size: 0.85rem; margin-right: 0.3rem;">auto_stories</span>
+                <span class="alc-name">Story Archive</span>
+                <span class="alc-price">$1.99</span>
+            </div>
+            <div class="alc-item" data-addon="xmp" onclick="toggleAddon(this)">
+                <span class="material-symbols-outlined" style="font-size: 0.85rem; margin-right: 0.3rem;">description</span>
+                <span class="alc-name">XMP Sidecars</span>
+                <span class="alc-price">$1.99</span>
             </div>
         </div>
     </details>
 </section>
 
-<!-- SECTION 5: SUBMIT -->
-<section class="configure-submit">
-    <button class="btn-primary btn-submit" onclick="submitConfigure()">Start Processing</button>
+<!-- PROCESSING OPTIONS (visible for paid tiers) -->
+<section class="paid-options" id="paid-options">
+    <h2>Processing Options</h2>
+
+    <!-- FOLDER ORGANIZATION -->
+    <div class="option-card">
+        <div class="option-left">
+            <div class="option-icon"><span class="material-symbols-outlined">folder_open</span></div>
+            <div class="option-text">
+                <div class="option-title">Folder Organization</div>
+                <div class="option-description">Controls how exported files are organized into folders.</div>
+            </div>
+        </div>
+        <div class="option-right">
+            <select id="folder_style" name="folder_style" class="option-select">
+                <option value="year_month" selected>Year / Month</option>
+                <option value="year">Year Only</option>
+                <option value="flat">Flat (no folders)</option>
+                <option value="type">By Type</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- GPS PRECISION (only for tiers with GPS) -->
+    <div class="option-card" id="gps-precision-option" style="display: none;">
+        <div class="option-left">
+            <div class="option-icon"><span class="material-symbols-outlined">my_location</span></div>
+            <div class="option-text">
+                <div class="option-title">GPS Precision</div>
+                <div class="option-description">Use "City-level" to round to ~1km for privacy, or "Strip GPS" to remove entirely.</div>
+            </div>
+        </div>
+        <div class="option-right">
+            <select id="gps_precision" name="gps_precision" class="option-select">
+                <option value="exact" selected>Exact</option>
+                <option value="city">City-level</option>
+                <option value="none">Strip GPS</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- CHAT OPTIONS (only for tiers with chats) -->
+    <div id="chat_options_group" style="display: none;">
+        <div class="chat-options-header">Chat Options</div>
+
+        <div class="option-card">
+            <div class="option-left">
+                <div class="option-icon"><span class="material-symbols-outlined">dark_mode</span></div>
+                <div class="option-text">
+                    <div class="option-title">Dark Mode Chats</div>
+                    <div class="option-description">Renders chat PNGs with a dark background.</div>
+                </div>
+            </div>
+            <div class="option-right">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="dark_mode_pngs" name="dark_mode_pngs">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="option-card">
+            <div class="option-left">
+                <div class="option-icon"><span class="material-symbols-outlined">visibility_off</span></div>
+                <div class="option-text">
+                    <div class="option-title">Hide "Sent To" Labels</div>
+                    <div class="option-description">Removes recipient info from chat media.</div>
+                </div>
+            </div>
+            <div class="option-right">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="hide_sent_to" name="hide_sent_to">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+    </div>
 </section>
 
+<!-- STICKY CHECKOUT BAR -->
+<div class="checkout-sticky">
+    <div id="checkout-error" style="display: none; background: rgba(204, 0, 0, 0.15); border: 1px solid rgba(204, 0, 0, 0.4); padding: 0.35rem 0.5rem; margin-bottom: 0.3rem; font-size: 0.72rem; align-items: center; gap: 0.3rem;">
+        <span class="material-symbols-outlined" style="font-size: 0.8rem; color: var(--danger);">error</span>
+        <span id="checkout-error-text"></span>
+    </div>
+    <div class="order-summary" id="order-summary">
+        <span id="order-desc">Free — Memories + Dates</span>
+        <span class="order-total" id="order-total">$0.00</span>
+    </div>
+    <button class="btn-primary btn-submit" id="btn-submit" onclick="submitOrder()">
+        Start Free Export
+    </button>
+</div>
+
+<!-- Back link (outside sticky so it doesn't take up sticky space) -->
+<div style="text-align: center; margin: 0.4rem 0 1rem;">
+    <a href="/dashboard" style="font-size: 0.68rem; color: var(--text-dim); text-decoration: none; font-family: 'JetBrains Mono', monospace;">
+        &larr; Back to Dashboard
+    </a>
+</div>
+
 <script>
-// Helper: format bytes to human readable
-function formatSize(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+var JOB_ID = {{ job_id }};
+var STRIPE_ENABLED = {{ 'true' if stripe_enabled else 'false' }};
+var selectedTier = 'free';
+var selectedAddons = new Set();
+
+// Scan counts — used to disable irrelevant a la carte items
+var SCAN_COUNTS = {
+    memories: {{ scan_results.memories }},
+    stories: {{ scan_results.stories }},
+    chats: {{ scan_results.chats }}
+};
+
+var TIER_PRICES = { free: 0, rescue: 4.99, full: 9.99 };
+var ADDON_PRICES = { gps: 2.99, overlays: 1.99, chats: 3.99, stories: 1.99, xmp: 1.99 };
+
+function selectTier(tier) {
+    selectedTier = tier;
+    selectedAddons.clear();
+
+    // Clear a la carte selections
+    document.querySelectorAll('.alc-item').forEach(function(el) {
+        el.classList.remove('selected');
+    });
+
+    // Update tier card highlighting
+    document.querySelectorAll('.tier-card').forEach(function(el) {
+        el.classList.toggle('selected', el.dataset.tier === tier);
+    });
+
+    updateUI();
 }
 
-// Toggle lane selection
-function toggleLane(element) {
-    element.classList.toggle('selected');
-    const checkbox = element.querySelector('.lane-checkbox');
-    if (checkbox) {
-        checkbox.checked = element.classList.contains('selected');
+function toggleAddon(el) {
+    var addon = el.dataset.addon;
+
+    // Switch to a-la-carte mode (deselect tier cards)
+    selectedTier = 'alacarte';
+    document.querySelectorAll('.tier-card').forEach(function(c) {
+        c.classList.remove('selected');
+    });
+
+    el.classList.toggle('selected');
+    if (selectedAddons.has(addon)) {
+        selectedAddons.delete(addon);
+    } else {
+        selectedAddons.add(addon);
     }
-    updateDarkModeVisibility();
-}
 
-// Update dark mode option visibility based on chats selection
-function updateDarkModeVisibility() {
-    const chatsCard = document.querySelector('[data-lane="chats"]');
-    const darkModeOption = document.getElementById('dark_mode_option');
-    if (chatsCard && darkModeOption) {
-        if (chatsCard.classList.contains('selected')) {
-            darkModeOption.style.display = 'flex';
-        } else {
-            darkModeOption.style.display = 'none';
-        }
-    }
-}
-
-// Update slider display value
-document.getElementById('gps_window').addEventListener('input', function() {
-    document.getElementById('gps_window_display').textContent = this.value;
-});
-
-// Validate and submit
-function submitConfigure() {
-    // Validate: at least one lane selected
-    const selectedLanes = document.querySelectorAll('.lane-card.selected');
-    if (selectedLanes.length === 0) {
-        alert('Please select at least one lane to process.');
+    // If no addons selected, revert to free
+    if (selectedAddons.size === 0) {
+        selectTier('free');
         return;
     }
 
-    // Disable button to prevent double-submit
-    const submitBtn = document.querySelector('.btn-submit');
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Processing...';
+    updateUI();
+}
 
-    // Collect form data
-    const lanes = Array.from(selectedLanes).map(card => card.dataset.lane);
+function getTotal() {
+    if (selectedTier === 'alacarte') {
+        var total = 0;
+        selectedAddons.forEach(function(a) { total += ADDON_PRICES[a] || 0; });
+        return total;
+    }
+    return TIER_PRICES[selectedTier] || 0;
+}
 
-    const payload = {
-        lanes: lanes,
+function hasFeature(feature) {
+    if (selectedTier === 'full') return true;
+    if (selectedTier === 'rescue') return ['gps', 'overlays'].indexOf(feature) >= 0;
+    if (selectedTier === 'alacarte') return selectedAddons.has(feature);
+    return false;
+}
+
+function updateUI() {
+    var total = getTotal();
+    var hasGPS = hasFeature('gps');
+    var hasChats = hasFeature('chats');
+    var isPaid = total > 0;
+
+    // Show/hide processing options
+    var opts = document.getElementById('paid-options');
+    opts.classList.toggle('visible', isPaid);
+
+    // GPS precision only if GPS included
+    var gpsOpt = document.getElementById('gps-precision-option');
+    if (gpsOpt) gpsOpt.style.display = hasGPS ? '' : 'none';
+
+    // Chat options only if chats included
+    var chatGroup = document.getElementById('chat_options_group');
+    if (chatGroup) chatGroup.style.display = hasChats ? 'block' : 'none';
+
+    // Order summary
+    var descEl = document.getElementById('order-desc');
+    var totalEl = document.getElementById('order-total');
+    var btn = document.getElementById('btn-submit');
+
+    if (selectedTier === 'free') {
+        descEl.textContent = 'Free — Memories + Dates';
+        totalEl.textContent = '$0.00';
+        btn.textContent = 'Start Free Export';
+    } else if (selectedTier === 'rescue') {
+        descEl.textContent = 'Memory Rescue — Dates + GPS + Overlays';
+        totalEl.textContent = '$4.99';
+        btn.textContent = 'Continue to Payment — $4.99';
+    } else if (selectedTier === 'full') {
+        descEl.textContent = 'Complete Archive — Everything';
+        totalEl.textContent = '$9.99';
+        btn.textContent = 'Continue to Payment — $9.99';
+    } else {
+        var names = Array.from(selectedAddons).join(', ');
+        descEl.textContent = 'A La Carte: ' + names;
+        totalEl.textContent = '$' + total.toFixed(2);
+        btn.textContent = 'Continue to Payment — $' + total.toFixed(2);
+
+        // Show savings hint if a la carte exceeds $9.99
+        if (total > 9.99) {
+            descEl.textContent += ' (save $' + (total - 9.99).toFixed(2) + ' with Complete Archive)';
+        }
+    }
+
+    // Update a la carte count badge
+    var alcBadge = document.getElementById('alc-count-badge');
+    if (alcBadge) {
+        if (selectedAddons.size > 0) {
+            alcBadge.textContent = selectedAddons.size + ' selected';
+            alcBadge.style.display = 'inline';
+        } else {
+            alcBadge.style.display = 'none';
+        }
+    }
+
+    // Flash the price on change
+    totalEl.classList.remove('flash');
+    void totalEl.offsetWidth; // force reflow
+    totalEl.classList.add('flash');
+}
+
+function getSelectVal(id, fallback) {
+    var el = document.getElementById(id);
+    return el ? el.value : fallback;
+}
+
+function getToggleVal(id) {
+    var el = document.getElementById(id);
+    return el ? el.checked : false;
+}
+
+function submitOrder() {
+    var btn = document.getElementById('btn-submit');
+    btn.disabled = true;
+    btn.textContent = 'Processing...';
+    // Clear any previous error
+    var errEl = document.getElementById('checkout-error');
+    if (errEl) errEl.style.display = 'none';
+
+    var payload = {
+        tier: selectedTier,
+        add_ons: Array.from(selectedAddons),
         options: {
-            exif_enabled: document.getElementById('exif_enabled').checked,
-            burn_overlays: document.getElementById('burn_overlays').checked,
-            dark_mode_pngs: document.getElementById('dark_mode_pngs').checked,
-            xmp_enabled: document.getElementById('xmp_enabled').checked,
-            gps_window_seconds: parseInt(document.getElementById('gps_window').value),
+            folder_style: getSelectVal('folder_style', 'year_month'),
+            gps_precision: getSelectVal('gps_precision', 'exact'),
+            dark_mode_pngs: getToggleVal('dark_mode_pngs'),
+            hide_sent_to: getToggleVal('hide_sent_to'),
         }
     };
 
-    // POST to API
-    const jobId = '{{ job_id }}';
-    fetch(`/api/jobs/${jobId}/configure`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return response.json();
-    })
-    .then(data => {
-        // Redirect to job progress page
-        window.location.href = `/job/${jobId}`;
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Failed to start processing. Please try again.');
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Start Processing';
-    });
+    if (selectedTier === 'free') {
+        // Free tier: configure immediately (no payment)
+        fetch('/api/jobs/' + JOB_ID + '/configure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(function(r) {
+            if (!r.ok) return r.json().then(function(data) { throw new Error(data.detail || 'HTTP ' + r.status); });
+            return r.json();
+        })
+        .then(function() {
+            window.location.href = '/snatchedmemories/' + JOB_ID;
+        })
+        .catch(function(err) {
+            console.error(err);
+            var errEl = document.getElementById('checkout-error');
+            var errTxt = document.getElementById('checkout-error-text');
+            if (errEl && errTxt) { errTxt.textContent = err.message || 'Failed to start processing. Please try again.'; errEl.style.display = 'flex'; }
+            btn.disabled = false;
+            btn.textContent = 'Start Free Export';
+        });
+    } else {
+        // Paid tier: create Stripe Checkout session
+        fetch('/api/jobs/' + JOB_ID + '/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(function(r) {
+            if (!r.ok) return r.json().then(function(data) { throw new Error(data.detail || 'HTTP ' + r.status); });
+            return r.json();
+        })
+        .then(function(data) {
+            // Redirect to Stripe Checkout
+            window.location.href = data.checkout_url;
+        })
+        .catch(function(err) {
+            console.error(err);
+            var errEl = document.getElementById('checkout-error');
+            var errTxt = document.getElementById('checkout-error-text');
+            if (errEl && errTxt) { errTxt.textContent = err.message || 'Failed to create checkout session. Please try again.'; errEl.style.display = 'flex'; }
+            btn.disabled = false;
+            updateUI();
+        });
+    }
 }
 
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
-    updateDarkModeVisibility();
+// Chevron rotation for a la carte disclosure
+(function() {
+    var details = document.getElementById('alc-details');
+    var chevron = document.getElementById('alc-chevron');
+    if (details && chevron) {
+        details.addEventListener('toggle', function() {
+            chevron.style.transform = details.open ? 'rotate(180deg)' : '';
+        });
+    }
+})();
+
+// Disable a la carte items for zero-count lanes
+(function() {
+    if (SCAN_COUNTS.chats === 0) {
+        var el = document.querySelector('[data-addon="chats"]');
+        if (el) el.classList.add('disabled');
+    }
+    if (SCAN_COUNTS.stories === 0) {
+        var el = document.querySelector('[data-addon="stories"]');
+        if (el) el.classList.add('disabled');
+    }
+})();
+
+// If Stripe is not configured, disable paid tiers and a la carte
+if (!STRIPE_ENABLED) {
+    document.querySelectorAll('.tier-card[data-tier="rescue"], .tier-card[data-tier="full"]').forEach(function(el) {
+        el.style.opacity = '0.35';
+        el.style.pointerEvents = 'none';
+        el.insertAdjacentHTML('beforeend', '<div style="font-size:0.65rem;color:var(--text-dim);margin-top:0.3rem;">Payments coming soon</div>');
+    });
+    var alcSection = document.querySelector('.alc-section');
+    if (alcSection) alcSection.style.display = 'none';
+}
+
+// Keyboard accessibility: Enter/Space selects tier cards and a la carte items
+document.querySelectorAll('.tier-card[tabindex]').forEach(function(card) {
+    card.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            card.click();
+        }
+    });
 });
+document.querySelectorAll('.alc-item').forEach(function(item) {
+    item.setAttribute('tabindex', '0');
+    item.setAttribute('role', 'button');
+    item.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            item.click();
+        }
+    });
+});
+
+// Init
+updateUI();
 </script>
 
 {% endblock %}
-
-{# themed: 2026-02-25 #}
+{# themed: 2026-03-23 — Intelligence Report + Tier Selection #}

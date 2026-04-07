@@ -1,0 +1,55 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - link "heart_broken SNATCHED" [ref=e3] [cursor=pointer]:
+      - /url: /
+      - generic [ref=e4]: heart_broken
+      - generic [ref=e5]: SNATCHED
+    - list [ref=e6]:
+      - listitem [ref=e7]:
+        - link "Dashboard" [ref=e8] [cursor=pointer]:
+          - /url: /dashboard
+      - listitem [ref=e9]:
+        - link "Upload" [ref=e10] [cursor=pointer]:
+          - /url: /upload
+      - listitem [ref=e11]:
+        - link "Help" [ref=e12] [cursor=pointer]:
+          - /url: /help
+      - listitem [ref=e13]:
+        - link "playwright_test_1774414902141" [ref=e14] [cursor=pointer]:
+          - /url: /settings
+          - generic [ref=e15]: playwright_test_1774414902141
+        - link "logout" [ref=e16] [cursor=pointer]:
+          - /url: /logout
+          - generic [ref=e17]: logout
+  - main [ref=e19]:
+    - generic [ref=e21]:
+      - heading "Upload Your Snapchat Export" [level=2] [ref=e22]
+      - paragraph [ref=e23]: We'll scan your data and show you exactly what's inside before anything else happens.
+      - group [ref=e25]:
+        - generic "folder_open Already unzipped? Upload a folder instead expand_more" [ref=e26] [cursor=pointer]:
+          - generic [ref=e27]: folder_open
+          - text: Already unzipped? Upload a folder instead
+          - generic [ref=e28]: expand_more
+      - generic [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]: cloud_upload
+        - paragraph [ref=e32]: Drop your Snapchat export ZIPs here
+        - generic [ref=e33]: Select Files
+        - paragraph [ref=e34]: Multiple .zip files · Snapchat 2GB parts OK
+      - button "UPLOAD" [disabled]
+      - generic [ref=e35]:
+        - generic [ref=e36]: info
+        - text: 5.0GB max · 5GB/file · Quick scan, then you choose ·
+        - link "Export guide" [ref=e37] [cursor=pointer]:
+          - /url: /help
+  - contentinfo [ref=e38]:
+    - paragraph [ref=e39]: SNATCHED — They took your memories. We take them back.
+    - paragraph [ref=e40]: © 2026 Snatched. Not affiliated with Snap Inc.
+  - contentinfo [ref=e41]:
+    - text: SNATCHED © 2026 ·
+    - link "Help" [ref=e42] [cursor=pointer]:
+      - /url: /help
+    - text: · Privacy · Terms
+```

@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="section-header">
+    <h1 class="mb-0 page-title-accent">
+        <span class="material-symbols-outlined text-yellow">tune</span>
+        Tier Plans
+    </h1>
+    {% if tier_info %}
+    <span class="tier-badge tier-badge--{{ tier_info.label | lower }}">{{ tier_info.label }}</span>
+    {% endif %}
+</div>
+
+<p class="text-muted mb-3">
+    Edit tier limits below. Changes take effect instantly across all users &mdash; no restart needed.
+</p>
+
+{% for t in tiers %}
+<section class="mb-3">
+    <div class="section-header mb-2">
+        <h2 class="mb-0" style="color: {{ t.color }};">{{ t.label }} <code class="mono text-muted">({{ t.tier }})</code></h2>
+    </div>
+    <div class="info-card" id="tier-card-{{ t.tier }}">
+        <form onsubmit="saveTier(event, '{{ t.tier }}')">
+            <div class="stats-grid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));">
+
+                <div class="stat-card">
+                    <label class="stat-label" for="storage_gb_{{ t.tier }}">Storage (GB)</label>
+                    <input type="number" id="storage_gb_{{ t.tier }}" name="storage_gb"
+                           value="{{ t.storage_gb if t.storage_gb is not none else '' }}"
+                           placeholder="unlimited" min="0" style="width: 100%;">
+                </div>
+
+                <div class="stat-card">
+                    <label class="stat-label" for="max_upload_bytes_{{ t.tier }}">Max Upload (bytes)</label>
+                    <input type="number" id="max_upload_bytes_{{ t.tier }}" name="max_upload_bytes"
+                           value="{{ t.max_upload_bytes if t.max_upload_bytes is not none else '' }}"
+                           placeholder="unlimited" min="0" style="width: 100%;">
+                </div>
+
+                <div class="stat-card">
+                    <label class="stat-label" for="max_upload_label_{{ t.tier }}">Upload Label</label>
+                    <input type="text" id="max_upload_label_{{ t.tier }}" name="max_upload_label"
+                           value="{{ t.max_upload_label or '' }}" style="width: 100%;">
+                </div>
+
+                <div class="stat-card">
+                    <label class="stat-label" for="retention_days_{{ t.tier }}">Retention (days)</label>
+                    <input type="number" id="retention_days_{{ t.tier }}" name="retention_days"
+                           value="{{ t.retention_days if t.retention_days is not none else '' }}"
+                           placeholder="forever" min="0" style="width: 100%;">
+                </div>
+
+                <div class="stat-card">
+                    <label class="stat-label" for="concurrent_jobs_{{ t.tier }}">Concurrent Jobs</label>
+                    <input type="number" id="concurrent_jobs_{{ t.tier }}" name="concurrent_jobs"
+                           value="{{ t.concurrent_jobs }}" min="1" style="width: 100%;">
+                </div>
+
+                <div class="stat-card">
+                    <label class="stat-label" for="bulk_upload_{{ t.tier }}">Bulk Upload</label>
+                    <select id="bulk_upload_{{ t.tier }}" name="bulk_upload" style="width: 100%;">
+                        <option value="true" {{ 'selected' if t.bulk_upload }}>Yes</option>
+                        <option value="false" {{ 'selected' if not t.bulk_upload }}>No</option>
+                    </select>
+                </div>
+
+                <div class="stat-card">
+                    <label class="stat-label" for="max_api_keys_{{ t.tier }}">Max API Keys</label>
+                    <input type="number" id="max_api_keys_{{ t.tier }}" name="max_api_keys"
+                           value="{{ t.max_api_keys }}" min="0" style="width: 100%;">
+                </div>
+
+                <div class="stat-card">
+                    <label class="stat-label" for="api_key_rate_limit_rpm_{{ t.tier }}">API Rate (RPM)</label>
+                    <input type="number" id="api_key_rate_limit_rpm_{{ t.tier }}" name="api_key_rate_limit_rpm"
+                           value="{{ t.api_key_rate_limit_rpm }}" min="0" style="width: 100%;">
+                </div>
+
+                <div class="stat-card">
+                    <label class="stat-label" for="max_webhooks_{{ t.tier }}">Max Webhooks</label>
+                    <input type="number" id="max_webhooks_{{ t.tier }}" name="max_webhooks"
+                           value="{{ t.max_webhooks }}" min="0" style="width: 100%;">
+                </div>
+
+                <div class="stat-card">
+                    <label class="stat-label" for="max_schedules_{{ t.tier }}">Max Schedules</label>
+                    <input type="number" id="max_schedules_{{ t.tier }}" name="max_schedules"
+                           value="{{ t.max_schedules }}" min="0" style="width: 100%;">
+                </div>
+
+            </div>
+
+            <div style="margin-top: 1rem; display: flex; align-items: center; gap: 1rem;">
+                <button type="submit" class="btn-primary">
+                    <span class="material-symbols-outlined">save</span>
+                    SAVE {{ t.label | upper }}
+                </button>
+                <span id="status-{{ t.tier }}" class="text-muted"></span>
+            </div>
+        </form>
+    </div>
+</section>
+{% endfor %}
+
+<script>
+(function () {
+    "use strict";
+
+    async function saveTier(e, tierKey) {
+        e.preventDefault();
+        var card = document.getElementById("tier-card-" + tierKey);
+        var status = document.getElementById("status-" + tierKey);
+        status.textContent = "Saving...";
+        status.style.color = "var(--text-muted)";
+
+        var payload = {};
+        var inputs = card.querySelectorAll("input, select");
+        for (var i = 0; i < inputs.length; i++) {
+            var inp = inputs[i];
+            var name = inp.name;
+            var val = inp.value;
+
+            if (name === "bulk_upload") {
+                payload[name] = val === "true";
+            } else if (inp.type === "number") {
+                if (val !== "") {
+                    payload[name] = parseInt(val, 10);
+                }
+            } else if (val !== "") {
+                payload[name] = val;
+            }
+        }
+
+        try {
+            var res = await fetch("/api/admin/tiers/" + tierKey, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+                var err = await res.json();
+                throw new Error(err.detail || res.statusText);
+            }
+            var data = await res.json();
+            status.textContent = "Saved (v" + data.version + ")";
+            status.style.color = "var(--snap-yellow)";
+        } catch (ex) {
+            status.textContent = "Error: " + ex.message;
+            status.style.color = "var(--text-danger, #f44)";
+        }
+    }
+
+    window.saveTier = saveTier;
+})();
+</script>
+
+{% endblock %}
+{# themed: 2026-02-27 #}

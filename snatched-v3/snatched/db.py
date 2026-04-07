@@ -104,13 +104,13 @@ async def init_schema(pool: asyncpg.Pool) -> None:
             id                   SERIAL PRIMARY KEY,
             user_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             status               TEXT NOT NULL DEFAULT 'pending'
-                                 CHECK(status IN ('pending', 'running', 'scanned', 'matched', 'enriched', 'completed', 'failed', 'cancelled')),
+                                 CHECK(status IN ('pending', 'queued', 'running', 'scanned', 'matched', 'enriched', 'exporting', 'completed', 'failed', 'cancelled')),
             upload_filename      TEXT,
             upload_size_bytes    BIGINT,
             phases_requested     TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
             lanes_requested      TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
             processing_mode      TEXT NOT NULL DEFAULT 'speed_run'
-                                 CHECK(processing_mode IN ('speed_run', 'power_user')),
+                                 CHECK(processing_mode IN ('speed_run', 'power_user', 'quick_rescue')),
             progress_pct         INTEGER NOT NULL DEFAULT 0
                                  CHECK(progress_pct >= 0 AND progress_pct <= 100),
             current_phase        TEXT,
@@ -149,6 +149,13 @@ async def init_schema(pool: asyncpg.Pool) -> None:
             exif_enabled       BOOLEAN DEFAULT true,
             xmp_enabled        BOOLEAN DEFAULT false,
             gps_window_seconds INTEGER DEFAULT 300,
+            folder_style       TEXT DEFAULT 'year_month',
+            gps_precision      TEXT DEFAULT 'exact',
+            hide_sent_to       BOOLEAN DEFAULT false,
+            chat_timestamps    BOOLEAN DEFAULT true,
+            chat_cover_pages   BOOLEAN DEFAULT true,
+            chat_text          BOOLEAN DEFAULT true,
+            chat_png           BOOLEAN DEFAULT true,
             created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
@@ -398,6 +405,132 @@ async def init_schema(pool: asyncpg.Pool) -> None:
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_schedules_user ON schedules(user_id)",
+        # Exports table — one row per download bundle requested by the user
+        """
+        CREATE TABLE IF NOT EXISTS exports (
+            id              SERIAL PRIMARY KEY,
+            job_id          INTEGER NOT NULL REFERENCES processing_jobs(id) ON DELETE CASCADE,
+            user_id         INTEGER NOT NULL REFERENCES users(id),
+            status          TEXT NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending','building','completed','failed')),
+            export_type     TEXT NOT NULL DEFAULT 'full'
+                            CHECK(export_type IN ('quick_rescue','full','free','rescue')),
+            lanes           TEXT[] NOT NULL DEFAULT '{memories}',
+            exif_enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+            xmp_enabled     BOOLEAN NOT NULL DEFAULT FALSE,
+            burn_overlays   BOOLEAN NOT NULL DEFAULT TRUE,
+            chat_text       BOOLEAN NOT NULL DEFAULT TRUE,
+            chat_png        BOOLEAN NOT NULL DEFAULT TRUE,
+            dark_mode_pngs  BOOLEAN NOT NULL DEFAULT FALSE,
+            folder_style    TEXT NOT NULL DEFAULT 'year_month',
+            gps_precision   TEXT NOT NULL DEFAULT 'exact',
+            hide_sent_to    BOOLEAN NOT NULL DEFAULT FALSE,
+            chat_timestamps BOOLEAN NOT NULL DEFAULT TRUE,
+            chat_cover_pages BOOLEAN NOT NULL DEFAULT TRUE,
+            zip_dir         TEXT,
+            zip_part_count  INTEGER DEFAULT 1,
+            zip_total_bytes BIGINT,
+            file_count      INTEGER,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            started_at      TIMESTAMPTZ,
+            completed_at    TIMESTAMPTZ,
+            error_message   TEXT,
+            stats_json      JSONB
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_exports_job ON exports(job_id)",
+        "CREATE INDEX IF NOT EXISTS idx_exports_user ON exports(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_exports_status ON exports(status)",
+    ]
+
+    # Centralized tier plans — single source of truth for all tier limits
+    ddl_statements += [
+        """
+        CREATE TABLE IF NOT EXISTS tier_plans (
+            id                      SERIAL PRIMARY KEY,
+            tier_key                TEXT UNIQUE NOT NULL,
+            label                   TEXT NOT NULL,
+            color                   TEXT NOT NULL,
+            sort_order              INTEGER NOT NULL DEFAULT 0,
+            storage_gb              INTEGER,
+            max_upload_bytes        BIGINT,
+            max_upload_label        TEXT,
+            retention_days          INTEGER,
+            concurrent_jobs         INTEGER NOT NULL DEFAULT 1,
+            bulk_upload             BOOLEAN NOT NULL DEFAULT false,
+            max_api_keys            INTEGER NOT NULL DEFAULT 0,
+            api_key_rate_limit_rpm  INTEGER NOT NULL DEFAULT 0,
+            max_webhooks            INTEGER NOT NULL DEFAULT 0,
+            max_schedules           INTEGER NOT NULL DEFAULT 0,
+            created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS tier_plans_meta (
+            id       INTEGER PRIMARY KEY DEFAULT 1,
+            version  INTEGER NOT NULL DEFAULT 1,
+            CONSTRAINT tier_plans_meta_single_row CHECK (id = 1)
+        )
+        """,
+        """
+        INSERT INTO tier_plans_meta (id, version) VALUES (1, 1) ON CONFLICT DO NOTHING
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS system_config (
+            key         TEXT PRIMARY KEY,
+            value       TEXT NOT NULL,
+            value_type  TEXT NOT NULL DEFAULT 'text'
+                        CHECK(value_type IN ('integer', 'boolean', 'text')),
+            description TEXT,
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ]
+
+    # Vault system — persistent per-Snapchat-account data accumulation
+    ddl_statements += [
+        """
+        CREATE TABLE IF NOT EXISTS vaults (
+            id                  SERIAL PRIMARY KEY,
+            user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            snap_account_uid    TEXT,
+            snap_username       TEXT,
+            vault_path          TEXT NOT NULL,
+            import_count        INTEGER NOT NULL DEFAULT 0,
+            total_assets        INTEGER NOT NULL DEFAULT 0,
+            total_locations     INTEGER NOT NULL DEFAULT 0,
+            total_friends       INTEGER NOT NULL DEFAULT 0,
+            stats_json          JSONB,
+            last_import_at      TIMESTAMPTZ,
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_vaults_account
+            ON vaults(user_id, COALESCE(snap_account_uid, snap_username, ''))
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_vaults_user ON vaults(user_id)",
+        """
+        CREATE TABLE IF NOT EXISTS vault_imports (
+            id                  SERIAL PRIMARY KEY,
+            vault_id            INTEGER NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+            job_id              INTEGER REFERENCES processing_jobs(id) ON DELETE SET NULL,
+            original_filename   TEXT,
+            import_type         TEXT NOT NULL DEFAULT 'full',
+            assets_added        INTEGER NOT NULL DEFAULT 0,
+            assets_skipped      INTEGER NOT NULL DEFAULT 0,
+            locations_added     INTEGER NOT NULL DEFAULT 0,
+            friends_added       INTEGER NOT NULL DEFAULT 0,
+            gps_rematched       INTEGER NOT NULL DEFAULT 0,
+            sqlite_import_id    INTEGER,
+            stats_json          JSONB,
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_vault_imports_vault ON vault_imports(vault_id)",
+        "CREATE INDEX IF NOT EXISTS idx_vault_imports_job ON vault_imports(job_id)",
     ]
 
     # Migrations for existing tables (idempotent — safe to run every startup)
@@ -458,7 +591,7 @@ async def init_schema(pool: asyncpg.Pool) -> None:
         DO $$ BEGIN
             ALTER TABLE processing_jobs DROP CONSTRAINT IF EXISTS processing_jobs_status_check;
             ALTER TABLE processing_jobs ADD CONSTRAINT processing_jobs_status_check
-                CHECK(status IN ('pending', 'running', 'scanned', 'matched', 'enriched', 'completed', 'failed', 'cancelled'));
+                CHECK(status IN ('pending', 'queued', 'running', 'scanned', 'matched', 'enriched', 'exporting', 'completed', 'failed', 'cancelled'));
         EXCEPTION WHEN others THEN NULL;
         END $$
         """,
@@ -467,8 +600,104 @@ async def init_schema(pool: asyncpg.Pool) -> None:
         """
         DO $$ BEGIN
             ALTER TABLE processing_jobs ADD COLUMN processing_mode TEXT NOT NULL DEFAULT 'speed_run'
-                CHECK(processing_mode IN ('speed_run', 'power_user'));
+                CHECK(processing_mode IN ('speed_run', 'power_user', 'quick_rescue'));
         EXCEPTION WHEN duplicate_column THEN NULL;
+        END $$
+        """,
+        # WU-5: Add relative_path to upload_files for preserving zip directory structure
+        """
+        ALTER TABLE upload_files ADD COLUMN IF NOT EXISTS relative_path TEXT
+        """,
+        # Update processing_mode CHECK constraint to include quick_rescue.
+        # The ADD COLUMN migration above handles new installs; this handles
+        # existing DBs where the column was created with the old constraint.
+        """
+        DO $$ BEGIN
+            ALTER TABLE processing_jobs DROP CONSTRAINT IF EXISTS processing_jobs_processing_mode_check;
+            ALTER TABLE processing_jobs ADD CONSTRAINT processing_jobs_processing_mode_check
+                CHECK (processing_mode IN ('speed_run', 'power_user', 'quick_rescue'));
+        END $$
+        """,
+        # WU-17: Add is_admin flag to users table for admin-gated features
+        """
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE
+        """,
+        # B-2: Add dark_mode_pngs to exports table for per-export chat rendering mode
+        """
+        ALTER TABLE exports ADD COLUMN IF NOT EXISTS dark_mode_pngs BOOLEAN NOT NULL DEFAULT FALSE
+        """,
+        # New toggles: folder_style, gps_precision, hide_sent_to, chat_timestamps, chat_cover_pages
+        """
+        ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS folder_style TEXT DEFAULT 'year_month'
+        """,
+        """
+        ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS gps_precision TEXT DEFAULT 'exact'
+        """,
+        """
+        ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS hide_sent_to BOOLEAN DEFAULT false
+        """,
+        """
+        ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS chat_timestamps BOOLEAN DEFAULT true
+        """,
+        """
+        ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS chat_cover_pages BOOLEAN DEFAULT true
+        """,
+        """
+        ALTER TABLE exports ADD COLUMN IF NOT EXISTS folder_style TEXT NOT NULL DEFAULT 'year_month'
+        """,
+        """
+        ALTER TABLE exports ADD COLUMN IF NOT EXISTS gps_precision TEXT NOT NULL DEFAULT 'exact'
+        """,
+        """
+        ALTER TABLE exports ADD COLUMN IF NOT EXISTS hide_sent_to BOOLEAN NOT NULL DEFAULT FALSE
+        """,
+        """
+        ALTER TABLE exports ADD COLUMN IF NOT EXISTS chat_timestamps BOOLEAN NOT NULL DEFAULT TRUE
+        """,
+        """
+        ALTER TABLE exports ADD COLUMN IF NOT EXISTS chat_cover_pages BOOLEAN NOT NULL DEFAULT TRUE
+        """,
+        """
+        ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS chat_text BOOLEAN DEFAULT true
+        """,
+        """
+        ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS chat_png BOOLEAN DEFAULT true
+        """,
+        # Vault: Add account fingerprint columns to processing_jobs
+        """
+        ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS snap_account_uid TEXT
+        """,
+        """
+        ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS snap_username TEXT
+        """,
+        """
+        ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS original_filename TEXT
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_jobs_snap_uid ON processing_jobs(snap_account_uid)",
+        # Vault: Store SQLite import_id so unmerge works even after job deletion (job_id → NULL)
+        """
+        ALTER TABLE vault_imports ADD COLUMN IF NOT EXISTS sqlite_import_id INTEGER
+        """,
+        # Monetization: per-job tier and payment tracking
+        """
+        ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS job_tier TEXT NOT NULL DEFAULT 'free'
+        """,
+        """
+        ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'unpaid'
+        """,
+        """
+        ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS payment_intent_id TEXT
+        """,
+        """
+        ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS add_ons JSONB NOT NULL DEFAULT '[]'::JSONB
+        """,
+        # Monetization: update exports CHECK constraint to allow free/rescue export types
+        """
+        DO $$ BEGIN
+            ALTER TABLE exports DROP CONSTRAINT IF EXISTS exports_export_type_check;
+            ALTER TABLE exports ADD CONSTRAINT exports_export_type_check
+                CHECK (export_type IN ('quick_rescue', 'full', 'free', 'rescue'));
+        EXCEPTION WHEN others THEN NULL;
         END $$
         """,
     ]
@@ -635,12 +864,14 @@ async def emit_event(
     """Log an event for a job. Return event_id.
 
     Event types used by the pipeline:
-    - 'phase_started' — phase is beginning
-    - 'phase_completed' — phase finished successfully
+    - 'phase_start' — phase is beginning
     - 'progress' — progress percentage update
-    - 'warning' — non-fatal issue
+    - 'scanned' — ingest scan complete (Living Canvas pause)
+    - 'matched' — match complete (Living Canvas pause)
+    - 'enriched' — enrichment complete (Living Canvas pause)
     - 'error' — fatal error, job will fail
     - 'complete' — entire job finished
+    - 'cancelled' — job was cancelled
 
     Args:
         pool: asyncpg connection pool
@@ -654,9 +885,12 @@ async def emit_event(
     """
     query = """
     INSERT INTO job_events (job_id, event_type, message, data_json)
-    VALUES ($1, $2, $3, $4)
+    VALUES ($1, $2, $3, $4::jsonb)
     RETURNING id
     """
+    # The asyncpg JSONB codec (registered in get_pool) calls json.dumps
+    # automatically.  Pass the dict directly — do NOT pre-serialize or the
+    # value will be double-encoded.
     row = await pool.fetchrow(query, job_id, event_type, message, data_json)
     event_id = row["id"]
     logger.debug(f"Emitted event {event_id} for job {job_id}: {event_type}")
@@ -773,6 +1007,86 @@ async def seed_builtin_presets(pool: asyncpg.Pool) -> None:
             await conn.execute("SELECT pg_advisory_unlock(2)")
 
 
+async def seed_tier_plans(pool: asyncpg.Pool) -> None:
+    """Seed default tier plans and system config if not present.
+
+    Idempotent — only inserts if no tier_plans rows exist.
+    Uses advisory lock so only one worker runs the seed.
+    """
+    async with pool.acquire() as conn:
+        await conn.execute("SELECT pg_advisory_lock(3)")
+        try:
+            existing = await conn.fetchval(
+                "SELECT COUNT(*) FROM tier_plans"
+            )
+            if existing == 0:
+                # Seed Free tier
+                await conn.execute(
+                    """
+                    INSERT INTO tier_plans
+                        (tier_key, label, color, sort_order, storage_gb,
+                         max_upload_bytes, max_upload_label, retention_days,
+                         concurrent_jobs, bulk_upload,
+                         max_api_keys, api_key_rate_limit_rpm,
+                         max_webhooks, max_schedules)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    """,
+                    "free", "Free", "var(--text-muted)", 0,
+                    10, 5 * 1024 ** 3, "5 GB", 30,
+                    1, False,
+                    0, 0, 0, 0,
+                )
+                # Seed Pro tier
+                await conn.execute(
+                    """
+                    INSERT INTO tier_plans
+                        (tier_key, label, color, sort_order, storage_gb,
+                         max_upload_bytes, max_upload_label, retention_days,
+                         concurrent_jobs, bulk_upload,
+                         max_api_keys, api_key_rate_limit_rpm,
+                         max_webhooks, max_schedules)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    """,
+                    "pro", "Pro", "var(--snap-yellow)", 1,
+                    50, 25 * 1024 ** 3, "25 GB", 180,
+                    1, True,
+                    3, 60, 3, 2,
+                )
+                logger.info("Seeded 2 default tier plans (free, pro)")
+            else:
+                logger.debug(f"Tier plans already seeded ({existing} found)")
+
+            # Seed system_config defaults (each row individually, skip if exists)
+            defaults = [
+                ("max_global_concurrent_jobs", "4", "integer",
+                 "Max running jobs across ALL users"),
+                ("max_global_storage_gb", "500", "integer",
+                 "Total storage cap across all users"),
+                ("registration_mode", "open", "text",
+                 "open / invite_only / closed"),
+                ("max_uploads_per_hour", "10", "integer",
+                 "Per-user upload rate limit"),
+                ("stats_baseline_files", "0", "integer",
+                 "Baseline offset for 'memories rescued' on landing page"),
+                ("stats_baseline_gps", "0", "integer",
+                 "Baseline offset for 'locations restored' on landing page"),
+                ("stats_baseline_users", "0", "integer",
+                 "Baseline offset for 'users served' on landing page"),
+            ]
+            for key, value, vtype, desc in defaults:
+                await conn.execute(
+                    """
+                    INSERT INTO system_config (key, value, value_type, description)
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (key) DO NOTHING
+                    """,
+                    key, value, vtype, desc,
+                )
+            logger.debug("System config defaults seeded")
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(3)")
+
+
 async def get_user_jobs(
     pool: asyncpg.Pool,
     user_id: int,
@@ -834,3 +1148,72 @@ async def get_user_jobs(
 
     logger.debug(f"Retrieved {len(jobs)} jobs for user {user_id}")
     return jobs
+
+
+# ---------------------------------------------------------------------------
+# Export CRUD helpers
+# ---------------------------------------------------------------------------
+
+async def create_export(pool, job_id: int, user_id: int, export_type: str = "full",
+                        lanes: list = None, exif_enabled: bool = True,
+                        xmp_enabled: bool = False, burn_overlays: bool = True,
+                        chat_text: bool = True, chat_png: bool = True,
+                        dark_mode_pngs: bool = False,
+                        folder_style: str = "year_month",
+                        gps_precision: str = "exact",
+                        hide_sent_to: bool = False,
+                        chat_timestamps: bool = True,
+                        chat_cover_pages: bool = True) -> int:
+    """Create a new export record. Returns export_id."""
+    if lanes is None:
+        lanes = ["memories"]
+    async with pool.acquire() as conn:
+        return await conn.fetchval("""
+            INSERT INTO exports (job_id, user_id, export_type, lanes,
+                                 exif_enabled, xmp_enabled, burn_overlays,
+                                 chat_text, chat_png, dark_mode_pngs,
+                                 folder_style, gps_precision, hide_sent_to,
+                                 chat_timestamps, chat_cover_pages)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                    $11, $12, $13, $14, $15)
+            RETURNING id
+        """, job_id, user_id, export_type, lanes,
+            exif_enabled, xmp_enabled, burn_overlays, chat_text, chat_png,
+            dark_mode_pngs, folder_style, gps_precision, hide_sent_to,
+            chat_timestamps, chat_cover_pages)
+
+
+async def get_export(pool, export_id: int) -> dict:
+    """Get a single export record by ID."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM exports WHERE id = $1", export_id)
+        return dict(row) if row else None
+
+
+async def list_exports(pool, job_id: int) -> list:
+    """List all exports for a job, ordered by creation time."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM exports WHERE job_id = $1 ORDER BY created_at", job_id)
+        return [dict(r) for r in rows]
+
+
+async def update_export(pool, export_id: int, **kwargs) -> None:
+    """Update export fields. Accepts any column name as keyword argument."""
+    if not kwargs:
+        return
+    sets = []
+    vals = []
+    for i, (k, v) in enumerate(kwargs.items(), 1):
+        sets.append(f"{k} = ${i}")
+        vals.append(v)
+    vals.append(export_id)
+    query = f"UPDATE exports SET {', '.join(sets)} WHERE id = ${len(vals)}"
+    async with pool.acquire() as conn:
+        await conn.execute(query, *vals)
+
+
+async def delete_export(pool, export_id: int) -> None:
+    """Delete an export record."""
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM exports WHERE id = $1", export_id)

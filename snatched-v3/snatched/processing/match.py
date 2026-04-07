@@ -334,6 +334,84 @@ def _match_overlay_and_media_zips(db: sqlite3.Connection) -> int:
     return count
 
 
+# ── Back-fill chat_message_id ────────────────────────────────────────────────
+
+BACKFILL_WINDOW_MS = 60_000  # 60 seconds
+
+
+def _backfill_chat_message_id(db: sqlite3.Connection) -> int:
+    """Back-fill chat_message_id on best matches that only have snap_message_id.
+
+    For matches linked to snap_messages (strategies 4/5), find the nearest
+    unclaimed MEDIA chat_message in the same conversation within 60 seconds.
+    This makes those files visible in chat PNG/text exports.
+    """
+    candidates = db.execute("""
+        SELECT m.id, sm.conversation_id, sm.created_ms
+        FROM matches m
+        JOIN snap_messages sm ON m.snap_message_id = sm.id
+        WHERE m.is_best = 1
+          AND m.snap_message_id IS NOT NULL
+          AND m.chat_message_id IS NULL
+          AND sm.created_ms IS NOT NULL
+    """).fetchall()
+
+    if not candidates:
+        logger.debug("Back-fill: no candidates (0 snap-only best matches)")
+        return 0
+
+    # Pre-load already-claimed chat_message_ids to prevent many-to-one
+    already_claimed = set(
+        r[0] for r in db.execute(
+            "SELECT chat_message_id FROM matches "
+            "WHERE chat_message_id IS NOT NULL AND is_best = 1"
+        ).fetchall()
+    )
+
+    updated = 0
+    batch = []
+
+    for match_id, conv_id, snap_ms in candidates:
+        row = db.execute("""
+            SELECT cm.id, cm.created_ms
+            FROM chat_messages cm
+            WHERE cm.conversation_id = ?
+              AND cm.media_type = 'MEDIA'
+              AND cm.created_ms IS NOT NULL
+            ORDER BY ABS(cm.created_ms - ?) ASC
+            LIMIT 1
+        """, (conv_id, snap_ms)).fetchone()
+
+        if row is None:
+            continue
+
+        chat_id, chat_ms = row
+
+        # Skip if already claimed by another match (TOCTOU-safe)
+        if chat_id in already_claimed:
+            continue
+
+        # Enforce 60-second window
+        if abs(chat_ms - snap_ms) > BACKFILL_WINDOW_MS:
+            continue
+
+        already_claimed.add(chat_id)
+        batch.append((chat_id, match_id))
+        updated += 1
+
+        if len(batch) >= 500:
+            db.executemany(
+                "UPDATE matches SET chat_message_id = ? WHERE id = ?", batch)
+            batch = []
+
+    if batch:
+        db.executemany(
+            "UPDATE matches SET chat_message_id = ? WHERE id = ?", batch)
+    db.commit()
+
+    return updated
+
+
 # ── Best Match Selection ─────────────────────────────────────────────────────
 
 
@@ -429,13 +507,24 @@ def phase2_match(
         msg = f"Strategy {name}: {count:,} matches"
         logger.info(msg)
         if progress_cb:
-            progress_cb(msg)
+            progress_cb(msg, {
+                "verb": "MATCHING YOUR MOMENTS",
+                "detail": name, "detail_type": "strategy",
+                "current": count, "errors": 0,
+            })
 
     # Select best matches
     stats['best'] = _set_best_matches(db)
     logger.info("Best matches selected: %d", stats['best'])
+
+    # Back-fill chat_message_id for snap-matched files
+    stats['backfilled'] = _backfill_chat_message_id(db)
+    logger.info("Chat message back-fill: %d", stats['backfilled'])
     if progress_cb:
-        progress_cb(f"Best matches selected: {stats['best']:,}")
+        progress_cb(f"Best matches selected: {stats['best']:,}", {
+            "verb": "MATCHING YOUR MOMENTS",
+            "current": stats['best'], "total": stats['best'], "errors": 0,
+        })
 
     elapsed = time.time() - t0
 

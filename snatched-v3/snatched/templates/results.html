@@ -17,9 +17,9 @@
 
 <!-- Sticky header -->
 <div class="sticky-header">
-    <h1 class="mb-0">Mission Complete.</h1>
+    <h1 class="mb-0">Processing Complete.</h1>
     <div class="gap-row">
-        <a href="/download/{{ job_id }}" class="btn-primary">
+        <a href="/snatchedmemories/{{ job_id }}" class="btn-primary">
             <span class="material-symbols-outlined">download</span> DOWNLOAD RESULTS
         </a>
         <button type="button" class="btn-outline" onclick="toggleReports()">
@@ -199,6 +199,18 @@
         </div>
     </div>
 
+    <div class="notice-card" style="margin-top: 1.5rem;">
+        <span class="material-symbols-outlined" style="color: var(--snap-yellow); font-size: 1.5rem;">info</span>
+        <div>
+            <p style="margin: 0; font-size: 0.85rem; color: var(--smoke);">
+                <strong style="color: var(--snap-yellow);">About file quality:</strong>
+                Snapchat's export delivers photos at lower quality than the originals saved to your camera roll
+                (typically JPEG Q61&ndash;80). Data has been shown to shrink over time on Snapchat's servers.
+                Snatched preserves every byte &mdash; we never re-compress your photos.
+            </p>
+        </div>
+    </div>
+
     <!-- Match Strategy Breakdown (lazy loaded) -->
     <div id="match-stats-container"
          hx-get="/api/jobs/{{ job_id }}/match-stats/html"
@@ -266,7 +278,7 @@
     <!-- Footer CTA -->
     <div class="cta-card">
         <p class="mb-1">Ready to get your files?</p>
-        <a href="/download/{{ job_id }}" class="btn-primary">GO TO DOWNLOAD</a>
+        <a href="/snatchedmemories/{{ job_id }}" class="btn-primary">GO TO DOWNLOAD</a>
     </div>
 
     {% else %}
@@ -358,7 +370,7 @@ async function submitReprocess() {
         if (resp.ok && data.new_job_id) {
             status.textContent = 'Reprocessing started as Job #' + data.new_job_id;
             status.style.color = 'var(--success)';
-            setTimeout(function() { window.location.href = '/job/' + data.new_job_id; }, 1500);
+            setTimeout(function() { window.location.href = '/snatchedmemories/' + data.new_job_id; }, 1500);
         } else {
             status.textContent = 'Failed: ' + (data.detail || 'Unknown error');
             status.style.color = 'var(--danger)';

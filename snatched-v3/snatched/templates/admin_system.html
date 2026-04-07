@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="section-header">
+    <h1 class="mb-0 page-title-accent">
+        <span class="material-symbols-outlined text-yellow">settings</span>
+        System Configuration
+    </h1>
+    {% if tier_info %}
+    <span class="tier-badge tier-badge--{{ tier_info.label | lower }}">{{ tier_info.label }}</span>
+    {% endif %}
+</div>
+
+<p class="text-muted mb-3">
+    Global circuit breakers and system settings. Changes take effect instantly.
+</p>
+
+<div class="info-card" style="padding: 0; overflow: hidden;">
+    <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Value</th>
+                <th>Type</th>
+                <th>Description</th>
+                <th style="text-align: right;">Action</th>
+            </tr>
+        </thead>
+        <tbody id="config-table">
+            {% for row in config_rows %}
+            <tr id="row-{{ row.key }}">
+                <td><code class="mono">{{ row.key }}</code></td>
+                <td>
+                    <input type="text" id="val-{{ row.key }}"
+                           value="{{ row.value }}"
+                           data-type="{{ row.value_type }}"
+                           style="width: 120px; font-family: 'JetBrains Mono', monospace;">
+                </td>
+                <td><span class="text-muted">{{ row.value_type }}</span></td>
+                <td class="text-muted">{{ row.description or '' }}</td>
+                <td style="text-align: right;">
+                    <button type="button" class="btn-primary" style="padding: 0.25rem 0.75rem; font-size: 0.85rem;"
+                            onclick="saveConfig('{{ row.key }}')">
+                        SAVE
+                    </button>
+                    <span id="status-{{ row.key }}" class="text-muted" style="margin-left: 0.5rem; font-size: 0.85rem;"></span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if not config_rows %}
+<div class="info-card text-center mt-3">
+    <span class="material-symbols-outlined text-muted">info</span>
+    <p class="text-muted">No system config keys found. They will be seeded on next restart.</p>
+</div>
+{% endif %}
+
+<script>
+(function () {
+    "use strict";
+
+    async function saveConfig(key) {
+        var input = document.getElementById("val-" + key);
+        var status = document.getElementById("status-" + key);
+        var value = input.value;
+        status.textContent = "Saving...";
+        status.style.color = "var(--text-muted)";
+
+        try {
+            var res = await fetch("/api/admin/system/" + encodeURIComponent(key), {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ value: value }),
+            });
+            if (!res.ok) {
+                var err = await res.json();
+                throw new Error(err.detail || res.statusText);
+            }
+            var data = await res.json();
+            status.textContent = "Saved (v" + data.version + ")";
+            status.style.color = "var(--snap-yellow)";
+        } catch (ex) {
+            status.textContent = "Error: " + ex.message;
+            status.style.color = "var(--text-danger, #f44)";
+        }
+    }
+
+    window.saveConfig = saveConfig;
+})();
+</script>
+
+{% endblock %}
+{# themed: 2026-02-27 #}

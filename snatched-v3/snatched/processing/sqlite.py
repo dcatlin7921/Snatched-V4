@@ -95,6 +95,7 @@ def migrate_schema(db: sqlite3.Connection) -> None:
         ("matches", "lane", "TEXT DEFAULT 'memories'"),
         ("assets", "xmp_written", "BOOLEAN DEFAULT 0"),
         ("assets", "xmp_path", "TEXT"),
+        ("assets", "duplicate_of", "INTEGER DEFAULT NULL"),
     ]
 
     for table, column, definition in migrations:

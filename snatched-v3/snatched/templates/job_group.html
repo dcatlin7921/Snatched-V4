@@ -69,27 +69,36 @@
 
             <!-- Status badge -->
             <div style="flex-shrink: 0;">
+                {% if job.status == 'scanned' %}
+                <span class="status-badge" style="background: var(--snap-yellow); color: #000; font-weight: 900;">Choose Package</span>
+                {% elif job.status == 'queued' %}
+                <span class="status-badge status-running">Queued</span>
+                {% else %}
                 <span class="status-badge
                     {%- if job.status == 'completed' %} status-completed
                     {%- elif job.status == 'failed' %} status-failed
                     {%- elif job.status == 'running' %} status-running
-                    {%- elif job.status == 'scanned' %} status-scanned
                     {%- else %} status-cancelled
-                    {%- endif %}">{{ job.status }}</span>
+                    {%- endif %}">{{ job.status | title }}</span>
+                {% endif %}
             </div>
 
             <!-- Action link -->
             <div style="flex-shrink: 0; display: flex; gap: 0.5rem;">
                 {% if job.status == 'completed' %}
-                <a href="/results/{{ job.id }}" class="btn-outline btn-small">
+                <a href="/snatchedmemories/{{ job.id }}" class="btn-outline btn-small">
                     Results
                 </a>
-                {% elif job.status == 'running' or job.status == 'pending' %}
-                <a href="/job/{{ job.id }}" class="btn-outline btn-small">
+                {% elif job.status == 'scanned' %}
+                <a href="/configure/{{ job.id }}" class="btn-primary btn-small">
+                    View Report
+                </a>
+                {% elif job.status in ('running', 'pending', 'queued') %}
+                <a href="/snatchedmemories/{{ job.id }}" class="btn-outline btn-small">
                     Progress
                 </a>
                 {% else %}
-                <a href="/job/{{ job.id }}" class="btn-secondary btn-small">
+                <a href="/snatchedmemories/{{ job.id }}" class="btn-secondary btn-small">
                     Details
                 </a>
                 {% endif %}

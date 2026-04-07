@@ -79,9 +79,10 @@ CREATE TABLE IF NOT EXISTS snap_messages (
     dedup_key       TEXT UNIQUE
 );
 
-CREATE INDEX IF NOT EXISTS idx_snap_created_date ON snap_messages(created_date);
-CREATE INDEX IF NOT EXISTS idx_snap_media_type   ON snap_messages(media_type);
-CREATE INDEX IF NOT EXISTS idx_snap_date_type    ON snap_messages(created_date, media_type);
+CREATE INDEX IF NOT EXISTS idx_snap_created_date  ON snap_messages(created_date);
+CREATE INDEX IF NOT EXISTS idx_snap_media_type    ON snap_messages(media_type);
+CREATE INDEX IF NOT EXISTS idx_snap_date_type     ON snap_messages(created_date, media_type);
+CREATE INDEX IF NOT EXISTS idx_snap_conversation  ON snap_messages(conversation_id);
 
 -- ── MEMORIES: All entries from memories_history.json ──────────────────────────
 CREATE TABLE IF NOT EXISTS memories (
@@ -178,10 +179,12 @@ CREATE TABLE IF NOT EXISTS matches (
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_matches_asset    ON matches(asset_id);
-CREATE INDEX IF NOT EXISTS idx_matches_best     ON matches(asset_id, is_best);
-CREATE INDEX IF NOT EXISTS idx_matches_strategy ON matches(strategy);
-CREATE INDEX IF NOT EXISTS idx_matches_lane     ON matches(lane);
+CREATE INDEX IF NOT EXISTS idx_matches_asset        ON matches(asset_id);
+CREATE INDEX IF NOT EXISTS idx_matches_best         ON matches(asset_id, is_best);
+CREATE INDEX IF NOT EXISTS idx_matches_strategy     ON matches(strategy);
+CREATE INDEX IF NOT EXISTS idx_matches_lane         ON matches(lane);
+CREATE INDEX IF NOT EXISTS idx_matches_chat_message ON matches(chat_message_id);
+CREATE INDEX IF NOT EXISTS idx_matches_snap_message ON matches(snap_message_id);
 
 -- ── RUN_LOG: Audit trail for each execution ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS run_log (

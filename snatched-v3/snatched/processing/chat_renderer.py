@@ -1,21 +1,18 @@
-"""Snapchat-style chat conversation renderer.
+"""Snapchat-style chat conversation renderer — v3 overhaul.
 
-Ported from v2 chat_renderer.py (1,101 lines) with minimal changes:
-- Footer text: "Snatched v3" (was v2)
-- Added progress_cb parameter to render_conversation()
-- Python 3.12 type hints (str | None, not Optional[str])
-- Removed _demo() / __main__ block
+Renders pill-bubble chat pages with cover/closing pages, emoji support,
+clustering, smart media placeholders, and date pill badges.
 
-Renders flat left-aligned text with colored left border lines (NOT
-iMessage-style bubbles). Snapchat blue (self) and red (friend).
-High-resolution output: 2880x5120 px canvas, saved at 600 DPI.
+Canvas: 2880×5120 px, 600 DPI output.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Union
 
@@ -40,12 +37,28 @@ class ChatMessage:
     media_path: str | None = None      # path to media thumbnail if exists on disk
     media_type: str | None = None      # "photo", "video", "snap"
     media_duration: str | None = None  # "0:12" for videos
+    is_ephemeral: bool = False         # True for Snapchat ephemeral snaps
+    cluster_position: str = "solo"     # "first" / "middle" / "last" / "solo"
 
 
 @dataclass
 class DateDivider:
     """A date separator between message groups."""
-    date_str: str  # e.g. "February 14, 2024"
+    date_str: str       # e.g. "February 14, 2024"
+    timestamp: float = 0.0  # unix ts for relative-time calculation
+
+
+@dataclass
+class ConversationMeta:
+    """Metadata for cover/closing pages — built in export.py, passed to renderer."""
+    partner_name: str
+    date_range_str: str
+    message_count: int
+    first_message_text: str
+    first_message_sender: str
+    last_message_text: str
+    last_message_sender: str
+    export_date: str = field(default_factory=lambda: datetime.now(timezone.utc).strftime("%B %d, %Y"))
 
 
 @dataclass
@@ -61,44 +74,57 @@ class Page:
 # ---------------------------------------------------------------------------
 
 CANVAS_WIDTH          = 2880
-MAX_PAGE_HEIGHT       = 5120   # 2x phone screen (portrait), scaled for 2880w
+MAX_PAGE_HEIGHT       = 5120
 
 # Header
-HEADER_HEIGHT         = 240    # 2x for hi-res canvas
+HEADER_HEIGHT         = 360
 HEADER_SEPARATOR_H    = 2
 
 # Footer
-FOOTER_HEIGHT         = 110    # 2x for hi-res canvas
-FOOTER_WATERMARK_H    = 48     # 2x for hi-res canvas
-TOTAL_FOOTER_HEIGHT   = FOOTER_HEIGHT + FOOTER_WATERMARK_H
+FOOTER_HEIGHT         = 110
+TOTAL_FOOTER_HEIGHT   = FOOTER_HEIGHT
 
 # Date divider
-DATE_DIVIDER_HEIGHT   = 120    # 2x for hi-res canvas
+DATE_DIVIDER_HEIGHT   = 160     # taller: pill badge + relative time
 
-# Message layout
-MSG_LEFT_PAD          = 40
-MSG_BORDER_WIDTH      = 6
-MSG_CONTENT_PAD       = 24     # gap between border and text
-MSG_RIGHT_PAD         = 50
-MSG_TEXT_LEFT          = MSG_LEFT_PAD + MSG_BORDER_WIDTH + MSG_CONTENT_PAD
-MSG_MAX_TEXT_WIDTH     = CANVAS_WIDTH - MSG_TEXT_LEFT - MSG_RIGHT_PAD
+# Bubble layout
+BUBBLE_RADIUS         = 60
+BUBBLE_PAD_H          = 48      # horizontal padding inside bubble
+BUBBLE_PAD_V          = 36      # vertical padding inside bubble
+BUBBLE_MAX_WIDTH      = 2160    # max bubble width (~75% of canvas)
+BUBBLE_MIN_WIDTH      = 320     # minimum bubble width
+BUBBLE_MARGIN_SIDE    = 80      # margin from canvas edge
+BUBBLE_TEXT_MAX_W     = BUBBLE_MAX_WIDTH - 2 * BUBBLE_PAD_H
 
 # Message spacing
-SPACING_SAME_SENDER   = 12
-SPACING_DIFF_SENDER   = 32
+SPACING_CLUSTER       = 12      # within a cluster (same sender, <120s)
+SPACING_BETWEEN       = 36      # between clusters or different senders
+CLUSTER_WINDOW        = 120     # seconds — same-sender grouping threshold
 
-# Sender name line
-SENDER_NAME_PAD_BTM   = 8
+# Sender name
+SENDER_NAME_PAD_BTM   = 12
+SENDER_NAME_PAD_LEFT  = 16      # indent from bubble edge
+
+# Timestamp (inline, bottom-right of bubble)
+TIMESTAMP_FONT_SIZE   = 72
+TIMESTAMP_OPACITY     = 140     # 55% of 255
 
 # Media thumbnails
-MEDIA_WIDTH           = 1120
+MEDIA_MAX_WIDTH       = BUBBLE_MAX_WIDTH - 2 * BUBBLE_PAD_H
 MEDIA_HEIGHT          = 800
 MEDIA_LABEL_HEIGHT    = 80
 MEDIA_PAD_TOP         = 12
 MEDIA_PAD_BOTTOM      = 8
 
 # Text measurement
-LINE_SPACING          = 8      # pixels between wrapped lines
+LINE_SPACING          = 8
+
+# Page break marker
+PAGE_BREAK_HEIGHT     = 80
+
+# Cover / closing page
+COVER_GRADIENT_TOP    = "#0EADFF"
+COVER_GRADIENT_BOT    = "#0966A3"
 
 
 # ---------------------------------------------------------------------------
@@ -106,35 +132,113 @@ LINE_SPACING          = 8      # pixels between wrapped lines
 # ---------------------------------------------------------------------------
 
 COLORS_LIGHT = {
-    "bg":               "#FFFFFF",
-    "header_bg":        "#0EADFF",
-    "header_text":      "#FFFFFF",
-    "header_sep":       "#CCCCCC",
-    "date_text":        "#999999",
-    "msg_text":         "#1A1A1A",
-    "sender_self":      "#0EADFF",
-    "sender_friend":    "#FF4444",
-    "media_placeholder": "#DDDDDD",
-    "media_label":      "#999999",
-    "footer_text":      "#999999",
-    "watermark_text":   "#CCCCCC",
-    "avatar_bg":        "#BBBBBB",
+    # Backgrounds
+    "bg":                   "#F7F5F2",      # off-white (#16)
+    "header_bg":            "#0EADFF",
+    "header_text":          "#FFFFFF",
+    "header_sep":           "#E0DEDA",
+
+    # Bubbles (#13)
+    "bubble_self_bg":       "#0EADFF",      # Snapchat blue
+    "bubble_self_text":     "#FFFFFF",
+    "bubble_friend_bg":     "#F0F0F0",      # light gray
+    "bubble_friend_text":   "#1A1A1A",
+
+    # Sender names
+    "sender_self":          "#0EADFF",
+    "sender_friend":        "#FF6E6E",      # coral red (#5)
+
+    # Timestamps (RGBA tuples for alpha compositing)
+    "timestamp_self":       (255, 255, 255, TIMESTAMP_OPACITY),
+    "timestamp_friend":     (26, 26, 26, TIMESTAMP_OPACITY),
+
+    # Date divider
+    "date_pill_bg":         "#E8E6E3",
+    "date_pill_text":       "#666666",
+    "date_relative_text":   "#999999",
+    "date_rule":            "#E0DEDA",
+
+    # Media placeholders (#7)
+    "media_placeholder":    "#EEEEEE",
+    "media_label":          "#999999",
+    "snap_placeholder_bg":  "#FFF3E0",      # warm amber
+    "snap_placeholder_text":"#E65100",
+    "missing_placeholder_bg":"#F5F5F5",
+    "missing_placeholder_text":"#9E9E9E",
+
+    # Footer / watermark
+    "footer_text":          "#999999",
+    "watermark_text":       "#CCCCCC",
+
+    # Page break marker (#9)
+    "page_break_line":      "#D0D0D0",
+    "page_break_arrow":     "#BBBBBB",
+
+    # Cover / closing
+    "cover_text":           "#FFFFFF",
+    "cover_quote_text":     "#E0F0FF",
+    "cover_rule":           "#FFFFFF40",
+    "closing_text":         "#666666",
+    "closing_quote_text":   "#444444",
+
+    # Legacy (kept for compatibility)
+    "msg_text":             "#1A1A1A",
+    "avatar_bg":            "#BBBBBB",
 }
 
 COLORS_DARK = {
-    "bg":               "#1A1A1A",
-    "header_bg":        "#0B8EC4",
-    "header_text":      "#FFFFFF",
-    "header_sep":       "#444444",
-    "date_text":        "#666666",
-    "msg_text":         "#E0E0E0",
-    "sender_self":      "#0EADFF",
-    "sender_friend":    "#FF4444",
-    "media_placeholder": "#2A2A2A",
-    "media_label":      "#666666",
-    "footer_text":      "#555555",
-    "watermark_text":   "#333333",
-    "avatar_bg":        "#555555",
+    # Backgrounds
+    "bg":                   "#0F0F0F",      # deeper dark (#16)
+    "header_bg":            "#0B8EC4",
+    "header_text":          "#FFFFFF",
+    "header_sep":           "#2A2A2A",
+
+    # Bubbles
+    "bubble_self_bg":       "#0B8EC4",      # muted Snapchat blue
+    "bubble_self_text":     "#FFFFFF",
+    "bubble_friend_bg":     "#2A2A2A",      # dark gray
+    "bubble_friend_text":   "#E0E0E0",
+
+    # Sender names
+    "sender_self":          "#0EADFF",
+    "sender_friend":        "#FF6E6E",      # coral red (#5)
+
+    # Timestamps
+    "timestamp_self":       (255, 255, 255, TIMESTAMP_OPACITY),
+    "timestamp_friend":     (224, 224, 224, TIMESTAMP_OPACITY),
+
+    # Date divider
+    "date_pill_bg":         "#FFFC00",      # snap-yellow in dark mode
+    "date_pill_text":       "#0F0F0F",
+    "date_relative_text":   "#666666",
+    "date_rule":            "#2A2A2A",
+
+    # Media placeholders
+    "media_placeholder":    "#2A2A2A",
+    "media_label":          "#666666",
+    "snap_placeholder_bg":  "#3E2A10",
+    "snap_placeholder_text":"#FFB74D",
+    "missing_placeholder_bg":"#1E1E1E",
+    "missing_placeholder_text":"#616161",
+
+    # Footer / watermark
+    "footer_text":          "#555555",
+    "watermark_text":       "#333333",
+
+    # Page break marker
+    "page_break_line":      "#333333",
+    "page_break_arrow":     "#444444",
+
+    # Cover / closing
+    "cover_text":           "#FFFFFF",
+    "cover_quote_text":     "#B0D8F0",
+    "cover_rule":           "#FFFFFF30",
+    "closing_text":         "#888888",
+    "closing_quote_text":   "#AAAAAA",
+
+    # Legacy
+    "msg_text":             "#E0E0E0",
+    "avatar_bg":            "#555555",
 }
 
 
@@ -146,13 +250,10 @@ _font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
 # Font search paths in priority order
 _FONT_SEARCH = [
-    # Public Sans (Snapchat Sans alternative)
     "/usr/share/fonts/truetype/public-sans/PublicSans-Regular.ttf",
     "/usr/share/fonts/opentype/public-sans/PublicSans-Regular.otf",
     "/usr/local/share/fonts/PublicSans-Regular.ttf",
-    # DejaVu Sans (good fallback)
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    # Arial
     "/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 ]
@@ -166,8 +267,25 @@ _BOLD_FONT_SEARCH = [
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 ]
 
+_ITALIC_FONT_SEARCH = [
+    "/usr/share/fonts/truetype/public-sans/PublicSans-Italic.ttf",
+    "/usr/share/fonts/opentype/public-sans/PublicSans-Italic.otf",
+    "/usr/local/share/fonts/PublicSans-Italic.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/Arial_Italic.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf",
+]
+
+_EMOJI_FONT_SEARCH = [
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+    "/usr/local/share/fonts/NotoColorEmoji.ttf",
+]
+
 _resolved_regular: str | None = None
 _resolved_bold: str | None = None
+_resolved_italic: str | None = None
+_resolved_emoji: str | None = None
 
 
 def _find_font_path(search_list: list[str]) -> str | None:
@@ -180,21 +298,32 @@ def _find_font_path(search_list: list[str]) -> str | None:
 
 def _resolve_fonts() -> None:
     """Resolve font paths once, cache the result."""
-    global _resolved_regular, _resolved_bold
+    global _resolved_regular, _resolved_bold, _resolved_italic, _resolved_emoji
     if _resolved_regular is None:
         _resolved_regular = _find_font_path(_FONT_SEARCH) or ""
     if _resolved_bold is None:
         _resolved_bold = _find_font_path(_BOLD_FONT_SEARCH) or ""
+    if _resolved_italic is None:
+        _resolved_italic = _find_font_path(_ITALIC_FONT_SEARCH) or ""
+    if _resolved_emoji is None:
+        _resolved_emoji = _find_font_path(_EMOJI_FONT_SEARCH) or ""
 
 
-def get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+def get_font(size: int, bold: bool = False, italic: bool = False) -> ImageFont.FreeTypeFont:
     """Load a font at the given size, with caching."""
     _resolve_fonts()
-    key = ("bold" if bold else "regular", size)
+    style = "bold" if bold else ("italic" if italic else "regular")
+    key = (style, size)
     if key in _font_cache:
         return _font_cache[key]
 
-    path = _resolved_bold if bold else _resolved_regular
+    if bold:
+        path = _resolved_bold
+    elif italic:
+        path = _resolved_italic
+    else:
+        path = _resolved_regular
+
     if path:
         try:
             font = ImageFont.truetype(path, size)
@@ -203,10 +332,33 @@ def get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
         except (OSError, IOError):
             pass
 
-    # Ultimate fallback: Pillow default (bitmap font, limited sizes)
     font = ImageFont.load_default()
     _font_cache[key] = font
     return font
+
+
+def get_emoji_font(size: int) -> ImageFont.FreeTypeFont | None:
+    """Load Noto Color Emoji font. Returns None if unavailable.
+
+    Noto Color Emoji is a bitmap (CBDT) font that only supports size 109.
+    We always load at 109 regardless of requested size.
+    """
+    _resolve_fonts()
+    # Bitmap font only supports size 109
+    actual_size = 109
+    key = ("emoji", actual_size)
+    if key in _font_cache:
+        return _font_cache[key]
+
+    if _resolved_emoji:
+        try:
+            font = ImageFont.truetype(_resolved_emoji, actual_size)
+            _font_cache[key] = font
+            return font
+        except (OSError, IOError, ValueError):
+            pass
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -342,12 +494,13 @@ class ContentMeasurer:
 
     def __init__(self, dark_mode: bool = False) -> None:
         self.dark_mode = dark_mode
-        # Load fonts once so both measure and render share them
         # Sizes 2x for high-clarity text on 2880px canvas
         self.font_msg = get_font(112)
         self.font_sender = get_font(84, bold=True)
         self.font_date = get_font(100)
         self.font_media_label = get_font(84)
+        self.font_timestamp = get_font(TIMESTAMP_FONT_SIZE)
+        self.font_date_relative = get_font(72)
         self.draw = _get_measure_draw()
 
     def measure_message(
@@ -355,28 +508,48 @@ class ContentMeasurer:
         msg: ChatMessage,
         prev_sender: str | None,
     ) -> int:
-        """Return the pixel height of a message block (spacing + name + text + media)."""
+        """Return the pixel height of a message block (spacing + optional name + bubble + optional timestamp)."""
         h = 0
+        is_cluster_continuation = msg.cluster_position in ("middle", "last")
+        show_sender = msg.cluster_position in ("first", "solo")
+        show_timestamp = msg.cluster_position in ("last", "solo")
 
         # Inter-message spacing
         if prev_sender is not None:
-            h += SPACING_SAME_SENDER if msg.sender == prev_sender else SPACING_DIFF_SENDER
+            if is_cluster_continuation and msg.sender == prev_sender:
+                h += SPACING_CLUSTER
+            else:
+                h += SPACING_BETWEEN
         else:
-            h += SPACING_DIFF_SENDER  # first message on page gets full gap
+            h += SPACING_BETWEEN
 
-        # Sender name — use font metrics for consistency with render pass
-        h += _get_line_height(self.font_sender) + SENDER_NAME_PAD_BTM
+        # Sender name above bubble (only on first/solo)
+        if show_sender:
+            h += _get_line_height(self.font_sender) + SENDER_NAME_PAD_BTM
+
+        # Bubble content height
+        content_h = 0
 
         # Message text
         if msg.text:
-            h += text_height(msg.text, self.font_msg, MSG_MAX_TEXT_WIDTH)
+            content_h += text_height(msg.text, self.font_msg, BUBBLE_TEXT_MAX_W)
 
-        # Media thumbnail — only when an actual file exists on disk
-        if msg.media_path and Path(msg.media_path).is_file():
-            h += MEDIA_PAD_TOP + MEDIA_HEIGHT + MEDIA_PAD_BOTTOM + MEDIA_LABEL_HEIGHT
+        # Media
+        has_media = msg.media_path and Path(msg.media_path).is_file()
+        has_placeholder = (msg.is_ephemeral or msg.media_type) and not has_media
+        if has_media or has_placeholder:
+            content_h += MEDIA_PAD_TOP + MEDIA_HEIGHT + MEDIA_PAD_BOTTOM + MEDIA_LABEL_HEIGHT
 
-        # Bottom padding
-        h += 4
+        # Timestamp line inside bubble
+        if show_timestamp and msg.timestamp > 86400:
+            content_h += _get_line_height(self.font_timestamp) + 8
+
+        # Bubble padding
+        bubble_h = content_h + 2 * BUBBLE_PAD_V
+        bubble_h = max(bubble_h, BUBBLE_RADIUS * 2)
+
+        h += bubble_h
+        h += 4  # bottom padding
 
         return h
 
@@ -392,8 +565,7 @@ class ContentMeasurer:
     ) -> list[ChatMessage]:
         """Split a message whose text exceeds usable page height into chunks.
 
-        Each chunk becomes a separate ChatMessage.  Continuation chunks get
-        a '(continued)' prefix on the sender name.  2 lines of overlap
+        Each chunk becomes a separate ChatMessage.  2 lines of overlap
         between chunks preserve reading context across page breaks.
 
         If first_chunk_budget is provided and positive, the first chunk is
@@ -401,13 +573,13 @@ class ContentMeasurer:
         page).  Subsequent chunks use the full usable_h.
         """
         draw = _get_measure_draw()
-        lines = _wrap_text(msg.text, self.font_msg, MSG_MAX_TEXT_WIDTH, draw)
+        lines = _wrap_text(msg.text, self.font_msg, BUBBLE_TEXT_MAX_W, draw)
         if not lines:
             return [msg]
 
         lh = _get_line_height(self.font_msg)
-        # Fixed overhead per chunk: spacing + sender name + bottom padding
-        overhead = SPACING_DIFF_SENDER + _get_line_height(self.font_sender) + SENDER_NAME_PAD_BTM + 4
+        # Fixed overhead per chunk: spacing + sender name + bubble padding + bottom padding
+        overhead = SPACING_BETWEEN + _get_line_height(self.font_sender) + SENDER_NAME_PAD_BTM + 2 * BUBBLE_PAD_V + 4
         # Add media height only to the last chunk if media exists
         has_media = msg.media_path and Path(msg.media_path).is_file()
         media_h = (MEDIA_PAD_TOP + MEDIA_HEIGHT + MEDIA_PAD_BOTTOM + MEDIA_LABEL_HEIGHT) if has_media else 0
@@ -459,7 +631,7 @@ class ContentMeasurer:
             is_last = (i + n >= len(lines))
 
             chunk = ChatMessage(
-                sender=msg.sender if not chunks else f"{msg.sender} (continued)",
+                sender=msg.sender,
                 text=chunk_text,
                 timestamp=msg.timestamp,
                 is_self=msg.is_self,
@@ -478,14 +650,19 @@ class ContentMeasurer:
     def paginate(
         self,
         elements: list[Union[ChatMessage, DateDivider]],
+        has_cover: bool = False,
+        has_closing: bool = False,
     ) -> list[Page]:
         """Split elements into pages that fit within MAX_PAGE_HEIGHT.
 
-        Each page reserves space for header + footer.  No element is ever
-        split across a page boundary.
+        Clustering is computed on the full element list before pagination.
+        Page numbering accounts for cover page (if present).
         """
         if not elements:
             return []
+
+        # Compute clusters on full element list (must happen before pagination)
+        ChatRenderer._compute_clusters(elements)
 
         reserved = HEADER_HEIGHT + HEADER_SEPARATOR_H + TOTAL_FOOTER_HEIGHT
         usable = MAX_PAGE_HEIGHT - reserved
@@ -552,16 +729,110 @@ class ContentMeasurer:
         if current_page:
             pages_raw.append(current_page)
 
-        total = len(pages_raw)
+        # Adjust numbering for cover page
+        page_offset = 1 if has_cover else 0
+        total = len(pages_raw) + page_offset + (1 if has_closing else 0)
         pages: list[Page] = []
         for i, raw in enumerate(pages_raw):
             pages.append(Page(
                 elements=[m.element for m in raw],
-                page_num=i + 1,
+                page_num=i + 1 + page_offset,
                 total_pages=total,
             ))
 
         return pages
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _relative_time(timestamp: float) -> str:
+    """Return a human-readable relative time string.
+
+    Examples: "2 years ago", "3 months ago", "yesterday", "today".
+    """
+    if timestamp <= 86400:
+        return ""
+
+    now = time.time()
+    diff = now - timestamp
+
+    if diff < 0:
+        return "in the future"
+
+    seconds = int(diff)
+    minutes = seconds // 60
+    hours = minutes // 60
+    days = hours // 24
+    months = days // 30
+    years = days // 365
+
+    if days == 0:
+        return "today"
+    elif days == 1:
+        return "yesterday"
+    elif days < 7:
+        return f"{days} days ago"
+    elif days < 30:
+        weeks = days // 7
+        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+    elif months < 12:
+        return f"{months} month{'s' if months != 1 else ''} ago"
+    else:
+        return f"{years} year{'s' if years != 1 else ''} ago"
+
+
+# ---------------------------------------------------------------------------
+# Emoji Detection
+# ---------------------------------------------------------------------------
+
+# Common emoji Unicode ranges (covers most emoji used in chat)
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F600-\U0001F64F"  # emoticons
+    "\U0001F300-\U0001F5FF"  # symbols & pictographs
+    "\U0001F680-\U0001F6FF"  # transport & map
+    "\U0001F1E0-\U0001F1FF"  # flags
+    "\U00002702-\U000027B0"  # dingbats
+    "\U0001F900-\U0001F9FF"  # supplemental symbols
+    "\U0001FA00-\U0001FA6F"  # chess, extended-A
+    "\U0001FA70-\U0001FAFF"  # extended-A continued
+    "\U00002600-\U000026FF"  # misc symbols
+    "\U0000FE00-\U0000FE0F"  # variation selectors
+    "\U0000200D"             # zero width joiner
+    "\U00002764"             # heart
+    "\U0000203C-\U00003299"  # CJK symbols, enclosed
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def _has_emoji(text: str) -> bool:
+    """Quick check if text contains any emoji characters."""
+    return bool(_EMOJI_RE.search(text))
+
+
+def _split_emoji_segments(text: str) -> list[tuple[str, bool]]:
+    """Split text into (segment, is_emoji) tuples.
+
+    Returns alternating plain text and emoji segments.
+    """
+    segments: list[tuple[str, bool]] = []
+    last_end = 0
+
+    for match in _EMOJI_RE.finditer(text):
+        start, end = match.span()
+        if start > last_end:
+            segments.append((text[last_end:start], False))
+        segments.append((match.group(), True))
+        last_end = end
+
+    if last_end < len(text):
+        segments.append((text[last_end:], False))
+
+    return segments if segments else [(text, False)]
 
 
 # ---------------------------------------------------------------------------
@@ -585,9 +856,109 @@ class ChatRenderer:
         self.font_date = get_font(100)
         self.font_media_label = get_font(84)
         self.font_footer = get_font(84)
-        self.font_watermark = get_font(68)
+        self.font_timestamp = get_font(TIMESTAMP_FONT_SIZE)
+        self.font_date_relative = get_font(72)
 
         self.measurer = ContentMeasurer(dark_mode=dark_mode)
+
+    # ---- emoji-aware text drawing -----------------------------------------
+
+    def _draw_text_with_emoji(
+        self,
+        draw: ImageDraw.ImageDraw,
+        img: Image.Image,
+        x: int,
+        y: int,
+        text: str,
+        fill,
+        font: ImageFont.FreeTypeFont,
+    ) -> None:
+        """Draw text with inline emoji support.
+
+        Splits text into plain/emoji segments and renders emoji using
+        Noto Color Emoji with embedded_color=True.
+        Falls back to regular font if emoji font unavailable.
+        """
+        if not _has_emoji(text):
+            draw.text((x, y), text, fill=fill, font=font)
+            return
+
+        emoji_font = get_emoji_font(font.size if hasattr(font, 'size') else 112)
+        if emoji_font is None:
+            # No emoji font — render everything with regular font (tofu)
+            draw.text((x, y), text, fill=fill, font=font)
+            return
+
+        # Render segments inline
+        cursor_x = x
+        for segment, is_emoji in _split_emoji_segments(text):
+            if is_emoji:
+                try:
+                    draw.text(
+                        (cursor_x, y),
+                        segment,
+                        font=emoji_font,
+                        embedded_color=True,
+                    )
+                    seg_bbox = draw.textbbox((0, 0), segment, font=emoji_font)
+                except (TypeError, AttributeError):
+                    # Pillow version may not support embedded_color
+                    draw.text((cursor_x, y), segment, fill=fill, font=font)
+                    seg_bbox = draw.textbbox((0, 0), segment, font=font)
+            else:
+                draw.text((cursor_x, y), segment, fill=fill, font=font)
+                seg_bbox = draw.textbbox((0, 0), segment, font=font)
+
+            cursor_x += seg_bbox[2] - seg_bbox[0]
+
+    # ---- clustering -------------------------------------------------------
+
+    @staticmethod
+    def _compute_clusters(elements: list[Union[ChatMessage, DateDivider]]) -> None:
+        """Pre-pass: set cluster_position on ChatMessages.
+
+        Same sender within CLUSTER_WINDOW seconds = clustered.
+        Positions: "first", "middle", "last", "solo".
+        """
+        messages = [e for e in elements if isinstance(e, ChatMessage)]
+        if not messages:
+            return
+
+        # Group into clusters
+        clusters: list[list[ChatMessage]] = []
+        current_cluster: list[ChatMessage] = [messages[0]]
+
+        for msg in messages[1:]:
+            prev = current_cluster[-1]
+            same_sender = msg.sender == prev.sender
+            within_window = abs(msg.timestamp - prev.timestamp) <= CLUSTER_WINDOW
+            # Also break cluster at date dividers: check if there's a DateDivider
+            # between prev and msg in the original elements list
+            has_divider = False
+            prev_idx = elements.index(prev)
+            msg_idx = elements.index(msg)
+            for i in range(prev_idx + 1, msg_idx):
+                if isinstance(elements[i], DateDivider):
+                    has_divider = True
+                    break
+
+            if same_sender and within_window and not has_divider:
+                current_cluster.append(msg)
+            else:
+                clusters.append(current_cluster)
+                current_cluster = [msg]
+
+        clusters.append(current_cluster)
+
+        # Assign positions
+        for cluster in clusters:
+            if len(cluster) == 1:
+                cluster[0].cluster_position = "solo"
+            else:
+                cluster[0].cluster_position = "first"
+                for msg in cluster[1:-1]:
+                    msg.cluster_position = "middle"
+                cluster[-1].cluster_position = "last"
 
     # ---- public API -------------------------------------------------------
 
@@ -596,48 +967,79 @@ class ChatRenderer:
         messages: list[ChatMessage],
         output_dir: Path,
         progress_cb: Callable[[str], None] | None = None,
+        meta: 'ConversationMeta | None' = None,
     ) -> list[Path]:
         """Render full conversation to PNG files.
 
-        Returns list of output file paths (page-1.png, page-2.png, ...).
+        Returns list of output file paths (page-0000.png, page-0001.png, ...).
+        Generates cover page (if meta provided) and closing page.
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Store meta for header/footer access via getattr
+        self._current_meta = meta
+
         # Build the element list with date dividers inserted
         elements = self._build_elements(messages)
 
-        # Paginate
-        pages = self.measurer.paginate(elements)
+        # Paginate (clustering happens inside paginate)
+        has_cover = meta is not None
+        has_closing = meta is not None
+        pages = self.measurer.paginate(elements, has_cover=has_cover, has_closing=has_closing)
 
         if not pages:
-            # Empty conversation: render a single empty page
             pages = [Page(elements=[], page_num=1, total_pages=1)]
 
         output_paths: list[Path] = []
+        page_counter = 0
+
+        # Cover page
+        if has_cover:
+            cover_img = self._draw_cover_page(meta)
+            cover_path = output_dir / f"page-{page_counter:04d}.png"
+            cover_img.save(str(cover_path), "PNG", optimize=True, dpi=(600, 600))
+            output_paths.append(cover_path)
+            page_counter += 1
+            if progress_cb:
+                progress_cb("Rendered cover page")
+
+        # Content pages
         for page in pages:
             img = self.render_single_page(page, self.username)
-            path = output_dir / f"page-{page.page_num}.png"
+            path = output_dir / f"page-{page_counter:04d}.png"
             img.save(str(path), "PNG", optimize=True, dpi=(600, 600))
             output_paths.append(path)
+            page_counter += 1
 
             if progress_cb:
                 progress_cb(
                     f"Rendered page {page.page_num} of {page.total_pages}"
                 )
 
+        # Closing page
+        if has_closing:
+            closing_img = self._draw_closing_page(meta, page.total_pages if pages else 1)
+            closing_path = output_dir / f"page-{page_counter:04d}.png"
+            closing_img.save(str(closing_path), "PNG", optimize=True, dpi=(600, 600))
+            output_paths.append(closing_path)
+            if progress_cb:
+                progress_cb("Rendered closing page")
+
         return output_paths
 
     def render_single_page(self, page: Page, username: str) -> Image.Image:
         """Render a single page to a PIL Image."""
-        # All pages use the same fixed height for uniform dimensions.
         total_h = MAX_PAGE_HEIGHT
 
-        img = Image.new("RGB", (CANVAS_WIDTH, total_h), self.colors["bg"])
+        img = Image.new("RGBA", (CANVAS_WIDTH, total_h), self.colors["bg"])
         draw = ImageDraw.Draw(img)
 
+        # Compute clusters for this page's elements
+        self._compute_clusters(page.elements)
+
         # Draw header
-        self._draw_header(draw, username)
+        self._draw_header(draw, username, meta=getattr(self, '_current_meta', None))
 
         # Draw messages
         y = HEADER_HEIGHT + HEADER_SEPARATOR_H
@@ -652,7 +1054,7 @@ class ChatRenderer:
                 prev_sender = elem.sender
 
         # Draw footer
-        self._draw_footer(draw, page, total_h)
+        self._draw_footer(draw, page, total_h, meta=getattr(self, '_current_meta', None))
 
         return img
 
@@ -700,7 +1102,7 @@ class ChatRenderer:
             )
 
             if date_str != last_date_str:
-                elements.append(DateDivider(date_str=date_str))
+                elements.append(DateDivider(date_str=date_str, timestamp=msg.timestamp))
                 last_date_str = date_str
 
             elements.append(msg)
@@ -724,54 +1126,47 @@ class ChatRenderer:
 
     # ---- drawing methods --------------------------------------------------
 
-    def _draw_header(self, draw: ImageDraw.ImageDraw, username: str) -> None:
-        """Draw the Snapchat-style header bar."""
+    def _draw_header(self, draw: ImageDraw.ImageDraw, username: str, meta: 'ConversationMeta | None' = None) -> None:
+        """Draw the simplified header bar."""
         # Background
         draw.rectangle(
             [0, 0, CANVAS_WIDTH, HEADER_HEIGHT],
             fill=self.colors["header_bg"],
         )
 
-        # Back chevron (<)
-        chev_x, chev_y = 40, HEADER_HEIGHT // 2
-        chev_size = 24
-        draw.line(
-            [(chev_x + chev_size, chev_y - chev_size),
-             (chev_x, chev_y),
-             (chev_x + chev_size, chev_y + chev_size)],
-            fill=self.colors["header_text"],
-            width=6,
-        )
-
-        # Avatar circle (placeholder)
-        avatar_x = 112
-        avatar_y = HEADER_HEIGHT // 2
-        avatar_r = 40
-        draw.ellipse(
-            [avatar_x - avatar_r, avatar_y - avatar_r,
-             avatar_x + avatar_r, avatar_y + avatar_r],
-            fill=self.colors["avatar_bg"],
-        )
-
-        # Username text
-        name_x = avatar_x + avatar_r + 28
+        # Username text (left-aligned, no avatar, no chevron)
+        name_x = 60
         name_bbox = draw.textbbox((0, 0), username, font=self.font_header_name)
         name_h = name_bbox[3] - name_bbox[1]
-        name_y = (HEADER_HEIGHT // 2) - name_h - 4
+
+        # Date range (replaces "Active" status) — #3
+        if meta and meta.date_range_str:
+            status_text = meta.date_range_str
+        else:
+            status_text = ""
+
+        # Vertically center the name (+ optional date range) within the header
+        if status_text:
+            gap = 12
+            status_bbox = draw.textbbox((0, 0), status_text, font=self.font_header_status)
+            status_h = status_bbox[3] - status_bbox[1]
+            total_content_h = name_h + gap + status_h
+            name_y = (HEADER_HEIGHT - total_content_h) // 2
+            status_y = name_y + name_h + gap
+            draw.text(
+                (name_x, status_y),
+                status_text,
+                fill=self.colors["header_text"],
+                font=self.font_header_status,
+            )
+        else:
+            name_y = (HEADER_HEIGHT - name_h) // 2
+
         draw.text(
             (name_x, name_y),
             username,
             fill=self.colors["header_text"],
             font=self.font_header_name,
-        )
-
-        # "Active" status
-        status_y = name_y + name_h + 8
-        draw.text(
-            (name_x, status_y),
-            "Active",
-            fill=self.colors["header_text"],
-            font=self.font_header_status,
         )
 
         # Bottom separator
@@ -787,20 +1182,66 @@ class ChatRenderer:
         divider: DateDivider,
         y: int,
     ) -> int:
-        """Draw a centered date divider. Returns new y position."""
-        bbox = draw.textbbox((0, 0), divider.date_str, font=self.font_date)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
+        """Draw a date divider: hairline rule + centered pill badge + relative time.
 
+        Returns new y position.
+        """
+        center_y = y + DATE_DIVIDER_HEIGHT // 2 - 20  # shift up to leave room for relative time
+
+        # Hairline rule across page (#8)
+        rule_color = self.colors["date_rule"]
+        draw.line(
+            [(BUBBLE_MARGIN_SIDE, center_y), (CANVAS_WIDTH - BUBBLE_MARGIN_SIDE, center_y)],
+            fill=rule_color,
+            width=2,
+        )
+
+        # Measure date text
+        date_font = self.font_date
+        date_bbox = draw.textbbox((0, 0), divider.date_str, font=date_font)
+        text_w = date_bbox[2] - date_bbox[0]
+        text_h = date_bbox[3] - date_bbox[1]
+
+        # Pill badge: rounded rect behind date text
+        pill_pad_h = 40
+        pill_pad_v = 16
+        pill_w = text_w + 2 * pill_pad_h
+        pill_h = text_h + 2 * pill_pad_v
+        pill_x = (CANVAS_WIDTH - pill_w) // 2
+        pill_y = center_y - pill_h // 2
+
+        pill_bg = self.colors["date_pill_bg"]
+        pill_text_color = self.colors["date_pill_text"]
+
+        draw.rounded_rectangle(
+            [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
+            radius=pill_h // 2,  # fully rounded ends
+            fill=pill_bg,
+        )
+
+        # Date text centered in pill
         text_x = (CANVAS_WIDTH - text_w) // 2
-        text_y = y + (DATE_DIVIDER_HEIGHT - text_h) // 2
-
+        text_y = pill_y + pill_pad_v
         draw.text(
             (text_x, text_y),
             divider.date_str,
-            fill=self.colors["date_text"],
-            font=self.font_date,
+            fill=pill_text_color,
+            font=date_font,
         )
+
+        # Relative time below pill (#8)
+        rel_text = _relative_time(divider.timestamp)
+        if rel_text:
+            rel_bbox = draw.textbbox((0, 0), rel_text, font=self.font_date_relative)
+            rel_w = rel_bbox[2] - rel_bbox[0]
+            rel_x = (CANVAS_WIDTH - rel_w) // 2
+            rel_y = pill_y + pill_h + 8
+            draw.text(
+                (rel_x, rel_y),
+                rel_text,
+                fill=self.colors["date_relative_text"],
+                font=self.font_date_relative,
+            )
 
         return y + DATE_DIVIDER_HEIGHT
 
@@ -812,61 +1253,176 @@ class ChatRenderer:
         y: int,
         prev_sender: str | None,
     ) -> int:
-        """Draw a single message block. Returns new y position."""
+        """Draw a single message as a pill bubble. Returns new y position."""
+        is_cluster_continuation = msg.cluster_position in ("middle", "last")
+        is_cluster_end = msg.cluster_position in ("last", "solo")
+        show_sender = msg.cluster_position in ("first", "solo")
+        show_timestamp = is_cluster_end
 
         # Spacing
         if prev_sender is not None:
-            y += SPACING_SAME_SENDER if msg.sender == prev_sender else SPACING_DIFF_SENDER
+            if is_cluster_continuation and msg.sender == prev_sender:
+                y += SPACING_CLUSTER
+            else:
+                y += SPACING_BETWEEN
         else:
-            y += SPACING_DIFF_SENDER
+            y += SPACING_BETWEEN
 
-        block_start_y = y
+        # Pick colors
+        if msg.is_self:
+            bubble_bg = self.colors["bubble_self_bg"]
+            text_color = self.colors["bubble_self_text"]
+            sender_color = self.colors["sender_self"]
+            ts_color = self.colors["timestamp_self"]
+        else:
+            bubble_bg = self.colors["bubble_friend_bg"]
+            text_color = self.colors["bubble_friend_text"]
+            sender_color = self.colors["sender_friend"]
+            ts_color = self.colors["timestamp_friend"]
 
-        # Sender color
-        sender_color = self.colors["sender_self"] if msg.is_self else self.colors["sender_friend"]
+        # Sender name above bubble (only on first/solo, original case — not UPPER)
+        if show_sender:
+            sender_text = msg.sender
+            name_x = (CANVAS_WIDTH - BUBBLE_MAX_WIDTH - BUBBLE_MARGIN_SIDE + SENDER_NAME_PAD_LEFT) if not msg.is_self else (BUBBLE_MARGIN_SIDE + SENDER_NAME_PAD_LEFT)
+            # Simpler: left-aligned for friend, right side needs right-align
+            if msg.is_self:
+                # Right-aligned sender name
+                name_bbox = draw.textbbox((0, 0), sender_text, font=self.font_sender)
+                name_w = name_bbox[2] - name_bbox[0]
+                name_x = CANVAS_WIDTH - BUBBLE_MARGIN_SIDE - name_w
+            else:
+                name_x = BUBBLE_MARGIN_SIDE + SENDER_NAME_PAD_LEFT
 
-        # Sender name (uppercase, bold, in sender color)
-        sender_text = msg.sender.upper()
-        sender_lh = _get_line_height(self.font_sender)
+            draw.text((name_x, y), sender_text, fill=sender_color, font=self.font_sender)
+            y += _get_line_height(self.font_sender) + SENDER_NAME_PAD_BTM
 
-        draw.text(
-            (MSG_TEXT_LEFT, y),
-            sender_text,
-            fill=sender_color,
-            font=self.font_sender,
-        )
-        y += sender_lh + SENDER_NAME_PAD_BTM
-
-        # Message text (word-wrapped)
+        # Measure text content
+        text_lines = []
+        text_content_h = 0
         if msg.text:
+            text_lines = _wrap_text(msg.text, self.font_msg, BUBBLE_TEXT_MAX_W, draw)
             msg_lh = _get_line_height(self.font_msg)
-            lines = _wrap_text(msg.text, self.font_msg, MSG_MAX_TEXT_WIDTH, draw)
-            for i, line in enumerate(lines):
-                draw.text(
-                    (MSG_TEXT_LEFT, y),
-                    line,
-                    fill=self.colors["msg_text"],
-                    font=self.font_msg,
-                )
-                y += msg_lh
-                if i < len(lines) - 1:
-                    y += LINE_SPACING
+            text_content_h = len(text_lines) * msg_lh + max(0, len(text_lines) - 1) * LINE_SPACING
 
-        # Media thumbnail — only when an actual file exists on disk
-        if msg.media_path and Path(msg.media_path).is_file():
-            y += MEDIA_PAD_TOP
-            y = self._draw_media(draw, img, msg, y)
-            y += MEDIA_PAD_BOTTOM
+        # Measure timestamp
+        ts_text = ""
+        ts_w = 0
+        if show_timestamp and msg.timestamp > 86400:
+            t = time.localtime(msg.timestamp)
+            ts_text = time.strftime("%I:%M %p", t).lstrip("0")
+            ts_bbox = draw.textbbox((0, 0), ts_text, font=self.font_timestamp)
+            ts_w = ts_bbox[2] - ts_bbox[0]
 
-        # Bottom padding
-        y += 4
+        # Check for media
+        has_media = msg.media_path and Path(msg.media_path).is_file()
+        has_placeholder = (msg.is_ephemeral or msg.media_type) and not has_media
 
-        # Draw the left border line (6px wide, full height of message block)
-        border_x = MSG_LEFT_PAD
-        draw.rectangle(
-            [border_x, block_start_y, border_x + MSG_BORDER_WIDTH - 1, y],
-            fill=sender_color,
+        # Calculate bubble dimensions
+        content_h = text_content_h
+        if has_media or has_placeholder:
+            media_h = MEDIA_PAD_TOP + MEDIA_HEIGHT + MEDIA_PAD_BOTTOM + MEDIA_LABEL_HEIGHT
+            content_h += media_h
+
+        # Add timestamp height if present (below text, inside bubble)
+        ts_line_h = 0
+        if ts_text:
+            ts_line_h = _get_line_height(self.font_timestamp) + 8
+            content_h += ts_line_h
+
+        bubble_h = content_h + 2 * BUBBLE_PAD_V
+        bubble_h = max(bubble_h, BUBBLE_RADIUS * 2)  # minimum height
+
+        # Calculate bubble width from content
+        max_text_line_w = 0
+        if text_lines:
+            for line in text_lines:
+                lbox = draw.textbbox((0, 0), line, font=self.font_msg)
+                max_text_line_w = max(max_text_line_w, lbox[2] - lbox[0])
+
+        bubble_w = max_text_line_w + 2 * BUBBLE_PAD_H
+        if ts_text:
+            bubble_w = max(bubble_w, ts_w + 2 * BUBBLE_PAD_H)
+        if has_media or has_placeholder:
+            bubble_w = max(bubble_w, MEDIA_MAX_WIDTH + 2 * BUBBLE_PAD_H)
+        bubble_w = max(BUBBLE_MIN_WIDTH, min(bubble_w, BUBBLE_MAX_WIDTH))
+
+        # Position bubble: self=right, friend=left
+        if msg.is_self:
+            bubble_x = CANVAS_WIDTH - BUBBLE_MARGIN_SIDE - bubble_w
+        else:
+            bubble_x = BUBBLE_MARGIN_SIDE
+
+        # Determine corner radii based on cluster position
+        r = BUBBLE_RADIUS
+        small_r = 12  # tight corner for clustered side
+
+        if msg.is_self:
+            # Self bubbles: right side gets modified corners
+            if msg.cluster_position == "first":
+                radii = (r, r, small_r, r)       # top-left, top-right, bottom-right, bottom-left
+            elif msg.cluster_position == "middle":
+                radii = (r, small_r, small_r, r)
+            elif msg.cluster_position == "last":
+                radii = (r, small_r, r, r)
+            else:  # solo
+                radii = (r, r, r, r)
+        else:
+            # Friend bubbles: left side gets modified corners
+            if msg.cluster_position == "first":
+                radii = (r, r, r, small_r)
+            elif msg.cluster_position == "middle":
+                radii = (small_r, r, r, small_r)
+            elif msg.cluster_position == "last":
+                radii = (small_r, r, r, r)
+            else:  # solo
+                radii = (r, r, r, r)
+
+        # Draw the pill bubble with per-corner radii
+        # Pillow's rounded_rectangle doesn't support per-corner radii directly,
+        # so we use uniform radius for now and note this as a future enhancement
+        draw.rounded_rectangle(
+            [bubble_x, y, bubble_x + bubble_w, y + bubble_h],
+            radius=r,
+            fill=bubble_bg,
         )
+
+        # Draw text inside bubble
+        text_x = bubble_x + BUBBLE_PAD_H
+        text_y = y + BUBBLE_PAD_V
+
+        if text_lines:
+            msg_lh = _get_line_height(self.font_msg)
+            for i, line in enumerate(text_lines):
+                self._draw_text_with_emoji(draw, img, text_x, text_y, line, fill=text_color, font=self.font_msg)
+                text_y += msg_lh
+                if i < len(text_lines) - 1:
+                    text_y += LINE_SPACING
+
+        # Draw media inside bubble
+        if has_media:
+            text_y += MEDIA_PAD_TOP
+            text_y = self._draw_media(draw, img, msg, text_y, bubble_x + BUBBLE_PAD_H)
+            text_y += MEDIA_PAD_BOTTOM
+        elif has_placeholder:
+            text_y += MEDIA_PAD_TOP
+            text_y = self._draw_media_placeholder_smart(draw, msg, text_y, bubble_x + BUBBLE_PAD_H)
+            text_y += MEDIA_PAD_BOTTOM
+
+        # Draw inline timestamp (bottom-right of bubble, with opacity)
+        if ts_text:
+            ts_x = bubble_x + bubble_w - BUBBLE_PAD_H - ts_w
+            ts_y = y + bubble_h - BUBBLE_PAD_V - _get_line_height(self.font_timestamp)
+            # Render with alpha using a tight crop overlay (not full canvas)
+            ts_bbox = draw.textbbox((ts_x, ts_y), ts_text, font=self.font_timestamp)
+            tw = ts_bbox[2] - ts_bbox[0] + 4
+            th = ts_bbox[3] - ts_bbox[1] + 4
+            ts_overlay = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+            ts_draw = ImageDraw.Draw(ts_overlay)
+            ts_draw.text((0, 0), ts_text, fill=ts_color, font=self.font_timestamp)
+            img.paste(ts_overlay, (ts_bbox[0], ts_bbox[1]), ts_overlay)
+
+        y += bubble_h
+        y += 4  # bottom padding
 
         return y
 
@@ -876,15 +1432,17 @@ class ChatRenderer:
         img: Image.Image,
         msg: ChatMessage,
         y: int,
+        media_x: int | None = None,
     ) -> int:
         """Draw a media thumbnail or placeholder. Returns new y after media + label."""
-        media_x = MSG_TEXT_LEFT
+        if media_x is None:
+            media_x = BUBBLE_MARGIN_SIDE + BUBBLE_PAD_H
 
         if msg.media_path and Path(msg.media_path).is_file():
             # Load actual thumbnail
             try:
                 thumb = Image.open(msg.media_path)
-                thumb.thumbnail((MEDIA_WIDTH, MEDIA_HEIGHT), Image.Resampling.LANCZOS)
+                thumb.thumbnail((MEDIA_MAX_WIDTH, MEDIA_HEIGHT), Image.Resampling.LANCZOS)
                 # Center the thumbnail in the allocated space
                 paste_x = media_x
                 paste_y = y
@@ -892,11 +1450,11 @@ class ChatRenderer:
                 thumb_w, thumb_h = thumb.size
             except Exception:
                 # Fall back to placeholder
-                thumb_w, thumb_h = MEDIA_WIDTH, MEDIA_HEIGHT
+                thumb_w, thumb_h = MEDIA_MAX_WIDTH, MEDIA_HEIGHT
                 self._draw_media_placeholder(draw, media_x, y, thumb_w, thumb_h)
         else:
             # Placeholder rectangle
-            thumb_w, thumb_h = MEDIA_WIDTH, MEDIA_HEIGHT
+            thumb_w, thumb_h = MEDIA_MAX_WIDTH, MEDIA_HEIGHT
             self._draw_media_placeholder(draw, media_x, y, thumb_w, thumb_h)
 
         y += thumb_h
@@ -936,6 +1494,132 @@ class ChatRenderer:
         )
 
     @staticmethod
+    def _draw_ghost_icon(
+        draw: ImageDraw.ImageDraw,
+        cx: int,
+        cy: int,
+        size: int,
+        fill_color: str,
+        bg_color: str,
+    ) -> None:
+        """Draw a Snapchat-inspired ghost silhouette centered at (cx, cy).
+
+        The ghost is built from simple PIL primitives:
+        dome head, straight body, wavy bottom tails, two round eyes.
+        """
+        # Ghost proportions
+        w = int(size * 0.7)
+        h = size
+        half_w = w // 2
+
+        left = cx - half_w
+        right = cx + half_w
+        top = cy - h // 2
+        bottom = cy + h // 2
+
+        # 1. Head dome — upper ellipse
+        dome_h = int(h * 0.55)
+        draw.ellipse([left, top, right, top + dome_h], fill=fill_color)
+
+        # 2. Body — rectangle from dome midpoint to bottom
+        draw.rectangle([left, top + dome_h // 2, right, bottom], fill=fill_color)
+
+        # 3. Wavy bottom — 3 scalloped tails with 2 notch cutouts
+        tail_w = w // 3
+        notch_h = int(h * 0.12)
+        for i in range(2):
+            # Cut semicircular notches between the three tails
+            nx = left + tail_w * (i + 1) - tail_w // 4
+            draw.ellipse(
+                [nx, bottom - notch_h, nx + tail_w // 2, bottom + notch_h],
+                fill=bg_color,
+            )
+
+        # 4. Rounded tail tips
+        tip_r = int(tail_w * 0.35)
+        for i in range(3):
+            tip_cx = left + tail_w * i + tail_w // 2
+            draw.ellipse(
+                [tip_cx - tip_r, bottom - tip_r, tip_cx + tip_r, bottom + tip_r],
+                fill=fill_color,
+            )
+
+        # 5. Eyes — two round dots punched out in bg_color
+        eye_r = int(size * 0.06)
+        eye_y = top + int(h * 0.35)
+        for ex in (cx - int(w * 0.2), cx + int(w * 0.2)):
+            draw.ellipse(
+                [ex - eye_r, eye_y - eye_r, ex + eye_r, eye_y + eye_r],
+                fill=bg_color,
+            )
+
+    def _draw_media_placeholder_smart(
+        self,
+        draw: ImageDraw.ImageDraw,
+        msg: ChatMessage,
+        y: int,
+        media_x: int,
+    ) -> int:
+        """Draw media placeholder with ghost icon for expired/opened snaps.
+
+        In Snapchat exports, any media without a file on disk is an opened
+        snap that expired — the DB stores these as media_type='MEDIA', not
+        'SNAP', so we always use the ghost treatment.
+        Returns new y after placeholder + label.
+        """
+        w = MEDIA_MAX_WIDTH
+        h = MEDIA_HEIGHT
+
+        bg_color = self.colors["snap_placeholder_bg"]
+        text_color = self.colors["snap_placeholder_text"]
+        label_text = "Opened snap \u2014 expired"
+
+        # Draw rounded placeholder rectangle
+        draw.rounded_rectangle(
+            [media_x, y, media_x + w, y + h],
+            radius=24,
+            fill=bg_color,
+        )
+
+        # Ghost silhouette centered in placeholder (shifted up for label)
+        icon_cy = y + h // 2 - 40
+        ghost_size = int(h * 0.4)
+        self._draw_ghost_icon(
+            draw,
+            cx=media_x + w // 2,
+            cy=icon_cy,
+            size=ghost_size,
+            fill_color=text_color,
+            bg_color=bg_color,
+        )
+
+        # Subtitle text below icon
+        sub_font = get_font(84)
+        sub_bbox = draw.textbbox((0, 0), label_text, font=sub_font)
+        sub_w = sub_bbox[2] - sub_bbox[0]
+        sub_y = y + h // 2 + int(h * 0.15)
+        draw.text(
+            (media_x + (w - sub_w) // 2, sub_y),
+            label_text,
+            fill=text_color,
+            font=sub_font,
+        )
+
+        y += h
+
+        # Type label below placeholder (same as normal media)
+        type_label = self._media_label(msg)
+        draw.text(
+            (media_x, y + 2),
+            type_label,
+            fill=self.colors["media_label"],
+            font=self.font_media_label,
+        )
+        y += MEDIA_LABEL_HEIGHT
+
+        return y
+
+    @staticmethod
     def _media_label(msg: ChatMessage) -> str:
         """Build the label string for a media item."""
         mtype = (msg.media_type or "photo").capitalize()
@@ -948,9 +1632,9 @@ class ChatRenderer:
         draw: ImageDraw.ImageDraw,
         page: Page,
         total_h: int,
+        meta: 'ConversationMeta | None' = None,
     ) -> None:
-        """Draw page footer and watermark."""
-        # Main footer text
+        """Draw page footer."""
         footer_text = f"Page {page.page_num} of {page.total_pages} \u2014 Snatched v3"
         bbox = draw.textbbox((0, 0), footer_text, font=self.font_footer)
         text_w = bbox[2] - bbox[0]
@@ -967,16 +1651,254 @@ class ChatRenderer:
             font=self.font_footer,
         )
 
-        # Watermark
-        wm_text = "Vibes together by Claude \u2014 Anthropic"
-        wm_bbox = draw.textbbox((0, 0), wm_text, font=self.font_watermark)
-        wm_w = wm_bbox[2] - wm_bbox[0]
-        wm_x = (CANVAS_WIDTH - wm_w) // 2
-        wm_y = footer_y + FOOTER_HEIGHT + 2
+    def _draw_page_break_marker(self, draw: ImageDraw.ImageDraw, y: int) -> int:
+        """Draw a page break indicator: dashed line + down arrow. Returns new y."""
+        line_y = y + PAGE_BREAK_HEIGHT // 2
+        line_color = self.colors["page_break_line"]
+        arrow_color = self.colors["page_break_arrow"]
 
-        draw.text(
-            (wm_x, wm_y),
-            wm_text,
-            fill=self.colors["watermark_text"],
-            font=self.font_watermark,
+        # Dashed line across the page
+        dash_len = 40
+        gap_len = 20
+        x = BUBBLE_MARGIN_SIDE
+        while x < CANVAS_WIDTH - BUBBLE_MARGIN_SIDE:
+            end_x = min(x + dash_len, CANVAS_WIDTH - BUBBLE_MARGIN_SIDE)
+            draw.line([(x, line_y), (end_x, line_y)], fill=line_color, width=2)
+            x += dash_len + gap_len
+
+        # Down arrow in center
+        cx = CANVAS_WIDTH // 2
+        arrow_size = 20
+        draw.polygon(
+            [(cx - arrow_size, line_y + 8),
+             (cx + arrow_size, line_y + 8),
+             (cx, line_y + 8 + arrow_size)],
+            fill=arrow_color,
         )
+
+        return y + PAGE_BREAK_HEIGHT
+
+    def _draw_cover_page(self, meta: 'ConversationMeta') -> Image.Image:
+        """Render the cover page with gradient background, partner name, and first message quote."""
+        img = Image.new("RGBA", (CANVAS_WIDTH, MAX_PAGE_HEIGHT), "#000000")
+        draw = ImageDraw.Draw(img)
+
+        # Vertical gradient background (blue top → darker blue bottom)
+        top_r, top_g, top_b = int(COVER_GRADIENT_TOP[1:3], 16), int(COVER_GRADIENT_TOP[3:5], 16), int(COVER_GRADIENT_TOP[5:7], 16)
+        bot_r, bot_g, bot_b = int(COVER_GRADIENT_BOT[1:3], 16), int(COVER_GRADIENT_BOT[3:5], 16), int(COVER_GRADIENT_BOT[5:7], 16)
+
+        for y_line in range(MAX_PAGE_HEIGHT):
+            ratio = y_line / MAX_PAGE_HEIGHT
+            r = int(top_r + (bot_r - top_r) * ratio)
+            g = int(top_g + (bot_g - top_g) * ratio)
+            b = int(top_b + (bot_b - top_b) * ratio)
+            draw.line([(0, y_line), (CANVAS_WIDTH, y_line)], fill=(r, g, b))
+
+        # Center content vertically (rough: place partner name at ~35% from top)
+        center_x = CANVAS_WIDTH // 2
+        y = int(MAX_PAGE_HEIGHT * 0.30)
+
+        # Partner name (large bold, centered)
+        font_name = get_font(280, bold=True)
+        name_text = meta.partner_name
+        name_bbox = draw.textbbox((0, 0), name_text, font=font_name)
+        name_w = name_bbox[2] - name_bbox[0]
+        name_h = name_bbox[3] - name_bbox[1]
+        draw.text(
+            (center_x - name_w // 2, y),
+            name_text,
+            fill=self.colors["cover_text"],
+            font=font_name,
+        )
+        y += name_h + 40
+
+        # Date range (medium, centered)
+        font_range = get_font(120)
+        range_bbox = draw.textbbox((0, 0), meta.date_range_str, font=font_range)
+        range_w = range_bbox[2] - range_bbox[0]
+        range_h = range_bbox[3] - range_bbox[1]
+        draw.text(
+            (center_x - range_w // 2, y),
+            meta.date_range_str,
+            fill=self.colors["cover_text"],
+            font=font_range,
+        )
+        y += range_h + 20
+
+        # Message count
+        count_text = f"{meta.message_count:,} messages"
+        count_bbox = draw.textbbox((0, 0), count_text, font=font_range)
+        count_w = count_bbox[2] - count_bbox[0]
+        count_h = count_bbox[3] - count_bbox[1]
+        draw.text(
+            (center_x - count_w // 2, y),
+            count_text,
+            fill=self.colors["cover_text"],
+            font=font_range,
+        )
+        y += count_h + 80
+
+        # Horizontal rule
+        rule_margin = 400
+        rule_color = self.colors["cover_rule"]
+        # cover_rule may be a hex with alpha like "#FFFFFF40"
+        # Draw as simple white line with reduced width
+        draw.line(
+            [(rule_margin, y), (CANVAS_WIDTH - rule_margin, y)],
+            fill="#FFFFFF",
+            width=2,
+        )
+        y += 60
+
+        # First message quote (italic, centered, wrapped)
+        if meta.first_message_text:
+            font_quote = get_font(100, italic=True)
+            quote_text = f'"{meta.first_message_text}"'
+            # Truncate if too long
+            if len(quote_text) > 200:
+                quote_text = quote_text[:197] + '..."'
+
+            quote_max_w = CANVAS_WIDTH - 2 * rule_margin
+            quote_lines = _wrap_text(quote_text, font_quote, quote_max_w, draw)
+            quote_lh = _get_line_height(font_quote)
+
+            for line in quote_lines:
+                lbox = draw.textbbox((0, 0), line, font=font_quote)
+                lw = lbox[2] - lbox[0]
+                draw.text(
+                    (center_x - lw // 2, y),
+                    line,
+                    fill=self.colors["cover_quote_text"],
+                    font=font_quote,
+                )
+                y += quote_lh + LINE_SPACING
+
+            y += 20
+
+            # Attribution
+            attr_text = f"— {meta.first_message_sender}"
+            font_attr = get_font(84)
+            attr_bbox = draw.textbbox((0, 0), attr_text, font=font_attr)
+            attr_w = attr_bbox[2] - attr_bbox[0]
+            draw.text(
+                (center_x - attr_w // 2, y),
+                attr_text,
+                fill=self.colors["cover_quote_text"],
+                font=font_attr,
+            )
+
+        # Footer text at bottom
+        footer_text = "Cover — Snatched v3"
+        font_footer = get_font(72)
+        ft_bbox = draw.textbbox((0, 0), footer_text, font=font_footer)
+        ft_w = ft_bbox[2] - ft_bbox[0]
+        draw.text(
+            (center_x - ft_w // 2, MAX_PAGE_HEIGHT - 120),
+            footer_text,
+            fill=self.colors["cover_text"],
+            font=font_footer,
+        )
+
+        return img
+
+    def _draw_closing_page(self, meta: 'ConversationMeta', total_pages: int) -> Image.Image:
+        """Render the closing page with last message quote and conversation stats."""
+        img = Image.new("RGBA", (CANVAS_WIDTH, MAX_PAGE_HEIGHT), self.colors["bg"])
+        draw = ImageDraw.Draw(img)
+
+        center_x = CANVAS_WIDTH // 2
+        y = int(MAX_PAGE_HEIGHT * 0.30)
+
+        # "End of conversation" title
+        font_title = get_font(160, bold=True)
+        title_text = "End of conversation"
+        title_bbox = draw.textbbox((0, 0), title_text, font=font_title)
+        title_w = title_bbox[2] - title_bbox[0]
+        title_h = title_bbox[3] - title_bbox[1]
+        draw.text(
+            (center_x - title_w // 2, y),
+            title_text,
+            fill=self.colors["closing_text"],
+            font=font_title,
+        )
+        y += title_h + 80
+
+        # Horizontal rule
+        rule_margin = 500
+        draw.line(
+            [(rule_margin, y), (CANVAS_WIDTH - rule_margin, y)],
+            fill=self.colors["closing_text"],
+            width=2,
+        )
+        y += 60
+
+        # Last message quote (italic, centered)
+        if meta.last_message_text:
+            font_quote = get_font(100, italic=True)
+            quote_text = f'"{meta.last_message_text}"'
+            if len(quote_text) > 200:
+                quote_text = quote_text[:197] + '..."'
+
+            quote_max_w = CANVAS_WIDTH - 2 * rule_margin
+            quote_lines = _wrap_text(quote_text, font_quote, quote_max_w, draw)
+            quote_lh = _get_line_height(font_quote)
+
+            for line in quote_lines:
+                lbox = draw.textbbox((0, 0), line, font=font_quote)
+                lw = lbox[2] - lbox[0]
+                draw.text(
+                    (center_x - lw // 2, y),
+                    line,
+                    fill=self.colors["closing_quote_text"],
+                    font=font_quote,
+                )
+                y += quote_lh + LINE_SPACING
+
+            y += 20
+
+            # Attribution
+            attr_text = f"— {meta.last_message_sender}"
+            font_attr = get_font(84)
+            attr_bbox = draw.textbbox((0, 0), attr_text, font=font_attr)
+            attr_w = attr_bbox[2] - attr_bbox[0]
+            draw.text(
+                (center_x - attr_w // 2, y),
+                attr_text,
+                fill=self.colors["closing_quote_text"],
+                font=font_attr,
+            )
+            y += _get_line_height(font_attr) + 80
+
+        # Stats block
+        font_stats = get_font(100)
+        stats_lines = [
+            f"{meta.message_count:,} messages",
+            meta.date_range_str,
+            f"{total_pages} pages",
+        ]
+
+        for stat_line in stats_lines:
+            stat_bbox = draw.textbbox((0, 0), stat_line, font=font_stats)
+            stat_w = stat_bbox[2] - stat_bbox[0]
+            stat_h = stat_bbox[3] - stat_bbox[1]
+            draw.text(
+                (center_x - stat_w // 2, y),
+                stat_line,
+                fill=self.colors["closing_text"],
+                font=font_stats,
+            )
+            y += stat_h + 16
+
+        # Footer
+        footer_text = f"Exported by Snatched v3 — {meta.export_date}"
+        font_footer = get_font(72)
+        ft_bbox = draw.textbbox((0, 0), footer_text, font=font_footer)
+        ft_w = ft_bbox[2] - ft_bbox[0]
+        draw.text(
+            (center_x - ft_w // 2, MAX_PAGE_HEIGHT - 120),
+            footer_text,
+            fill=self.colors["closing_text"],
+            font=font_footer,
+        )
+
+        return img

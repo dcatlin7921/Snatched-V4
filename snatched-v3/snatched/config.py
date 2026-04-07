@@ -14,6 +14,7 @@ class ServerConfig(BaseModel):
     data_dir: Path = Path("/data")
     max_upload_bytes: int = 5 * 1024 * 1024 * 1024  # 5 GB
     dev_mode: bool = False  # Enable dev bypass for auth (NEVER True in production)
+    promo_code: str = ""    # Promo code that unlocks Pro tier (empty = disabled)
 
 
 class DatabaseConfig(BaseModel):
@@ -56,7 +57,7 @@ class UploadConfig(BaseModel):
 class LaneConfig(BaseModel):
     """Per-lane processing settings."""
     enabled: bool = True
-    folder_pattern: str = "{YYYY}/{MM}"  # Folder structure for output
+    folder_pattern: str = "year_month"  # year_month, year, flat, type
 
     # Memories lane
     burn_overlays: bool = True
@@ -65,6 +66,12 @@ class LaneConfig(BaseModel):
     export_text: bool = True
     export_png: bool = True
     dark_mode: bool = False
+    chat_timestamps: bool = True
+    chat_cover_pages: bool = True
+
+    # Shared
+    gps_precision: str = "exact"  # exact, city, none
+    hide_sent_to: bool = False
 
 
 class Config(BaseModel):

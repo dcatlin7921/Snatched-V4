@@ -3,92 +3,242 @@
 {% block content %}
 <!-- Hero -->
 <div class="text-center download-hero">
-    <h1 class="download-hero-title">Extraction Complete.</h1>
-    <p class="text-muted download-hero-subtitle">Your files are ready for pickup.</p>
-</div>
-
-<!-- Output Stats -->
-<div class="stats-grid">
-    <div class="stat-card">
-        <p class="stat-label">Files Ready</p>
-        <p class="stat-value">{{ file_count }}</p>
-    </div>
-    <div class="stat-card">
-        <p class="stat-label">Total Size</p>
-        <p class="stat-value white">{{ total_size_mb }} MB</p>
-    </div>
-    {% if job.stats_json %}
-    <div class="stat-card">
-        <p class="stat-label">EXIF Written</p>
-        <p class="stat-value green">{{ job.stats_json.exif_written | default(0) }}</p>
-    </div>
+    {% if exports | length > 0 %}
+    <h1 class="download-hero-title">Exports Ready.</h1>
+    <p class="text-muted download-hero-subtitle">Your restored files, packaged and ready.</p>
+    {% else %}
+    <h1 class="download-hero-title">Building Exports.</h1>
+    <p class="text-muted download-hero-subtitle">No exports yet — processing is still running.</p>
     {% endif %}
 </div>
 
-<!-- Download Card -->
-<div class="download-card pulsing-glow">
-    <div class="download-icon">
-        <span class="material-symbols-outlined download-icon-glyph">download_for_offline</span>
+<!-- Export Cards -->
+{% for export in exports %}
+<div class="export-card{% if export.status == 'completed' %} export-card--completed{% elif export.status == 'failed' %} export-card--failed{% endif %}">
+
+    <!-- Card Header: type badge + status -->
+    <div class="export-card-header">
+        <div class="export-card-badges">
+            {% if export.export_type == 'quick_rescue' %}
+            <span class="export-type-badge export-type-badge--quick">
+                <span class="material-symbols-outlined" style="font-size: 1rem;">bolt</span>
+                Quick Rescue
+            </span>
+            {% else %}
+            <span class="export-type-badge export-type-badge--full">
+                <span class="material-symbols-outlined" style="font-size: 1rem;">package_2</span>
+                Full Export
+            </span>
+            {% endif %}
+
+            <span class="status-badge status-{{ export.status }}">{{ export.status | upper }}</span>
+        </div>
+        <span class="export-card-time mono text-dim">
+            {{ export.created_at.strftime('%Y-%m-%d %H:%M') if export.created_at else '' }}
+        </span>
     </div>
-    <div class="download-card-body">
-        <h3 class="download-card-title">Consolidated Intelligence</h3>
-        <p class="text-muted download-card-desc">
-            Every memory, chat, and story reconstructed with full metadata.
-            One final act of rebellion against the ephemeral.
+
+    <!-- Card Body: lanes + stats -->
+    <div class="export-card-body">
+        <!-- Lanes included -->
+        <div class="export-card-lanes">
+            <span class="export-card-label">Lanes</span>
+            <div class="export-lane-tags">
+                {% for lane in (export.lanes or []) %}
+                <span class="export-lane-tag">
+                    {% if lane == 'memories' %}
+                    <span class="material-symbols-outlined" style="font-size: 0.85rem;">photo_camera</span>
+                    {% elif lane == 'chats' %}
+                    <span class="material-symbols-outlined" style="font-size: 0.85rem;">chat</span>
+                    {% elif lane == 'stories' %}
+                    <span class="material-symbols-outlined" style="font-size: 0.85rem;">auto_stories</span>
+                    {% else %}
+                    <span class="material-symbols-outlined" style="font-size: 0.85rem;">folder</span>
+                    {% endif %}
+                    {{ lane | capitalize }}
+                </span>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- File count + total size -->
+        <div class="export-card-meta">
+            {% if export.file_count %}
+            <span class="export-meta-item">
+                <span class="material-symbols-outlined" style="font-size: 1rem;">description</span>
+                {{ "{:,}".format(export.file_count) }} files
+            </span>
+            {% endif %}
+            {% if export.zip_total_bytes %}
+            <span class="export-meta-item">
+                <span class="material-symbols-outlined" style="font-size: 1rem;">hard_drive</span>
+                {{ "%.1f" | format(export.zip_total_bytes / (1024 * 1024 * 1024)) }} GB
+                {%- if export.zip_total_bytes < 1073741824 %} ({{ "%.1f" | format(export.zip_total_bytes / (1024 * 1024)) }} MB){% endif %}
+            </span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Status-dependent footer -->
+    {% if export.status == 'completed' %}
+    <div class="export-card-downloads">
+        <span class="export-card-label">Download</span>
+        <div class="export-download-parts">
+            {% if (export.zip_part_count or 1) == 1 %}
+            <a href="/api/exports/{{ export.id }}/download?part=1" class="btn-primary export-download-btn">
+                <span class="material-symbols-outlined">folder_zip</span>
+                Download ZIP
+                {% if export.zip_total_bytes %}
+                <span class="export-part-size">{{ "%.1f" | format(export.zip_total_bytes / (1024 * 1024)) }} MB</span>
+                {% endif %}
+            </a>
+            {% else %}
+            {% for part_num in range(1, (export.zip_part_count or 1) + 1) %}
+            <a href="/api/exports/{{ export.id }}/download?part={{ part_num }}" class="btn-primary export-download-btn">
+                <span class="material-symbols-outlined">folder_zip</span>
+                Part {{ part_num }}
+                {% if export.zip_total_bytes and export.zip_part_count %}
+                <span class="export-part-size">~{{ "%.1f" | format(export.zip_total_bytes / (export.zip_part_count * 1024 * 1024)) }} MB</span>
+                {% endif %}
+            </a>
+            {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+
+    {% elif export.status == 'pending' or export.status == 'building' %}
+    <div class="export-card-progress">
+        <div class="spinner"></div>
+        <p class="text-muted mono" style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em;">
+            {% if export.status == 'pending' %}Queued — waiting to start{% else %}Building ZIP archive...{% endif %}
         </p>
     </div>
-    <a href="/api/download/all?job_id={{ job_id }}" class="btn-primary btn-full">
-        <span class="material-symbols-outlined">folder_zip</span>
-        DOWNLOAD EVERYTHING AS ZIP
-    </a>
-    <p class="file-size">{{ file_count }} files &middot; {{ total_size_mb }} MB</p>
+
+    {% elif export.status == 'failed' %}
+    <div class="export-card-error">
+        <span class="material-symbols-outlined" style="color: var(--danger); font-size: 1.25rem;">error</span>
+        <p class="text-danger mono" style="font-size: 0.85rem; margin: 0;">
+            {{ export.error_message or 'Export failed — unknown error' }}
+        </p>
+    </div>
+    {% endif %}
+
 </div>
+{% endfor %}
 
-<!-- File Tree -->
-<section class="download-tree-section">
-    <div class="section-header download-tree-header">
-        <h2 class="mb-0">Or grab individual files</h2>
-        <span class="mono text-muted uppercase tracking-wide download-manifest-label">Manifest v1.0</span>
+<!-- Upsell card for quick_rescue users -->
+{% if show_upsell %}
+<div class="export-upsell-card">
+    <div class="export-upsell-icon">
+        <span class="material-symbols-outlined" style="font-size: 2.5rem;">rocket_launch</span>
     </div>
-    <div id="file-tree" class="file-tree"
-         hx-get="/api/download/tree?job_id={{ job_id }}"
-         hx-trigger="load"
-         hx-target="this"
-         hx-swap="innerHTML">
-        <p class="text-muted">Loading file tree...</p>
+    <div class="export-upsell-body">
+        <h3 class="export-upsell-title">There's more where that came from.</h3>
+        <p class="text-muted" style="font-size: 0.95rem; line-height: 1.6;">
+            Your export also contains data we didn't touch yet:
+        </p>
+        <div class="upsell-stats" style="display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0;">
+            {% if upsell_chat_count %}
+            <div class="upsell-stat" style="text-align: center; min-width: 80px;">
+                <span class="material-symbols-outlined text-yellow" style="font-size: 1.5rem;">chat</span>
+                <div class="mono text-yellow" style="font-size: 1.25rem; font-weight: 900;">{{ "{:,}".format(upsell_chat_count) }}</div>
+                <div class="text-muted" style="font-size: 0.75rem;">messages</div>
+            </div>
+            {% endif %}
+            {% if upsell_conversation_count %}
+            <div class="upsell-stat" style="text-align: center; min-width: 80px;">
+                <span class="material-symbols-outlined text-yellow" style="font-size: 1.5rem;">forum</span>
+                <div class="mono text-yellow" style="font-size: 1.25rem; font-weight: 900;">{{ "{:,}".format(upsell_conversation_count) }}</div>
+                <div class="text-muted" style="font-size: 0.75rem;">conversations</div>
+            </div>
+            {% endif %}
+            {% if upsell_snap_count %}
+            <div class="upsell-stat" style="text-align: center; min-width: 80px;">
+                <span class="material-symbols-outlined text-yellow" style="font-size: 1.5rem;">photo_camera_front</span>
+                <div class="mono text-yellow" style="font-size: 1.25rem; font-weight: 900;">{{ "{:,}".format(upsell_snap_count) }}</div>
+                <div class="text-muted" style="font-size: 0.75rem;">snaps</div>
+            </div>
+            {% endif %}
+            {% if upsell_story_count %}
+            <div class="upsell-stat" style="text-align: center; min-width: 80px;">
+                <span class="material-symbols-outlined text-yellow" style="font-size: 1.5rem;">auto_stories</span>
+                <div class="mono text-yellow" style="font-size: 1.25rem; font-weight: 900;">{{ "{:,}".format(upsell_story_count) }}</div>
+                <div class="text-muted" style="font-size: 0.75rem;">stories</div>
+            </div>
+            {% endif %}
+            {% if upsell_friend_count %}
+            <div class="upsell-stat" style="text-align: center; min-width: 80px;">
+                <span class="material-symbols-outlined text-yellow" style="font-size: 1.5rem;">group</span>
+                <div class="mono text-yellow" style="font-size: 1.25rem; font-weight: 900;">{{ "{:,}".format(upsell_friend_count) }}</div>
+                <div class="text-muted" style="font-size: 0.75rem;">friends</div>
+            </div>
+            {% endif %}
+        </div>
+        <p class="text-muted" style="font-size: 0.85rem;">
+            Full Export renders chats as PNGs, recovers story media, and packages everything with metadata.
+        </p>
+        <a href="/configure/{{ job_id }}" class="btn-primary" style="margin-top: 1rem;">
+            <span class="material-symbols-outlined">package_2</span>
+            Create Full Export
+        </a>
     </div>
-</section>
+</div>
+{% endif %}
 
-<!-- What's Next -->
+<!-- Create Another Export / No exports empty state -->
+{% if exports | length == 0 %}
+<div class="export-empty-state">
+    <span class="material-symbols-outlined" style="font-size: 4rem; color: var(--text-dim);">hourglass_empty</span>
+    <p class="text-muted" style="font-size: 1rem; margin-top: 1rem;">
+        No exports yet — processing is still running.
+    </p>
+    <a href="/snatchedmemories/{{ job_id }}" class="btn-outline" style="margin-top: 1rem;">
+        <span class="material-symbols-outlined">visibility</span>
+        Check Job Progress
+    </a>
+</div>
+{% else %}
+<div class="export-actions">
+    <a href="/configure/{{ job_id }}" class="btn-outline">
+        <span class="material-symbols-outlined">add_circle</span>
+        Create Another Export
+    </a>
+    <a href="/snatchedmemories/{{ job_id }}" class="btn-outline">
+        <span class="material-symbols-outlined">visibility</span>
+        View Job
+    </a>
+    <a href="/api/jobs/{{ job_id }}/export-data" class="btn-outline" title="Download the enriched metadata database (SQLite). Contains timestamps, GPS, friend mappings, match data — everything Snatched discovered about your files. No media included.">
+        <span class="material-symbols-outlined">database</span>
+        Export Data Table
+    </a>
+    <a href="/dashboard" class="btn-outline">
+        <span class="material-symbols-outlined">dashboard</span>
+        Dashboard
+    </a>
+</div>
+{% endif %}
+
+<!-- Injection Protocol (keep for completed exports) -->
+{% if has_completed_export %}
 <div class="info-card download-info-card">
     <div class="download-info-icon-wrap">
         <span class="material-symbols-outlined download-info-icon">terminal</span>
     </div>
     <div class="download-info-body">
-        <h3 class="download-info-title">Injection Protocol</h3>
+        <h3 class="download-info-title">What's Next</h3>
         <p class="text-muted download-info-text">
-            Your extracted intelligence has been weaponized with full EXIF metadata.
+            Your files now have their original EXIF metadata restored.
             Import the <code class="mono text-yellow">memories/</code> folder into
             <strong>Immich</strong>, <strong>Apple Photos</strong>, <strong>Google Photos</strong>,
             <strong>Lightroom</strong>, or <strong>Darktable</strong> to restore your timeline.
             No loss of history. No expiration dates.
         </p>
-        {% if job.stats_json and job.stats_json.get('gps_coverage') %}
-        <p class="download-gps-note text-muted">
-            {{ job.stats_json.gps_coverage }}% of your files have GPS coordinates
-        </p>
-        {% endif %}
     </div>
 </div>
-
-<!-- Footer links -->
-<div class="download-footer-links">
-    <a href="/results/{{ job_id }}" class="btn-outline">View Results</a>
-    <a href="/dashboard" class="btn-outline">Back to Dashboard</a>
-</div>
+{% endif %}
 
 <p class="text-center text-muted download-retention-notice">
     Files available for 30 days. Unlike Snapchat, we'll warn you first.
 </p>
 {% endblock %}
-{# themed: 2026-02-25 #}
+{# themed: 2026-02-26 #}

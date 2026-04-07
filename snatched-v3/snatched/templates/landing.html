@@ -1,24 +1,112 @@
 {% extends "base.html" %}
+{% block title %}SNATCHED — Recover Dates, GPS & Metadata from Your Snapchat Export{% endblock %}
+{% block meta_description %}Snapchat strips metadata from your photos. Snatched puts it back — dates, GPS locations, overlays. Free scan, packages from $4.99. Deadline: Sept 2026.{% endblock %}
+{% block robots %}index, follow{% endblock %}
 
 {% block content %}
 <!-- Hero Section -->
 <section class="hero-section">
-    <div class="badge">Operation: Memory Extraction</div>
+    <div class="badge">Snapchat Data Recovery</div>
+    <div style="font-size: 0.6rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; margin-top: -0.5rem; margin-bottom: 0.75rem; letter-spacing: 0.08em;">
+        BEFORE THEY DELETE IT — SEPT 2026
+    </div>
 
     <h1 class="hero-h1">
         Snapchat stripped your metadata.<br>
         <span class="text-yellow">We're putting it back.</span>
     </h1>
 
+    <!-- OLD: Snatched fixes your Snapchat data export — restoring the real dates, locations, and filters that Snapchat strips from your photos and videos. No more nameless files. No more lost locations. -->
     <p class="hero-subtitle">
-        They delete your exports after 30 days...
-        <em>Snatched finds everything they tried to hide.</em>
-        No more nameless files. No more lost locations.
+        Upload your Snapchat export. We recover the dates, GPS locations, and overlays that Snapchat
+        stripped out — so your photos work in any camera roll, properly dated and geotagged.
     </p>
 
     <div class="hero-cta">
-        <a href="/upload" class="btn-primary">RESCUE YOUR MEMORIES</a>
+        <!-- OLD: <a href="/upload" class="btn-primary">RESCUE YOUR MEMORIES</a> -->
+        <a href="/upload" class="btn-primary">SCAN YOUR EXPORT — FREE</a>
+        {% if username %}
         <a href="/dashboard" class="btn-outline">VIEW MY JOBS</a>
+        {% else %}
+        <a href="/register" class="btn-outline">CREATE FREE ACCOUNT</a>
+        {% endif %}
+    </div>
+    <p style="font-size: 0.68rem; color: var(--text-dim); margin-top: 0.5rem; text-align: center; font-family: 'JetBrains Mono', monospace;">
+        Free scan · Memories with dates free · GPS &amp; full archive from $4.99
+    </p>
+</section>
+
+<!-- Countdown Timer -->
+<section class="countdown-section">
+    <div class="countdown-card">
+        <div class="countdown-label">Snapchat deletes your data in</div>
+        <div class="countdown-grid" id="countdown-grid">
+            <div class="countdown-unit">
+                <span class="countdown-value" id="cd-days">---</span>
+                <span class="countdown-suffix">Days</span>
+            </div>
+            <div class="countdown-sep">:</div>
+            <div class="countdown-unit">
+                <span class="countdown-value" id="cd-hours">--</span>
+                <span class="countdown-suffix">Hours</span>
+            </div>
+            <div class="countdown-sep">:</div>
+            <div class="countdown-unit">
+                <span class="countdown-value" id="cd-mins">--</span>
+                <span class="countdown-suffix">Min</span>
+            </div>
+            <div class="countdown-sep">:</div>
+            <div class="countdown-unit">
+                <span class="countdown-value" id="cd-secs">--</span>
+                <span class="countdown-suffix">Sec</span>
+            </div>
+        </div>
+        <div class="countdown-target">September 1, 2026 — Snapchat storage deadline</div>
+    </div>
+</section>
+
+<!-- Trust Strip — Social Proof + Privacy -->
+{% if platform_stats and (platform_stats.files > 0 or platform_stats.users > 0) %}
+<section class="trust-section">
+    <div class="trust-stats">
+        <div class="trust-stat">
+            <span class="trust-stat-value">{{ "{:,}".format(platform_stats.files) }}</span>
+            <span class="trust-stat-label">Memories Rescued</span>
+        </div>
+        <div class="trust-stat">
+            <span class="trust-stat-value">{{ "{:,}".format(platform_stats.gps) }}</span>
+            <span class="trust-stat-label">Locations Restored</span>
+        </div>
+        <div class="trust-stat">
+            <span class="trust-stat-value">{{ platform_stats.users }}</span>
+            <span class="trust-stat-label">Users Served</span>
+        </div>
+    </div>
+</section>
+{% else %}
+<section class="trust-section">
+    <div class="trust-stats" style="justify-content: center;">
+        <div class="trust-stat" style="min-width: auto;">
+            <span class="trust-stat-value" style="font-size: 1rem;">
+                <span class="material-symbols-outlined" style="font-size: 1.2rem; vertical-align: middle; color: var(--snap-yellow);">rocket_launch</span>
+            </span>
+            <span class="trust-stat-label" style="font-size: 0.75rem; max-width: none;">
+                Be among the first to rescue your data before the deadline
+            </span>
+        </div>
+    </div>
+</section>
+{% endif %}
+<section class="privacy-strip">
+    <div class="privacy-item">
+        <span class="material-symbols-outlined">lock</span> Files processed on our server, never shared
+    </div>
+    <div class="privacy-item">
+        <!-- OLD: Auto-deleted after 7 days (actual retention is 30 days free / 180 days pro) -->
+        <span class="material-symbols-outlined">delete_sweep</span> Auto-deleted after 30 days
+    </div>
+    <div class="privacy-item">
+        <span class="material-symbols-outlined">visibility_off</span> No tracking, no analytics
     </div>
 </section>
 
@@ -29,63 +117,137 @@
         <span class="section-label-line"></span>
     </div>
 
+    <!-- OLD: MATCH/ENRICH/EXPORT pipeline-phase cards
+    <div class="feature-cards">
+        <div class="feature-card"><span class="material-symbols-outlined">radar</span><h3>MATCH</h3><p>6 matching strategies...</p></div>
+        <div class="feature-card"><span class="material-symbols-outlined">encrypted</span><h3>ENRICH</h3><p>GPS coordinates, timestamps...</p></div>
+        <div class="feature-card"><span class="material-symbols-outlined">ios_share</span><h3>EXPORT</h3><p>Get your files back...</p></div>
+    </div>
+    -->
     <div class="feature-cards">
         <div class="feature-card">
-            <span class="material-symbols-outlined">radar</span>
-            <h3>MATCH</h3>
-            <p>6 matching strategies, from exact hits to educated guesses. We find what Snapchat buried. Our algorithms rip through raw data to reunite your media with its rightful identity.</p>
+            <span class="material-symbols-outlined">calendar_month</span>
+            <h3>RECOVER DATES</h3>
+            <p>Every photo gets its real date back. Six matching strategies reconnect your memories to when they actually happened. Free with every scan.</p>
         </div>
         <div class="feature-card">
-            <span class="material-symbols-outlined">encrypted</span>
-            <h3>ENRICH</h3>
-            <p>GPS coordinates, timestamps, and friend names. Force-inject original metadata back into the source. Everything they stripped, restored. Your history, recovered.</p>
+            <span class="material-symbols-outlined">my_location</span>
+            <h3>RESTORE LOCATIONS</h3>
+            <p>GPS coordinates embedded directly into your files. See where every photo was taken on a map. Your camera roll finally knows where you've been.</p>
         </div>
         <div class="feature-card">
-            <span class="material-symbols-outlined">ios_share</span>
-            <h3>EXPORT</h3>
-            <p>Liberate your library. EXIF-embedded files ready for Immich, Apple Photos, or any photo library. Battle-ready folder structure. Your metadata, your files.</p>
+            <span class="material-symbols-outlined">photo_library</span>
+            <h3>GET YOUR FILES</h3>
+            <p>Camera-roll ready with full EXIF metadata. Works with Google Photos, Apple Photos, Immich, Lightroom — any app that reads photo data.</p>
         </div>
     </div>
 </section>
 
+<!-- Data Quality Notice — moved below How It Works + CTA for better conversion flow -->
+
 <!-- How It Works — Horizontal Steps -->
 <section class="steps-section">
     <div class="section-label">
-        <span class="section-label-text">The Rescue Plan</span>
+        <span class="section-label-text">How It Works</span>
         <span class="section-label-line"></span>
     </div>
 
     <h2>How It Works</h2>
 
+    <!-- OLD 4-step flow:
+    <div class="steps-grid">
+        <div class="step-item"><div class="step-number-circle step-active">1</div><h4>Export from Snap</h4><p>Go to Settings > My Data and request your export.</p></div>
+        <div class="step-item"><div class="step-number-circle step-outline">2</div><h4>Upload ZIP</h4><p>Upload your Snapchat ZIP file.</p></div>
+        <div class="step-item"><div class="step-number-circle step-outline">3</div><h4>We Process</h4><p>We restore dates, locations, and filters.</p></div>
+        <div class="step-item"><div class="step-number-circle step-outline">4</div><h4>Download Everything</h4><p>Done. Get your files back.</p></div>
+    </div>
+    -->
     <div class="steps-grid">
         <div class="step-item">
             <div class="step-number-circle step-active">1</div>
             <h4>Export from Snap</h4>
-            <p>Breach their settings. Go to Settings &gt; My Data.</p>
+            <p>Request your data at Settings &gt; My Data. <a href="/help" style="color: var(--snap-yellow); font-size: 0.85rem;">Full guide &rarr;</a></p>
         </div>
         <div class="step-item">
             <div class="step-number-circle step-outline">2</div>
-            <h4>Upload ZIP</h4>
-            <p>Drop the payload. Drop your export file here.</p>
+            <h4>Upload &amp; Scan</h4>
+            <p>Upload your ZIP. We scan it instantly and show you exactly what's inside — free.</p>
         </div>
         <div class="step-item">
             <div class="step-number-circle step-outline">3</div>
-            <h4>We Process</h4>
-            <p>Reconstruct reality. Match, enrich, organize.</p>
+            <h4>Choose Your Package</h4>
+            <p>Memories with dates free. Add GPS, overlays, chats, or get everything from $4.99.</p>
         </div>
         <div class="step-item">
             <div class="step-number-circle step-outline">4</div>
-            <h4>Download Everything</h4>
-            <p>Mission accomplished. Get your files back.</p>
+            <h4>Download</h4>
+            <p>Camera-roll ready files with your real dates, locations, and metadata restored.</p>
         </div>
     </div>
 </section>
 
 <!-- Footer CTA -->
 <div class="cta-card-landing">
-    <h2>Ready to rescue your memories?</h2>
-    <p class="cta-urgency">Snapchat gives you 30 days. Clock's ticking.</p>
-    <a href="/upload" class="btn-primary">INITIATE RECOVERY</a>
+    <!-- OLD: <h2>Ready to rescue your memories?</h2> -->
+    <h2>See what's in your export — free</h2>
+    <p class="cta-urgency">Snapchat deletes your data September 2026. Clock's ticking.</p>
+    <a href="/upload" class="btn-primary">UPLOAD &amp; SCAN FREE</a>
 </div>
+
+<!-- Data Quality Notice — below the CTA so it doesn't interrupt conversion -->
+<section class="notice-section">
+    <div class="section-label">
+        <span class="section-label-text">What To Know</span>
+        <span class="section-label-line"></span>
+    </div>
+    <div class="notice-card">
+        <span class="material-symbols-outlined" style="color: var(--snap-yellow); font-size: 2rem;">info</span>
+        <div>
+            <h3>Snapchat compresses your data</h3>
+            <p>Snapchat's data export delivers photos at <strong>lower quality than the originals</strong> saved to your camera roll.
+            Files exported from Snapchat's servers are pre-compressed (typically JPEG quality 61&ndash;80), and
+            <strong>data has been shown to shrink over time</strong> as Snapchat re-encodes stored media.
+            Snatched preserves every byte Snapchat gives us &mdash; we never re-compress your photos.
+            Overlays (text, stickers) are burned at quality 95 to minimize any additional loss.
+            <strong>The sooner you export, the better your quality will be.</strong></p>
+        </div>
+    </div>
+</section>
+
+<script>
+(function() {
+    const deadline = new Date('2026-09-01T00:00:00Z').getTime();
+    const grid = document.getElementById('countdown-grid');
+    const els = {
+        days: document.getElementById('cd-days'),
+        hours: document.getElementById('cd-hours'),
+        mins: document.getElementById('cd-mins'),
+        secs: document.getElementById('cd-secs')
+    };
+
+    function tick() {
+        const now = Date.now();
+        const diff = deadline - now;
+
+        if (diff <= 0) {
+            grid.innerHTML = '<div class="countdown-expired">DEADLINE HAS PASSED — ACT NOW</div>';
+            return;
+        }
+
+        const d = Math.floor(diff / 86400000);
+        const h = Math.floor((diff % 86400000) / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        const s = Math.floor((diff % 60000) / 1000);
+
+        els.days.textContent = String(d);
+        els.hours.textContent = String(h).padStart(2, '0');
+        els.mins.textContent = String(m).padStart(2, '0');
+        els.secs.textContent = String(s).padStart(2, '0');
+    }
+
+    tick();
+    setInterval(tick, 1000);
+})();
+</script>
 {% endblock %}
 {# themed: 2026-02-25 #}

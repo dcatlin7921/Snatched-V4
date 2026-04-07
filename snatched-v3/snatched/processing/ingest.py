@@ -89,7 +89,10 @@ def ingest_memories(
     ).fetchone()[0]
 
     if progress_cb:
-        progress_cb(f"{count:,} memories ingested ({gps_count:,} with GPS)")
+        progress_cb(f"{count:,} memories ingested ({gps_count:,} with GPS)", {
+            "verb": "READING YOUR MEMORIES",
+            "current": count, "total": count, "errors": 0,
+        })
     logger.info("%d memories ingested (%d with GPS)", count, gps_count)
     if skipped:
         logger.warning("%d entries skipped (no mid)", skipped)
@@ -190,7 +193,9 @@ def ingest_chat(
     if progress_cb:
         progress_cb(
             f"{msg_count:,} messages from {total_convs} conversations, "
-            f"{mid_count:,} media IDs exploded"
+            f"{mid_count:,} media IDs exploded",
+            {"verb": "READING YOUR CONVERSATIONS",
+             "current": msg_count, "total": msg_count, "errors": 0},
         )
     logger.info(
         "%d messages from %d conversations, %d media IDs exploded",
@@ -277,7 +282,10 @@ def ingest_snaps(
     ).fetchone()[0]
 
     if progress_cb:
-        progress_cb(f"{count:,} snap messages ({img_count:,} images, {vid_count:,} videos)")
+        progress_cb(f"{count:,} snap messages ({img_count:,} images, {vid_count:,} videos)", {
+            "verb": "READING YOUR SNAPS",
+            "current": count, "total": count, "errors": 0,
+        })
     logger.info("%d snap messages (%d images, %d videos)", count, img_count, vid_count)
     if dupes:
         logger.info("%d duplicates suppressed (multi-recipient)", dupes)
@@ -321,7 +329,10 @@ def ingest_stories(
 
     count = db.execute("SELECT COUNT(*) FROM stories").fetchone()[0]
     if progress_cb:
-        progress_cb(f"{count:,} shared stories ingested")
+        progress_cb(f"{count:,} shared stories ingested", {
+            "verb": "READING YOUR STORIES",
+            "current": count, "total": count, "errors": 0,
+        })
     logger.info("%d shared stories ingested", count)
     return count
 
@@ -388,7 +399,10 @@ def ingest_friends(
     cat_str = ", ".join(f"{k}: {v}" for k, v in sorted(cat_counts.items()))
 
     if progress_cb:
-        progress_cb(f"{count:,} friends ingested (deduplicated)")
+        progress_cb(f"{count:,} friends ingested (deduplicated)", {
+            "verb": "REMEMBERING YOUR FRIENDS",
+            "current": count, "total": count, "errors": 0,
+        })
     logger.info("%d friends ingested (deduplicated)", count)
     if cat_str:
         logger.info("Categories: %s", cat_str)
@@ -475,11 +489,17 @@ def ingest_locations(
             "SELECT timestamp FROM locations ORDER BY timestamp_unix DESC LIMIT 1"
         ).fetchone()[0]
         if progress_cb:
-            progress_cb(f"{count:,} location breadcrumbs ({first} to {last})")
+            progress_cb(f"{count:,} location breadcrumbs ({first} to {last})", {
+                "verb": "MAPPING YOUR JOURNEY",
+                "current": count, "total": count, "errors": 0,
+            })
         logger.info("%d location breadcrumbs (%s to %s)", count, first, last)
     else:
         if progress_cb:
-            progress_cb("0 location breadcrumbs")
+            progress_cb("0 location breadcrumbs", {
+                "verb": "MAPPING YOUR JOURNEY",
+                "current": 0, "total": 0, "errors": 0,
+            })
         logger.info("0 location breadcrumbs")
     if bad:
         logger.warning("%d entries skipped (bad format)", bad)
@@ -495,9 +515,12 @@ def ingest_places(
 
     Handles multiple JSON structures (Snapchat varies across exports).
     """
-    path = json_dir / 'snap_map_places.json'
+    path = json_dir / 'snap_map_places_history.json'
     if not path.exists():
-        logger.warning("snap_map_places.json not found in %s", json_dir)
+        # Fallback to old filename
+        path = json_dir / 'snap_map_places.json'
+    if not path.exists():
+        logger.warning("snap_map_places_history.json not found in %s", json_dir)
         return 0
 
     with open(path, 'r', encoding='utf-8') as f:
@@ -569,7 +592,10 @@ def ingest_places(
 
     count = db.execute("SELECT COUNT(*) FROM places").fetchone()[0]
     if progress_cb:
-        progress_cb(f"{count:,} places ingested")
+        progress_cb(f"{count:,} places ingested", {
+            "verb": "MAPPING YOUR PLACES",
+            "current": count, "total": count, "errors": 0,
+        })
     logger.info("%d places ingested", count)
     return count
 
@@ -623,7 +649,10 @@ def ingest_snap_pro(
 
     count = db.execute("SELECT COUNT(*) FROM snap_pro").fetchone()[0]
     if progress_cb:
-        progress_cb(f"{count:,} snap pro entries ingested")
+        progress_cb(f"{count:,} snap pro entries ingested", {
+            "verb": "READING YOUR SNAPS",
+            "current": count, "total": count, "errors": 0,
+        })
     logger.info("%d snap pro entries ingested", count)
     return count
 
@@ -776,7 +805,10 @@ def scan_assets(
     ).fetchone()[0]
 
     if progress_cb:
-        progress_cb(f"{count:,} assets scanned ({total_size / 1048576:.0f} MB, {elapsed:.1f}s)")
+        progress_cb(f"{count:,} assets scanned ({total_size / 1048576:.0f} MB, {elapsed:.1f}s)", {
+            "verb": "FINDING YOUR FILES",
+            "current": count, "total": count, "errors": 0,
+        })
     logger.info("%d assets scanned (%d MB, %.1fs)", count, total_size // 1048576, elapsed)
     logger.info("Types: %s", type_str)
     logger.info("Videos: %d | fMP4 needing remux: %d", vid_count, fmp4_count)
@@ -983,8 +1015,32 @@ def discover_export(
     """
     base_dir = Path(base_dir)
 
+    # Known Snapchat export JSON filenames (any one = valid export)
+    _KNOWN_JSON = [
+        'memories_history.json',
+        'chat_history.json',
+        'snap_history.json',
+        'shared_story.json',
+        'friends.json',
+        'location_history.json',
+        'snap_map_places.json',
+        'snap_map_places_history.json',
+        'snap_pro.json',
+    ]
+
     def _check_dir(d: Path) -> bool:
-        return (d / 'json' / 'memories_history.json').exists()
+        json_dir = d / 'json'
+        if not json_dir.is_dir():
+            return False
+        # Accept if ANY known Snapchat JSON file exists
+        return any((json_dir / f).exists() for f in _KNOWN_JSON)
+
+    def _check_dir_loose(d: Path) -> bool:
+        """Fallback: accept a json/ dir with any .json files at all."""
+        json_dir = d / 'json'
+        if not json_dir.is_dir():
+            return False
+        return any(json_dir.glob('*.json'))
 
     def _is_secondary(d: Path) -> bool:
         return (d / 'memories').is_dir() and not (d / 'json').is_dir()
@@ -1068,6 +1124,39 @@ def discover_export(
                 inner_secondaries.append(d)
         if inner_primary:
             return _build_result(inner_primary, inner_secondaries, inner_overlays)
+
+    # Fallback: loose check — accept any json/ directory with .json files
+    # This handles partial exports (e.g. only 1 of 3 Snapchat ZIPs uploaded)
+    if _check_dir_loose(base_dir):
+        logger.warning("Partial export detected in %s (no known JSON filenames, but json/ dir exists)", base_dir)
+        ov = base_dir.parent / 'overlays-merged'
+        return _build_result(base_dir, [], ov if ov.is_dir() else None)
+
+    for d in children:
+        if not d.is_dir():
+            continue
+        if _check_dir_loose(d):
+            logger.warning("Partial export detected in %s", d)
+            return _build_result(d, [], overlays_dir)
+
+    # Also check if base_dir has media directories (memories/, chat_media/) but no json/
+    # This is a media-only ZIP — treat base_dir as primary with no JSON
+    has_media = any(
+        (base_dir / subdir).is_dir()
+        for subdir in ('memories', 'chat_media', 'shared_story')
+    )
+    if has_media:
+        logger.warning("Media-only export detected in %s (no json/ directory)", base_dir)
+        return {
+            'primary': base_dir,
+            'secondaries': [],
+            'overlays_dir': None,
+            'json_dir': base_dir,  # will cause all ingest functions to return 0 (graceful)
+            'memories_dirs': [base_dir / 'memories'] if (base_dir / 'memories').is_dir() else [],
+            'chat_dir': base_dir / 'chat_media' if (base_dir / 'chat_media').is_dir() else None,
+            'story_dir': base_dir / 'shared_story' if (base_dir / 'shared_story').is_dir() else None,
+            'html_dir': base_dir / 'html' if (base_dir / 'html').is_dir() else None,
+        }
 
     # Not found — log directory listing for debugging
     logger.warning("No Snapchat export found in %s", base_dir)

@@ -289,7 +289,7 @@ document.getElementById('btn-confirm-export').addEventListener('click', function
             status.textContent = 'Export job #' + data.new_job_id + ' created. Redirecting...';
             status.style.color = 'var(--success)';
             setTimeout(function() {
-                window.location.href = '/job/' + data.new_job_id;
+                window.location.href = '/snatchedmemories/' + data.new_job_id;
             }, 800);
         })
         .catch(function(err) {
